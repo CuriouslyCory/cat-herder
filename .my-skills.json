@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "agents": [],
+  "skills": {
+    "prd": {
+      "source": "CuriouslyCory/my-skills",
+      "sourceType": "github",
+      "computedHash": "26b12fdec7ca2349914b015c5ff4e9f39e5a208bd2dc69068dfb68e33b55a4b7",
+      "installedAt": "2026-04-14T23:13:08.376Z",
+      "agents": [
+        "claude-code"
+      ]
+    },
+    "ralph": {
+      "source": "CuriouslyCory/my-skills",
+      "sourceType": "github",
+      "computedHash": "a49bd70d8ccb3871e36c3ca13a2258437a0ee140c748dc5ec62e42e8d884866e",
+      "installedAt": "2026-04-14T23:13:08.390Z",
+      "agents": [
+        "claude-code"
+      ]
+    },
+    "ship-it": {
+      "source": "CuriouslyCory/my-skills",
+      "sourceType": "github",
+      "computedHash": "0ce323d653c854a48b2e383badb8593cd4dde2825c3af12d796c576ddebb6f88",
+      "installedAt": "2026-04-14T23:13:08.393Z",
+      "agents": [
+        "claude-code"
+      ]
+    },
+    "tdd": {
+      "source": "CuriouslyCory/my-skills",
+      "sourceType": "github",
+      "computedHash": "c478c6898f8f961ac93cf01bfa8baca347e8e9096451b87c00c2681aef58fb4e",
+      "installedAt": "2026-04-14T23:13:08.396Z",
+      "agents": [
+        "claude-code"
+      ]
+    }
+  }
+}

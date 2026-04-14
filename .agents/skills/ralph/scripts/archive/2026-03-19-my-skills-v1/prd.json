@@ -1,0 +1,223 @@
+{
+  "project": "my-skills",
+  "branchName": "feat/favorites",
+  "description": "Favorites - First-class favorites feature supporting repos and individual skills with web dashboard, data table, and CLI integration",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Evolve favorites database schema",
+      "description": "As a developer, I need the favorites table to support both repo-level and skill-level favorites so the feature can distinguish between the two.",
+      "acceptanceCriteria": [
+        "Add skillName column (nullable text) to favorites table in packages/db/src/schema.ts — null means whole repo",
+        "Add type column (text, not null, default 'repo') to favorites table — values: 'repo' or 'skill'",
+        "Replace existing UNIQUE(repoUrl) with composite unique on (repoUrl, skillName) using unique() from drizzle-orm/sqlite-core",
+        "Run drizzle-kit push successfully",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "SQLite treats each NULL as distinct in unique constraints. The add procedure (built later) must handle this with explicit existence checks."
+    },
+    {
+      "id": "US-002",
+      "title": "Add FavoriteType to shared types",
+      "description": "As a developer, I need shared Zod schemas for the favorite type enum so both web and CLI can validate consistently.",
+      "acceptanceCriteria": [
+        "Add FavoriteTypeSchema = z.enum(['repo', 'skill']) to packages/shared-types/src/index.ts",
+        "Export the inferred FavoriteType type",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Create favorite tRPC router with CRUD operations",
+      "description": "As a developer, I need a dedicated favorite router with add, remove, toggle, and isFavorited procedures.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/router/favorite.ts with these procedures: add (protectedProcedure, insert with conflict handling, calls syncConfigToFile), remove (protectedProcedure, delete by id, calls syncConfigToFile), toggle (protectedProcedure, add if missing remove if present, returns { favorited: boolean }), isFavorited (publicProcedure, boolean lookup by repoUrl + optional skillName)",
+        "Register favorite: favoriteRouter in packages/api/src/root.ts",
+        "Remove the favorites sub-object from packages/api/src/router/config.ts (lines with favorites.list, favorites.add, favorites.remove)",
+        "Export the new router from packages/api/src/index.ts if other routers are exported there",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "The add procedure must check for existing entries before inserting due to SQLite NULL handling in composite unique constraints. Use an explicit existence check rather than relying on the unique constraint alone."
+    },
+    {
+      "id": "US-004",
+      "title": "Add list and stats procedures to favorite router",
+      "description": "As a developer, I need paginated list and stats endpoints so the web dashboard can display favorites with sorting, searching, and analytics.",
+      "acceptanceCriteria": [
+        "Add list procedure (publicProcedure) to favorite router accepting: page (default 1), pageSize (default 30), search (optional string), sortBy (optional: 'name' | 'type' | 'addedAt'), sortOrder (optional: 'asc' | 'desc'), type (optional: 'repo' | 'skill'). Returns { items, totalCount }. Uses Drizzle like() for search, orderBy for sorting, limit/offset for pagination",
+        "Add stats procedure (publicProcedure) returning: { total: number, repoCount: number, skillCount: number, mostRecent: Favorite | null, topRepos: Array<{ repoUrl: string, name: string, count: number }> }",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "topRepos should aggregate skill-level favorites grouped by repoUrl, showing repos with the most individual skill favorites."
+    },
+    {
+      "id": "US-005",
+      "title": "Update syncConfigToFile for favorite types",
+      "description": "As a developer, I need syncConfigToFile to only sync repo-type favorites to the favoriteRepos config array so CLI backward compatibility is maintained.",
+      "acceptanceCriteria": [
+        "Update syncConfigToFile in packages/api/src/lib/config-sync.ts to filter favorites by type = 'repo' when writing favoriteRepos to config",
+        "Skill-type favorites are stored in DB only, not written to config file",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "The CLI reads favoriteRepos from ~/.my-skills/config.json via loadConfig(). Only repo URLs should appear there."
+    },
+    {
+      "id": "US-006",
+      "title": "Add Favorites to sidebar navigation",
+      "description": "As a user, I want to see Favorites in the left nav so I can access my bookmarked items with one click.",
+      "acceptanceCriteria": [
+        "Import StarFilledIcon from @radix-ui/react-icons in apps/web/src/app/_components/sidebar.tsx",
+        "Add { href: '/favorites', label: 'Favorites', icon: StarFilledIcon } to navItems array between Compositions and Git entries",
+        "Active state highlights correctly when on /favorites route (existing isActive function handles this)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Create favorites page with stats dashboard",
+      "description": "As a user, I want a clean dashboard at /favorites showing key stats like total favorites and a breakdown of repos vs skills.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/(dashboard)/favorites/page.tsx as server component following the pattern in apps/web/src/app/(dashboard)/compositions/page.tsx",
+        "Prefetch trpc.favorite.stats and trpc.favorite.list query options on server",
+        "Create apps/web/src/app/_components/favorite-stats.tsx as client component using useSuspenseQuery(trpc.favorite.stats.queryOptions())",
+        "Display stat cards using Card component from @curiouslycory/ui/card: Total favorites count, Repos count, Skills count, Most recently added (name + relative time)",
+        "Export FavoriteStatsSkeleton with pulse animation skeleton cards",
+        "Wrap stats in Suspense with skeleton fallback on the page",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Follow the composition page pattern: server component does prefetch, client component uses useSuspenseQuery."
+    },
+    {
+      "id": "US-008",
+      "title": "Create reusable DataTable component",
+      "description": "As a developer, I need a reusable data table component built on shadcn/ui + @tanstack/react-table so the favorites list and future tables have sorting, filtering, and pagination.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/data-table.tsx following the shadcn/ui data table pattern (https://ui.shadcn.com/docs/components/data-table)",
+        "Component wraps @tanstack/react-table (already in apps/web dependencies) with Table, TableHeader, TableBody, TableRow, TableHead, TableCell from @curiouslycory/ui/table",
+        "Accepts generic props: columns: ColumnDef<TData, TValue>[] and data: TData[]",
+        "Uses useReactTable with getCoreRowModel, getSortingRowModel, getFilteringRowModel, getPaginationRowModel from @tanstack/react-table",
+        "Renders sortable column headers with visual sort direction indicators (arrow up/down icons)",
+        "Renders pagination controls: Previous/Next buttons, 'Page X of Y' text",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Reference the shadcn/ui data table documentation for the exact implementation pattern. The component should be generic enough for reuse across the app."
+    },
+    {
+      "id": "US-009",
+      "title": "Build favorites data table with search and type filter",
+      "description": "As a user, I want to browse my favorites in a searchable, filterable data table with remove actions.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/favorite-list.tsx as client component using the DataTable from data-table.tsx",
+        "Define columns: Name, Type (Badge: 'Repo' secondary variant / 'Skill' outline variant), Repo URL, Skill Name (if applicable, dash otherwise), Added date (formatted), Actions (remove button)",
+        "Add debounced search input above table using useDebounce pattern from search-results.tsx (setTimeout/clearTimeout, 300ms)",
+        "Add type filter buttons: All / Repos / Skills using Badge or Button components",
+        "Remove action shows AlertDialog confirmation before deleting (follow composition-list.tsx pattern with AlertDialog from @curiouslycory/ui/alert-dialog)",
+        "Export FavoriteListSkeleton with pulse animation",
+        "Empty state Card when no favorites exist",
+        "Wire up to trpc.favorite.list and trpc.favorite.remove",
+        "Add the FavoriteList component to the favorites page.tsx inside a Suspense boundary",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "This story gets the table rendering with search and filter. URL state sync and server-side pagination come in the next story."
+    },
+    {
+      "id": "US-010",
+      "title": "Add URL state sync and server-side pagination to favorites table",
+      "description": "As a user, I want my sort, search, filter, and page state preserved in URL params so browser back/forward works.",
+      "acceptanceCriteria": [
+        "Sync these URL search params bidirectionally: search, sort, order, page, type — using useSearchParams + router.replace() pattern from search-results.tsx",
+        "Server-side pagination at 30 items per page using the totalCount from trpc.favorite.list response",
+        "Pagination controls show Previous/Next buttons and 'Page X of Y' indicator",
+        "Column header clicks update sort/order URL params which feed into the tRPC query",
+        "Changing search or type filter resets page to 1",
+        "Browser back/forward correctly restores previous view state",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "This builds on US-009. The tRPC list query params (page, pageSize, search, sortBy, sortOrder, type) should be driven by URL search params."
+    },
+    {
+      "id": "US-011",
+      "title": "Add favorite toggle to CLI add command",
+      "description": "As a CLI user, I want to mark a repo as favorite during install via a --favorite flag or interactive picker toggle.",
+      "acceptanceCriteria": [
+        "Add -f, --favorite flag to the add command options in apps/cli/src/commands/add.ts",
+        "When --favorite flag is used with a direct skill source (ms add owner/repo/skill -f), automatically add the repo to config.favoriteRepos via loadConfig/saveConfig from apps/cli/src/core/config.ts",
+        "In the interactive skill picker (checkbox from @inquirer/checkbox), add a visual indicator showing if the source repo is already favorited",
+        "Does not auto-favorite when --yes is used unless --favorite is also explicitly present",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "The favorite toggle in the interactive picker is a UI enhancement. At minimum, the --favorite flag must work for non-interactive usage."
+    },
+    {
+      "id": "US-012",
+      "title": "Show favorite status in CLI list command",
+      "description": "As a CLI user, I want to see which installed skills come from favorited repos.",
+      "acceptanceCriteria": [
+        "Load config via loadConfig() in apps/cli/src/commands/list.ts to get favoriteRepos array",
+        "Add a star symbol column to the printed table for skills whose source repo is in favoriteRepos",
+        "Add --favorites flag to filter list output to only skills from favorited repos",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Create dedicated CLI favorite subcommand",
+      "description": "As a CLI user, I want to manage favorites via ms favorite add/remove/list without the web UI.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/favorite.ts with subcommands: 'ms favorite add <owner/repo>' adds repo URL to config.favoriteRepos via loadConfig/saveConfig, 'ms favorite remove <owner/repo>' removes from favoriteRepos array, 'ms favorite list' prints table of favorited repos using chalk",
+        "Register the favorite command in apps/cli/src/program.ts following the pattern of other registerXCommand functions",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Update CLI documentation",
+      "description": "As a user reading the CLI README, I want to see the new favorite commands documented.",
+      "acceptanceCriteria": [
+        "Add ms favorite add/remove/list rows to the CLI Reference table in apps/cli/README.md",
+        "Add --favorite / -f flag mention to the ms add row description",
+        "Add --favorites flag mention to the ms list row description",
+        "Add an example section showing the favorite workflow (e.g. ms favorite add owner/repo, ms add owner/repo/skill -f, ms list --favorites)",
+        "No broken markdown formatting",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

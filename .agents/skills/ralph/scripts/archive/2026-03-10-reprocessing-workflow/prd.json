@@ -1,0 +1,210 @@
+{
+  "project": "tools-agents",
+  "branchName": "feat/reprocessing-workflow",
+  "description": "Document Artifact Re-Processing Workflow - Multi-pass review pipeline with fact-checking, voice/clarity editing, editorial review, and version history",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add ArtifactVersion model to Prisma schema",
+      "description": "As a developer, I need to store previous versions of artifacts so that re-processing preserves the original content.",
+      "acceptanceCriteria": [
+        "Create ArtifactVersion model in prisma/schema.prisma with fields: id (Int, autoincrement), documentArtifactId (Int, FK to DocumentArtifact), content (String), version (Int), createdAt (DateTime, default now())",
+        "ArtifactVersion has a many-to-one relation to DocumentArtifact (field: documentArtifact)",
+        "Add versions DocumentArtifact[] relation field to DocumentArtifact model",
+        "Generate and run migration: npx prisma migrate dev --name add_artifact_version",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "File: prisma/schema.prisma. Follow existing model patterns. After migration, run npx prisma generate to update the client."
+    },
+    {
+      "id": "US-002",
+      "title": "Create saveArtifactVersion utility",
+      "description": "As a developer, I need a utility that snapshots artifact content into version history before overwriting.",
+      "acceptanceCriteria": [
+        "Create src/utils/artifact-version.ts",
+        "Export async function saveArtifactVersion(prisma: PrismaClient, documentArtifactId: number): Promise<void>",
+        "Function reads current artifact content from DocumentArtifact by id",
+        "Determines next version number by counting existing ArtifactVersion records for that artifact + 1",
+        "Creates new ArtifactVersion record with the current content and computed version number",
+        "If artifact has no content or doesn't exist, skip without error",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Use app.prisma pattern consistent with rest of codebase. Import PrismaClient type from @prisma/client."
+    },
+    {
+      "id": "US-003",
+      "title": "Create reprocess feedback types and directory structure",
+      "description": "As a developer, I need shared types for the reprocess pipeline feedback so all passes use consistent data structures.",
+      "acceptanceCriteria": [
+        "Create directory src/routes/workflows/reprocess/",
+        "Create src/routes/workflows/reprocess/types.ts with exported types",
+        "Export FactCheckIssue type: { claim: string, severity: 'error' | 'warning', finding: string, suggestedCorrection: string }",
+        "Export FactCheckFeedback type: { artifactTitle: string, issues: FactCheckIssue[] }",
+        "Export VoiceClarityEdit type: { location: string, suggestion: string, rationale: string }",
+        "Export VoiceClarityFeedback type: { artifactTitle: string, edits: VoiceClarityEdit[] }",
+        "Export EditorialChange type: { type: 'completeness' | 'flow' | 'redundancy' | 'context' | 'coherence', description: string, recommendation: string }",
+        "Export EditorialFeedback type: { artifactTitle: string, overallAssessment: string, changes: EditorialChange[] }",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "These types are used as in-memory objects passed between pipeline passes. They are not persisted to DB."
+    },
+    {
+      "id": "US-004",
+      "title": "Implement fact-check review pass",
+      "description": "As a user, I want each artifact fact-checked against the original document and external sources so that inaccuracies are identified.",
+      "acceptanceCriteria": [
+        "Create src/routes/workflows/reprocess/fact-check.ts",
+        "Export async function factCheckArtifact(app: FastifyInstance, originalDocContent: string, artifactTitle: string, artifactContent: string): Promise<FactCheckFeedback>",
+        "Use planning-agent or reasoning model to compare artifact claims against originalDocContent",
+        "Use research tools (DuckDuckGo, Tavily, Wikipedia) via research agent for external verification of specific factual claims (dates, names, numbers, legal references)",
+        "Return structured FactCheckFeedback with list of issues found, each with severity and suggested correction",
+        "If no issues found, return empty issues array",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Use existing research agent tools from src/tools/search.ts. Use reasoning model from ai-models.ts for the analysis LLM call. Follow existing workflow handler patterns for LLM invocation."
+    },
+    {
+      "id": "US-005",
+      "title": "Implement voice and clarity edit pass",
+      "description": "As a user, I want each artifact edited for voice and clarity so the content reads well and maintains consistent tone.",
+      "acceptanceCriteria": [
+        "Create src/routes/workflows/reprocess/voice-clarity.ts",
+        "Export async function voiceClarityReview(app: FastifyInstance, artifactTitle: string, artifactContent: string, factCheckFeedback: FactCheckFeedback): Promise<VoiceClarityFeedback>",
+        "Use reasoning model to review artifact for: readability, tone consistency, jargon usage, sentence structure, conciseness",
+        "Accept fact-check feedback as context so edits don't reintroduce factual issues",
+        "Return structured VoiceClarityFeedback with list of suggested edits and rationale",
+        "If no edits needed, return empty edits array",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Use reasoning model from ai-models.ts. Prompt should instruct the LLM to return structured JSON matching the VoiceClarityFeedback type."
+    },
+    {
+      "id": "US-006",
+      "title": "Implement editorial review pass",
+      "description": "As a user, I want an editorial review of each artifact for overall quality, coherence, and completeness.",
+      "acceptanceCriteria": [
+        "Create src/routes/workflows/reprocess/editorial-review.ts",
+        "Export async function editorialReview(app: FastifyInstance, artifactTitle: string, artifactContent: string, factCheckFeedback: FactCheckFeedback, voiceClarityFeedback: VoiceClarityFeedback): Promise<EditorialFeedback>",
+        "Use reasoning model to review artifact for: completeness, logical flow, redundancy, missing context, alignment with document purpose",
+        "Accept both prior feedback objects as input context",
+        "Return structured EditorialFeedback with overall assessment and list of recommended changes",
+        "If no changes needed, return empty changes array with positive assessment",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Use reasoning model from ai-models.ts. This is the final review pass before rewrite, so it should consider all prior feedback."
+    },
+    {
+      "id": "US-007",
+      "title": "Implement final rewrite pass",
+      "description": "As a user, I want a final rewrite that incorporates all review feedback to produce improved artifacts.",
+      "acceptanceCriteria": [
+        "Create src/routes/workflows/reprocess/final-rewrite.ts",
+        "Export async function finalRewrite(app: FastifyInstance, documentId: number, artifactTitle: string, artifactContent: string, factCheck: FactCheckFeedback, voiceClarity: VoiceClarityFeedback, editorial: EditorialFeedback): Promise<string>",
+        "Use pro model (or reasoning model) to rewrite artifact incorporating all three feedback sets",
+        "Call saveArtifactVersion(app.prisma, artifactId) before overwriting",
+        "Overwrite existing artifact content via prisma documentArtifact.update",
+        "Return the new content string",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Use saveArtifactVersion from src/utils/artifact-version.ts (US-002). Fetch artifact ID via prisma findFirst with documentId + title compound key. Use pro model from ai-models.ts for highest quality rewrite."
+    },
+    {
+      "id": "US-008",
+      "title": "Create reprocess orchestrator for single document",
+      "description": "As a user, I want to trigger re-processing for a single document so all its artifacts are reviewed and improved.",
+      "acceptanceCriteria": [
+        "Create src/routes/workflows/reprocess/run-reprocess.ts",
+        "Export async function handleReprocessWorkflow(app: FastifyInstance, documentId: number)",
+        "Fetch all artifacts for document excluding 'Original Document' title",
+        "Fetch 'Original Document' artifact content for use as reference",
+        "Run pipeline sequentially: for each artifact run fact-check, then voice/clarity, then editorial review, then final rewrite",
+        "Within each pass, artifacts can be processed in parallel via Promise.all",
+        "Emit progress events: reprocess:pipeline-started, reprocess:step-started, reprocess:step-completed, reprocess:step-failed, reprocess:pipeline-completed via app.workflowEvents",
+        "Return summary object with per-artifact results (success/failure)",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Follow pattern from run-all.ts orchestrator. Add reprocess event types to WorkflowEvents in document.ts. The pipeline is: fact-check all → voice/clarity all → editorial all → rewrite all."
+    },
+    {
+      "id": "US-009",
+      "title": "Register reprocess API route",
+      "description": "As a user, I want an API endpoint to trigger single-document re-processing.",
+      "acceptanceCriteria": [
+        "Register GET /document/reprocess route with required query param documentId (number)",
+        "Route calls handleReprocessWorkflow(app, documentId) and returns the result",
+        "Add reprocess event types to WorkflowEvents type in document.ts: reprocess:pipeline-started, reprocess:step-started, reprocess:step-completed, reprocess:step-failed, reprocess:pipeline-completed",
+        "SSE endpoint (workflow-progress.ts) also forwards reprocess:* events to connected clients",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Register in document.ts alongside existing routes. Update WorkflowEvents type with new reprocess event signatures. Update workflow-progress.ts to listen for reprocess:* events."
+    },
+    {
+      "id": "US-010",
+      "title": "Add batch re-processing API endpoint",
+      "description": "As a user, I want to re-process a range of documents in one call.",
+      "acceptanceCriteria": [
+        "Register GET /document/reprocess-batch route with required query params startId (number) and endId (number)",
+        "Query documents in range, process sequentially (one at a time) to manage LLM rate limits",
+        "Skip documents that don't exist or have no artifacts",
+        "Emit reprocess:batch-progress event with { currentDocumentId, completedCount, totalCount }",
+        "Return summary with per-document results: success, failure, or skipped",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Add reprocess:batch-progress event type to WorkflowEvents. Sequential processing avoids LLM concurrency limits. Use a for loop over document IDs, calling handleReprocessWorkflow for each."
+    },
+    {
+      "id": "US-011",
+      "title": "Add version history API endpoint",
+      "description": "As a user, I want to view the version history of an artifact.",
+      "acceptanceCriteria": [
+        "Register GET /document/artifact-versions route with required query params documentId (number) and title (string)",
+        "Fetch DocumentArtifact by compound key (documentId, title)",
+        "Fetch all ArtifactVersion records for that artifact, ordered by version descending",
+        "Return array with current (live) content as latest entry plus all historical versions with version number and createdAt",
+        "Return 404 if artifact not found",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Register in document.ts. Use prisma documentArtifact.findUnique with documentId_title compound key, then prisma artifactVersion.findMany ordered by version desc."
+    },
+    {
+      "id": "US-012",
+      "title": "Add dashboard re-processing controls",
+      "description": "As a user, I want to trigger re-processing from the dashboard UI.",
+      "acceptanceCriteria": [
+        "Add 'Re-Process' button to dashboard for the current document (below existing workflow cards)",
+        "Add 'Batch Re-Process' section with start ID and end ID number inputs and a 'Start Batch' button",
+        "Buttons call fetch() to respective API endpoints (GET /document/reprocess and /document/reprocess-batch)",
+        "Dashboard shows re-processing progress via SSE reprocess:* events (reuse existing card/progress UI pattern)",
+        "Disable buttons while re-processing is in progress",
+        "Show completion summary text when re-processing finishes",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "Modify src/routes/dashboard.ts. Add new HTML section below existing workflow grid. Add EventSource listeners for reprocess:* events. Follow existing dashboard JS patterns for DOM updates."
+    }
+  ]
+}

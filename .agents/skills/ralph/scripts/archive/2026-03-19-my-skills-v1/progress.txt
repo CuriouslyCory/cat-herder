@@ -1,0 +1,35 @@
+## Codebase Patterns
+- Monorepo uses pnpm workspaces with apps/*, packages/*, tooling/*
+- Package namespace is @curiouslycory/ (renamed from @acme/)
+- Turbo tasks: build, dev, typecheck, lint, test, clean, format
+- Web app is at apps/web (renamed from nextjs)
+- sherif postinstall lint enforces alphabetically sorted deps in package.json
+- Web app build requires env vars (auth, db) - typecheck works without them
+- pnpm-workspace.yaml uses catalog/catalogs for version pinning
+- simple-git has strict overloads - branch on defined params rather than passing undefined
+- better-sqlite3 requires native build; add to pnpm.onlyBuiltDependencies in root package.json
+- When db schema changes, downstream packages (api, web) may need @types/better-sqlite3 in devDependencies for declaration emit
+- Turbo caches dist/ output; after schema changes, delete .turbo + dist/ to force fresh declaration emit for downstream consumers
+- FTS5 virtual tables/triggers use raw better-sqlite3 db.exec(), not Drizzle ORM; initFTS takes Database.Database instance
+- CLI app (apps/cli) uses tsup for bundling, not tsc; set outDir: "dist/bin" to match bin field paths
+- Import package.json in ESM with `with { type: "json" }` assertion
+- CLI app needs @types/node in devDependencies for node: module imports and process global
+- CLI doesn't have simple-git as direct dep; extend GitService with new methods rather than importing simple-git in CLI
+- CLI commands go in apps/cli/src/commands/ and use registerXCommand(program) pattern
+- @inquirer/search is a default export; source callback needs explicit type: `(input: string | undefined)`
+- @inquirer/confirm and @inquirer/checkbox are default exports; use dynamic import for conditional usage
+- SkillFrontmatter uses `compatibility` for agent IDs; SkillEntry (manifest) uses `agents` — don't confuse them
+- smol-toml: parse(string) → object, stringify(object) → string; nested tables [a.b] = { a: { b: {} } }
+- Adapters with markdown marker management reuse parseSections/buildManagedSection pattern (see CopilotAdapter, GeminiAdapter)
+- Zod v4 _def doesn't reliably expose typeName; use explicit key sets instead of schema introspection for type detection
+- createTRPCContext takes { headers, session } — resolve session before calling; Session type from @curiouslycory/auth
+- Web app uses tRPC + React Query; server components do prefetch(), client components use useSuspenseQuery()
+- Sidebar nav items are a hardcoded array in apps/web/src/app/_components/sidebar.tsx
+- Existing data tables use shadcn Table components from @curiouslycory/ui/table
+- @tanstack/react-table is already in apps/web dependencies
+- DB schema uses drizzle-orm with SQLite; timestamps use integer mode:"timestamp" with sql`(unixepoch())` default
+- Config router has favorites sub-object that will be extracted to dedicated favorite router
+- CLI config stored at ~/.my-skills/config.json via loadConfig/saveConfig in apps/cli/src/core/config.ts
+- syncConfigToFile bridges DB state to CLI config file
+
+---

@@ -1,0 +1,18 @@
+# Ralph Progress Log
+Started: Mon Mar 24 2026
+---
+
+## Codebase Patterns
+- Use `pnpm lint`, `pnpm typecheck`, and `pnpm build` as the quality gate for all changes
+- For CLI-specific changes, also run `pnpm --filter cli test`
+- For API-specific changes, also run `pnpm --filter api test`
+- Monorepo uses pnpm workspaces with turbo for build orchestration
+- Shared types live in `packages/shared-types/src/` — always check there first before defining local types
+- tRPC routers are in `packages/api/src/router/` — they use `publicProcedure` and `protectedProcedure` from `../trpc`
+- CLI commands are in `apps/cli/src/commands/` — they use chalk for colored output
+- When auth is disabled, `getSession()` returns `{ user: { username: "local" } }` so protectedProcedure passes automatically
+- The `source-parser.ts` at `apps/cli/src/services/source-parser.ts` is the shared utility for source string parsing
+- Database uses Drizzle ORM with SQLite (better-sqlite3)
+- JSON arrays are stored as text columns in SQLite and need JSON.parse on read
+- The project uses Zod v4 (imported as `zod/v4` in API code, plain `zod` in shared-types)
+---

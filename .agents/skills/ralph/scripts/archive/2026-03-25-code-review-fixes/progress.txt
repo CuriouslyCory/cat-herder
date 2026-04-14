@@ -1,0 +1,25 @@
+# Ralph Progress Log
+Started: Wed Mar 25 2026
+---
+
+## Codebase Patterns
+- Auth check: `isAuthEnabled()` checks for `ADMIN_USER` env var in packages/auth/src/index.ts
+- Quality gate: `pnpm typecheck` and `pnpm build` are the minimum checks; some packages also have `pnpm --filter <pkg> test`
+- Monorepo structure: apps/ (cli, web), packages/ (api, auth, db, shared-types, etc.), tooling/
+- `isomorphic-dompurify` is incompatible with Next.js Turbopack (worker_threads issue) — use `sanitize-html` instead
+- Pre-existing: `@curiouslycory/api` typecheck/build fails due to vitest import in test file — not a blocker for other packages
+- Changing shared-types schemas (e.g. ManifestSchema) can cause downstream type errors in CLI code that creates default objects — check `detect.ts` and other manifest creators
+- CLI package pnpm filter name is `my-skills` (not `cli`) — use `pnpm --filter my-skills test`
+- CLI doesn't have `zod` as a direct dependency — use `(err as Error).name === "ZodError"` instead of `instanceof ZodError` for Zod error detection
+- Zod v4 `z.enum()` supports `.exclude()` and `.extract()` — derive subset schemas from canonical ones instead of duplicating enum values
+- Drizzle ORM 0.44.7 supports `check()` constraints for SQLite — import from `drizzle-orm/sqlite-core`, use in table callback
+- FTS5 uses external content pattern (`content=skills, content_rowid=rowid`) — triggers must include rowid, and the table must be DROPped to change its configuration
+- Web app filter name is `@curiouslycory/web` — use `pnpm --filter @curiouslycory/web test`
+- API package filter name is `@curiouslycory/api` — use `pnpm --filter @curiouslycory/api test`
+- shared-types filter name is `@curiouslycory/shared-types` — use `pnpm --filter @curiouslycory/shared-types test`
+- Next.js App Router uses `next/navigation` (NOT `next/router`) — mock useRouter/useSearchParams/usePathname from next/navigation
+- tRPC context requires `{ session, headers, repoPath }` — for tests use `{ user: { username: 'test' } }` as session
+- CLI tests use real filesystem with temp dirs (mkdtemp + rm cleanup pattern)
+- API tests should use in-memory SQLite via `better-sqlite3(':memory:')` + drizzle schema push
+
+---

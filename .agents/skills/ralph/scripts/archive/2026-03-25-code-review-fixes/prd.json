@@ -1,0 +1,428 @@
+{
+  "project": "my-skills",
+  "branchName": "feat/test-coverage",
+  "description": "Comprehensive test coverage: ~200+ new tests across CLI commands/flags, API routers, shared-types, and web components",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "shared-types frontmatter tests",
+      "description": "As a developer, I need tests for parseSkillFrontmatter and buildSkillContent so that changes to the foundational parsing logic are caught by CI.",
+      "acceptanceCriteria": [
+        "Add vitest config to packages/shared-types/ — create vitest.config.ts with globals: true and add 'test': 'vitest run' script to package.json. Add vitest as a devDependency",
+        "Create packages/shared-types/src/__tests__/frontmatter.test.ts",
+        "Test parseSkillFrontmatter: valid frontmatter with all fields, missing name throws, missing description throws, empty string name throws (min(1) constraint), optional fields (license, compatibility as string, compatibility as array, metadata object, allowed-tools array)",
+        "Test buildSkillContent: produces valid markdown with YAML frontmatter, round-trip identity (parse then build then parse returns same data), empty body handled",
+        "Test AgentIdSchema: all 10 valid agent IDs accepted, invalid string rejected",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/shared-types test passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "The shared-types package has NO existing test infrastructure. You must add vitest as a devDependency, create vitest.config.ts, and add the test script. Use 'import { describe, it, expect } from \"vitest\"' since globals may not work until config is loaded. The parseSkillFrontmatter function uses gray-matter internally and validates through SkillFrontmatterSchema.parse()."
+    },
+    {
+      "id": "US-002",
+      "title": "skill-resolver + sourceToGitHub tests",
+      "description": "As a developer, I need tests for the skill resolution logic so that directory walking, frontmatter parsing, and file collection are verified.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/core/skill-resolver.test.ts using real temp directories (mkdtemp + rm cleanup pattern matching existing CLI tests)",
+        "Test resolveSkill: finds skill in nested directory, returns correct name/content/frontmatter/files",
+        "Test file collection: returns sorted relative paths, handles nested subdirectories",
+        "Test directory skipping: node_modules and .git directories are skipped during walk",
+        "Test invalid frontmatter: SKILL.md with bad YAML logs warning via console.warn but doesn't throw — continues searching for other skills",
+        "Test skill not found: throws descriptive error when skill name doesn't exist in repo",
+        "Add sourceToGitHub tests to existing apps/cli/tests/services/source-parser.test.ts: valid 'owner/repo' returns GitHubSource with correct url, throws on single segment, throws on empty string",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Create real directory structures in temp dirs with SKILL.md files containing valid frontmatter. The resolveSkill function takes (repoPath, skillName) and walks recursively. It calls parseSkillFrontmatter from @curiouslycory/shared-types. sourceToGitHub was recently extracted to apps/cli/src/services/source-parser.ts — add tests to the EXISTING test file."
+    },
+    {
+      "id": "US-003",
+      "title": "skill-installer tests",
+      "description": "As a developer, I need tests for skill installation to verify file copying and hash computation.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/core/skill-installer.test.ts using real temp directories",
+        "Test installSkill: copies all files from source to destination preserving directory structure",
+        "Test hash: returns SHA-256 hex string, deterministic for same content, changes when content changes, changes when a file is added or removed",
+        "Test target directory creation: created automatically if it doesn't exist",
+        "Test nested files: subdirectories copied correctly to destination",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "installSkill is only 18 lines — it calls cp(source, dest, {recursive: true}) then computeSkillHash(dest). The existing skill-hasher.test.ts already tests computeSkillHash in isolation. Focus on testing the end-to-end installSkill flow with real files."
+    },
+    {
+      "id": "US-004",
+      "title": "cache service tests",
+      "description": "As a developer, I need tests for the cache service so that staleness detection, skill discovery, and git operations are verified.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/services/cache.test.ts",
+        "Mock GitService from @curiouslycory/git-service using vi.mock — mock clone, fetch, resetHard methods",
+        "Mock loadConfig to return a temp directory as cacheDir",
+        "Test isCacheStale: fresh cache returns false, expired cache returns true, missing meta file returns true, corrupt JSON returns true with console.warn, NaN date returns true",
+        "Test getCachedRepoPath: returns path when .git exists, returns null when missing",
+        "Test discoverSkills: finds SKILL.md in nested dirs, returns name+description, skips invalid frontmatter with warning, returns empty for empty repo, skips node_modules/.git",
+        "Test fetchRepo: calls git.clone for new repo, calls git.fetch+resetHard for existing, writes metadata file after success",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "The cache module (apps/cli/src/services/cache.ts) is the most complex untested CLI module. GitService must be mocked since it performs real git operations. The isCacheStale function reads .my-skills-cache-meta.json — create real files in temp dirs for staleness tests. discoverSkills walks the filesystem — use real temp dirs with SKILL.md files."
+    },
+    {
+      "id": "US-005",
+      "title": "manifest error path tests",
+      "description": "As a developer, I need tests for the improved manifest error handling added during code review fixes.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/core/manifest.test.ts with new test cases",
+        "Test loadManifest with corrupted JSON (non-JSON content): returns null, logs chalk.yellow warning",
+        "Test loadManifest with invalid Zod shape (missing version field): returns null, logs warning about schema mismatch",
+        "Test loadManifest with permission error simulation: re-throws the error (not swallowed). Note: simulating EACCES may be platform-dependent — if not testable, document why and skip",
+        "Test getSkill for missing key: returns undefined",
+        "Test removeSkill for missing key: returns manifest unchanged (idempotent)",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "The existing manifest.test.ts already tests happy paths. Add a new describe block for error paths. Use real temp dirs — write bad content to the manifest file, then call loadManifest. The CLI doesn't have zod as a direct dep, so use (err as Error).name === 'ZodError' pattern if needed."
+    },
+    {
+      "id": "US-006",
+      "title": "migration error path tests",
+      "description": "As a developer, I need tests for the improved migration error handling.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/core/migration.test.ts with new test cases",
+        "Test corrupt skills-lock.json (invalid JSON): returns null, logs chalk.yellow warning",
+        "Test sourceType handling: legacy 'gitlab' value defaults to 'github' during migration",
+        "Test valid migration: produces correct .my-skills.json shape with version: 1, installedAt timestamp, sourceType 'github'",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "The existing migration.test.ts tests basic migration. Add error cases. Create skills-lock.json files with bad content in temp dirs."
+    },
+    {
+      "id": "US-007",
+      "title": "add command — restoreFromManifest depth + installSingleSkill errors",
+      "description": "As a developer, I need deeper tests for the add command's restore and install error paths.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/commands/add.test.ts with new test cases",
+        "Test restoreFromManifest with non-github sourceType: skips with warning",
+        "Test restoreFromManifest with hash mismatch: triggers re-install",
+        "Test restoreFromManifest with fetch failure for one skill: logs error, continues with others",
+        "Test restoreFromManifest hash check failure: logs console.warn (code review fix)",
+        "Test installSingleSkill when skill not found: shows error message",
+        "Test installSingleSkill failure: sets process.exitCode = 1",
+        "Test installSingleSkill success: updates manifest with agents and installedAt",
+        "Mock dependencies: fetchRepo, resolveSkill, installSkill, ora, adapters",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "The existing add.test.ts tests restoreFromManifest basic paths. Add new describe blocks for error scenarios. The command mocking pattern is already established in the file — follow it."
+    },
+    {
+      "id": "US-008",
+      "title": "add command — flag tests",
+      "description": "As a developer, I need tests for all add command flags to ensure CLI flag parsing works correctly.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/commands/add-flags.test.ts",
+        "Test --list flag: shows discovered skills without installing",
+        "Test --all flag: sets --skill '*' --agent '*' -y shorthand behavior",
+        "Test --skill with comma-separated names: 'skill1,skill2' parsed correctly",
+        "Test --agent with valid IDs: 'claude-code,cursor' validated",
+        "Test --agent with invalid ID: throws error",
+        "Test --favorite flag: adds repo URL to config.favoriteRepos",
+        "Test --global flag: changes target directory to ~/.agents/skills",
+        "Test --yes flag: skips interactive prompts",
+        "Mock dependencies: cache, resolver, installer, inquirer, adapters, config",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "This tests the registerAddCommand action handler through Commander's parseAsync. Mock all external deps. The add command is the largest CLI command (500+ lines) — focus on verifying flag-driven branches, not re-testing the internal functions covered by US-007."
+    },
+    {
+      "id": "US-009",
+      "title": "remove command — flag tests",
+      "description": "As a developer, I need tests for remove command flags.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/commands/remove.test.ts with new test cases",
+        "Test --skill with comma-separated names: removes multiple skills",
+        "Test --all flag: removes all installed skills",
+        "Test --global flag: targets global skills directory",
+        "Test --yes flag: skips confirmation prompt",
+        "Test removal when skill not installed: shows appropriate message",
+        "Test adapter removal failure: logs warning but continues (non-fatal)",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "The existing remove.test.ts covers single skill removal and manifest updates. Add tests for the flag-driven paths and error scenarios."
+    },
+    {
+      "id": "US-010",
+      "title": "update command — single skill + error paths",
+      "description": "As a developer, I need tests for updating a single skill by name and error scenarios.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/commands/update.test.ts with new test cases",
+        "Test single skill name argument: updates only the named skill",
+        "Test skill not installed: shows error message",
+        "Test non-github sourceType: shows unsupported message",
+        "Test hash unchanged: shows 'already up to date'",
+        "Test successful update: changes manifest hash and installedAt",
+        "Test fetch failure: sets process.exitCode = 1, shows error",
+        "Test summary output: correct updated/failed/up-to-date counts",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "The existing update.test.ts tests the 'all skills' update path. Add tests for the single-skill argument path and error branches."
+    },
+    {
+      "id": "US-011",
+      "title": "list command — interactive + error handling",
+      "description": "As a developer, I need tests for the list command's interactive mode and scanSkillsDir error handling.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/commands/list.test.ts with new test cases",
+        "Test scanSkillsDir with ENOENT: returns empty array silently",
+        "Test scanSkillsDir with invalid SKILL.md: logs warning about skipped skill, returns other valid skills",
+        "Test --interactive flag: mocks inquirer checkbox, selected skills trigger removal",
+        "Test --json output format: valid JSON array with skill data",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "The existing list.test.ts covers basic listing, --agent filter, and --favorites filter. Add the interactive and error handling tests."
+    },
+    {
+      "id": "US-012",
+      "title": "check command — error type distinction",
+      "description": "As a developer, I need tests verifying that check distinguishes between error types in checkSingleSkill.",
+      "acceptanceCriteria": [
+        "Extend apps/cli/tests/commands/check.test.ts with new test cases",
+        "Test checkSingleSkill up-to-date: matching hash shows 'up to date'",
+        "Test checkSingleSkill update available: different hash shows 'update available'",
+        "Test checkSingleSkill network error: shows actual error message (not generic 'remote unavailable')",
+        "Test checkSingleSkill non-github source: shows 'unsupported source type' or similar",
+        "Test no manifest: shows message about no skills installed",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "The existing check.test.ts covers basic up-to-date and update-available scenarios. Add specific error type tests to verify the code review fix that improved error messages."
+    },
+    {
+      "id": "US-013",
+      "title": "registry + index + entry point tests",
+      "description": "As a developer, I need tests for the adapter registry, adapter lookup functions, and CLI entry point error handler.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/adapters/registry.test.ts",
+        "Test getAdapter: returns correct adapter for every AgentIdSchema.options value (all 10 agents)",
+        "Test getAdapter with invalid ID: throws descriptive error",
+        "Test getEnabledAdapters: returns correct adapters for a given agent ID list",
+        "Test adapterRegistry: symlink agents (claude-code, cursor, cline, warp, amp, opencode, kimi-code) get SymlinkAdapter, specialized agents (github-copilot, codex, gemini-cli) get their specific adapters",
+        "Test SYMLINK_AGENTS constant contains exactly 7 expected agent IDs",
+        "Test entry point: mock createProgram to return a program that rejects on parseAsync, verify process.exitCode is set to 1",
+        "pnpm typecheck passes",
+        "pnpm --filter my-skills test passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "The registry is at apps/cli/src/adapters/registry.ts, index at apps/cli/src/adapters/index.ts, entry point at apps/cli/src/bin/my-skills.ts. For the entry point test, you may need to use vi.mock to mock the program module and verify error handling behavior."
+    },
+    {
+      "id": "US-014",
+      "title": "API safe-json tests",
+      "description": "As a developer, I need tests for the safeParseJsonArray utility.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/__tests__/safe-json.test.ts",
+        "Test null input: returns []",
+        "Test valid JSON array of strings: returns the array unchanged",
+        "Test empty array '[]': returns []",
+        "Test invalid JSON string: returns [], logs console.warn",
+        "Test non-array JSON (object like '{}'): returns [], logs warning",
+        "Test non-array JSON (string like '\"hello\"'): returns [], logs warning",
+        "Test non-array JSON (number like '42'): returns [], logs warning",
+        "Test mixed array with non-strings: filters to strings only, logs warning",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/api test passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "The safe-json utility is at packages/api/src/lib/safe-json.ts. It was created during the code review fixes. The API package already has vitest configured with globals: true (see packages/api/vitest.config.ts)."
+    },
+    {
+      "id": "US-015",
+      "title": "API test caller utility + favorite router tests",
+      "description": "As a developer, I need a reusable API test harness and comprehensive favorite router tests.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/test-utils.ts with createTestCaller that: creates in-memory SQLite via better-sqlite3(':memory:'), wraps with drizzle, runs schema creation (skills, favorites, variations, compositions, config tables), calls initFTS(rawDb) for the FTS5 virtual table, returns { db, caller } where caller is appRouter.createCaller with test context",
+        "Create packages/api/src/router/__tests__/favorite.test.ts",
+        "Test favorite.add: creates new favorite with repoUrl, handles duplicate (returns existing), creates skill-level favorite with skillName, handles NULL skillName for repo favorites",
+        "Test favorite.remove: removes by ID, handles nonexistent ID",
+        "Test favorite.toggle: adds when absent, removes when present, returns { favorited: boolean }",
+        "Test favorite.isFavorited: true when exists, false when not, distinguishes repo vs skill favorites",
+        "Test favorite.list: pagination works, search filter matches name/repoUrl, type filter (repo/skill), sorting by name/addedAt",
+        "Test favorite.stats: returns correct total, repoCount, skillCount",
+        "Mock syncConfigToFile to avoid filesystem writes — use vi.mock on the config-sync module",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/api test passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "This is the API test infrastructure story. The test-utils.ts is critical — all subsequent API router tests depend on it. The in-memory SQLite approach avoids filesystem pollution. The createTRPCContext function in packages/api/src/trpc.ts takes { session, headers, repoPath } — provide a mock session with { user: { username: 'test' } }, empty headers, and a temp dir for repoPath. Import appRouter from packages/api/src/root.ts. The favorite router uses protectedProcedure for mutations — the session must have a user. For publicProcedure queries, session can be null."
+    },
+    {
+      "id": "US-016",
+      "title": "skill + artifact + composition router tests",
+      "description": "As a developer, I need router tests for the core content management endpoints.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/router/__tests__/skill.test.ts reusing createTestCaller from test-utils.ts",
+        "Skill router: test list (returns skills, optional category filter), test byId, test create (inserts to DB — note: create also writes file to repoPath, use temp dir), test update, test delete",
+        "Artifact router: test list (excludes category 'skill'), test create with valid artifact category, test create rejects category 'skill'",
+        "Create packages/api/src/router/__tests__/composition.test.ts",
+        "Composition router: test create, test byId resolves fragments from skills table, test list, test preview merges fragments, test exportMarkdown",
+        "Use temp directory for repoPath in test context for file operations",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/api test passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "This is the largest API test story. The skill and artifact routers share the skills table (differentiated by category column). The composition router stores fragment IDs referencing skills. Seed test skills first, then test compositions that reference them. The skill.create mutation writes SKILL.md files — provide a valid repoPath temp dir."
+    },
+    {
+      "id": "US-017",
+      "title": "disk-sync + config-sync tests",
+      "description": "As a developer, I need tests for the filesystem-to-database sync logic.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/__tests__/disk-sync.test.ts reusing createTestCaller from test-utils.ts",
+        "Test scanAndSync: adds new skills found on disk to DB, updates existing when content changes, removes stale DB entries not on disk, handles invalid frontmatter (increments skipped, adds to errors array)",
+        "Test with empty skills directory: returns all zero counts",
+        "Create packages/api/src/lib/__tests__/config-sync.test.ts",
+        "Test syncConfigToFile: assembles config from DB rows + favorites, writes to correct path, handles invalid JSON in defaultAgents config value",
+        "Use temp directories for repoPath and config file path",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/api test passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "disk-sync reads from the filesystem (skills/ and artifacts/ directories with SKILL.md files) and syncs to the database. Create real directory structures in temp dirs. config-sync reads from DB and writes to ~/.my-skills/config.json — redirect to a temp path for testing."
+    },
+    {
+      "id": "US-018",
+      "title": "search router tests (FTS5)",
+      "description": "As a developer, I need tests for the FTS5-powered search endpoint.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/router/__tests__/search.test.ts reusing createTestCaller from test-utils.ts",
+        "Seed test data: insert 3-5 skills with varying names, descriptions, tags, content into the test DB",
+        "Test empty query: returns recent items ordered by updatedAt",
+        "Test category filter: only returns items matching the specified category",
+        "Test FTS match: returns skills matching search term with snippets containing <mark> tags",
+        "Test prefix matching: partial term matches (e.g. 'test' matches 'testing')",
+        "Test pagination: limit and offset work correctly",
+        "Test result shape: camelCase field mapping (dirPath not dir_path), snippet field present",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/api test passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "The createTestCaller from US-015 already calls initFTS which creates the skills_fts virtual table and triggers. When you insert skills into the skills table, the triggers automatically populate skills_fts. Seed data by inserting directly into the skills table via drizzle, then query through the search router. better-sqlite3 includes FTS5 by default."
+    },
+    {
+      "id": "US-019",
+      "title": "Web test infrastructure setup",
+      "description": "As a developer, I need vitest + testing-library configured for the web app so that component tests can be written.",
+      "acceptanceCriteria": [
+        "Install devDependencies in apps/web: vitest, @testing-library/react, @testing-library/jest-dom, @testing-library/user-event, jsdom",
+        "Create apps/web/vitest.config.ts with: jsdom environment, path aliases (~ maps to ./src), CSS/image module mocks if needed, globals enabled, setupFiles pointing to a setup file that imports @testing-library/jest-dom",
+        "Create apps/web/src/test-setup.ts that imports @testing-library/jest-dom for extended matchers",
+        "Create apps/web/src/test-utils.tsx with: mock QueryClient provider, mock for next/navigation (useRouter, useSearchParams, usePathname), custom render function wrapping providers",
+        "Add 'test': 'vitest run' to apps/web/package.json scripts",
+        "Create apps/web/src/app/_components/__tests__/smoke.test.tsx — renders a simple div and asserts it exists using screen.getByText",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/web test passes",
+        "pnpm build passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "The web app has ZERO test infrastructure. This is foundational — all subsequent web test stories depend on it. Key gotchas: (1) Next.js App Router uses next/navigation NOT next/router — mock useRouter/useSearchParams/usePathname from next/navigation, (2) tRPC client needs a mock — create a wrapper that provides QueryClientProvider, (3) CSS modules may need identity-obj-proxy or similar mock. Keep the smoke test trivial to prove infrastructure works."
+    },
+    {
+      "id": "US-020",
+      "title": "SearchResults component tests",
+      "description": "As a developer, I need tests for the SearchResults component which handles debounced search, URL state sync, and HTML sanitization.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/__tests__/search-results.test.tsx",
+        "Test parseTags utility: valid JSON array returns tags, invalid JSON returns empty array",
+        "Test sanitizeSnippet utility: strips script tags, preserves <mark> tags, handles null/undefined",
+        "Test component render: shows search input, shows category filter tabs",
+        "Test search input: typing updates search state (use vi.useFakeTimers for debounce)",
+        "Test category filter: clicking a tab filters results",
+        "Test result cards: render with correct links and tag badges",
+        "Test empty state: shows message when no results",
+        "Mock tRPC search.query to return controlled test data",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/web test passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "The SearchResults component is at apps/web/src/app/_components/search-results.tsx. It is a 'use client' component. It uses useSearchParams from next/navigation for URL state, trpc.search.query.useQuery for data, and sanitize-html for XSS protection. The parseTags and sanitizeSnippet functions can be tested as pure utilities. For the component tests, use the render helper from test-utils.tsx created in US-019."
+    },
+    {
+      "id": "US-021",
+      "title": "FavoriteList component tests",
+      "description": "As a developer, I need tests for the FavoriteList component which handles pagination, filtering, sorting, and mutations.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/__tests__/favorite-list.test.tsx",
+        "Test render: shows table with favorite items (name, type badge, repo URL)",
+        "Test search input: filters favorites by name (debounced)",
+        "Test type filter buttons: All, Repos, Skills filter correctly",
+        "Test pagination: Previous/Next buttons, page indicator shows correct page",
+        "Test empty state: shows appropriate message when no favorites",
+        "Test remove action: triggers confirmation dialog, calls favorite.remove on confirm",
+        "Mock tRPC favorite.list and favorite.remove",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/web test passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "FavoriteList is at apps/web/src/app/_components/favorite-list.tsx. It uses URL search params for state persistence (search, sort, order, page, type). The component has complex state management with multiple tRPC queries. Mock the tRPC hooks to return controlled data."
+    },
+    {
+      "id": "US-022",
+      "title": "SkillList component tests",
+      "description": "As a developer, I need tests for the SkillList component which handles tag parsing, category filtering, and skill display.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/__tests__/skill-list.test.tsx",
+        "Test parseTags utility: JSON array parsed correctly, invalid JSON returns empty array",
+        "Test collectAllTags utility: deduplicates tags across multiple skills",
+        "Test render: shows skill cards with name, description, and tag badges",
+        "Test category filter: filters skills by selected category",
+        "Test tag filter: clicking a tag badge filters to matching skills",
+        "Test empty state: shows message when no skills exist",
+        "Test links: skill cards link to correct detail pages",
+        "Mock tRPC skill.list",
+        "pnpm typecheck passes",
+        "pnpm --filter @curiouslycory/web test passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "SkillList is at apps/web/src/app/_components/skill-list.tsx. It has parseTags and collectAllTags utility functions that can be tested in isolation. The component renders skill cards with tags parsed from JSON strings stored in the DB."
+    }
+  ]
+}

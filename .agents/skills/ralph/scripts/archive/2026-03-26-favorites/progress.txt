@@ -1,0 +1,253 @@
+# Ralph Progress Log
+Started: Tue Mar 25 03:48:00 PM MST 2026
+---
+
+## Codebase Patterns
+- shared-types vitest config: `vitest.config.ts` with `globals: true`, import `{ describe, it, expect }` from "vitest" explicitly in test files
+- shared-types test location: `packages/shared-types/src/__tests__/`
+- CLI vitest config: `apps/cli/vitest.config.ts` with `globals: true`
+- API vitest config: `packages/api/vitest.config.ts` with `globals: true`
+- CLI tests use real temp directories (mkdtemp + rm cleanup)
+- pnpm filter names: `my-skills` (CLI), `@curiouslycory/shared-types`, `@curiouslycory/api`, `@curiouslycory/web`
+- `sourceToGitHub` was duplicated in add.ts, check.ts, update.ts — extracted to `services/source-parser.ts` for testability
+- Mocking `@curiouslycory/git-service`: use `vi.hoisted()` + class-based mock (class with property assignments) — `vi.fn().mockImplementation(() => ({...}))` does NOT work as constructor mock
+- Use `() => undefined` not `() => {}` for mock implementations — `@typescript-eslint/no-empty-function` rejects empty arrow functions
+- `vi.restoreAllMocks()` clears `mockReturnValue` set during `vi.hoisted()` — re-apply chainable returns (e.g., ora spinner) in `beforeEach`
+- For `ora` mock: create spinner object with `start/succeed/fail/stop` fns, set `mockReturnValue(spinner)` on each — `mockReturnThis()` doesn't work on plain objects
+- Avoid `importOriginal()` for manifest mock — inline pure functions (`addSkill`, `getSkill`) to avoid `@typescript-eslint/no-unsafe-return` lint errors
+- Testing Commander commands: use `program.exitOverride()` + `program.parseAsync(["node", "ms", "<cmd>", ...args])` to exercise full flag parsing
+- Inspecting mock call args: use `vi.mocked(fn).mock.calls[0][1] as unknown as Type` — avoids both `no-non-null-assertion` and `no-unsafe-assignment` lint rules
+- Avoid nested `expect.objectContaining()` — inner matchers return `any`, triggering `no-unsafe-assignment`
+- API router tests: mock `@curiouslycory/db/client` with `vi.mock("@curiouslycory/db/client", () => ({ db: {} }))` to prevent real SQLite init at import time
+- API router tests: mock `../../lib/config-sync` to avoid filesystem writes from `syncConfigToFile`
+- API test-utils: `createTestCaller` returns `{ db, caller, rawDb, repoPath }` — use `rawDb.exec("DELETE FROM ...")` to reset between tests
+- SQLite `unixepoch()` defaults have 1-second granularity — don't assert ordering by timestamp when items are inserted in the same second
+- `config-sync.ts` computes `CONFIG_DIR`/`CONFIG_PATH` at module scope from `homedir()` — must mock `node:os` BEFORE any import chain touches it; use `vi.hoisted()` with `require()` (not ESM imports) to create temp dir synchronously
+- When testing `scanAndSync`, cast `db` with `as Parameters<typeof scanAndSync>[1]` — test drizzle instance from `createTestCaller` lacks `$client` property present on the real `@curiouslycory/db/client` export
+- Disk-sync tests share `repoPath` — clean up `skills/` and `artifacts/` dirs in `beforeEach` to prevent cross-test pollution
+- Web vitest config: uses `@vitejs/plugin-react` for JSX transform (Next.js uses `jsx: "preserve"` so vitest needs the plugin), `jsdom` environment, path alias `~` → `./src`, CSS disabled
+- Web test-utils: mocks `next/navigation` (useRouter, useSearchParams, usePathname), wraps with `QueryClientProvider` — import `{ render, screen }` from `~/test-utils`
+- Web packages: `@vitejs/plugin-react` resolved via `catalog:`, `vitest` pinned to `^3.2.3` to match other packages (sherif enforces consistency)
+- Web component tests: mock `~/trpc/react` useTRPC to return nested query options, mock `@tanstack/react-query` useQuery to return controlled data. Use `vi.mock("next/navigation")` with STABLE references (not `new URLSearchParams()` per call) to avoid re-render loops from `useSearchParams` effect deps
+- Web component tests: mock `next/link` as `<a href={href}>{children}</a>` for link assertions
+- Web component tests: test-utils.tsx's `vi.mock("next/navigation")` overrides test file mocks — to control navigation per-test, bypass test-utils by importing `@testing-library/react` directly with a local render wrapper
+- Web component tests: `useRouter()` mock MUST return a STABLE object — new objects per call break `useCallback` deps → cascading re-renders → broken controlled inputs
+
+---
+
+## 2026-03-25 - US-001
+- Implemented: Added vitest infrastructure to shared-types package (vitest.config.ts, test script, vitest devDep). Created frontmatter.test.ts with 26 tests covering parseSkillFrontmatter (all fields, missing name/description, empty name, optional fields), buildSkillContent (markdown output, round-trip, empty body), and AgentIdSchema (all 10 valid IDs, invalid rejection, count check).
+- Files changed: `packages/shared-types/vitest.config.ts` (new), `packages/shared-types/package.json`, `packages/shared-types/src/__tests__/frontmatter.test.ts` (new), `pnpm-lock.yaml`
+- **Learnings for future iterations:**
+  - SkillFrontmatterSchema uses `z.string()` without `min(1)` for `name` — empty string is accepted, not rejected
+  - gray-matter's `matter.stringify(body, data)` produces frontmatter + body; `matter(content)` parses it back
+  - The `AgentIdSchema.options` property contains the enum values array — useful for exhaustive testing
+---
+
+## 2026-03-25 - US-002
+- Implemented: Created `apps/cli/tests/core/skill-resolver.test.ts` with 10 tests covering resolveSkill (finding in nested dirs, file collection, sorted paths, nested subdirs), directory skipping (node_modules, .git), invalid frontmatter handling, and skill-not-found errors. Extracted `sourceToGitHub` from 3 command files into `services/source-parser.ts` and added 3 tests (valid owner/repo, single segment throws, empty string throws) to existing source-parser.test.ts.
+- Files changed: `apps/cli/tests/core/skill-resolver.test.ts` (new), `apps/cli/tests/services/source-parser.test.ts` (extended), `apps/cli/src/services/source-parser.ts` (added sourceToGitHub export), `apps/cli/src/commands/add.ts` (import refactor), `apps/cli/src/commands/check.ts` (import refactor), `apps/cli/src/commands/update.ts` (import refactor)
+- **Learnings for future iterations:**
+  - `sourceToGitHub` was duplicated across add.ts, check.ts, update.ts — consolidating to source-parser.ts eliminates duplication and makes it testable
+  - `walkForSkillByName` silently catches errors from `parseSkillFrontmatter` (invalid YAML) and continues walking — this is by design, not a bug
+  - `collectAllFiles` returns sorted relative paths with `/` separators (not OS-specific)
+---
+
+## 2026-03-25 - US-003
+- Implemented: Created `apps/cli/tests/core/skill-installer.test.ts` with 8 tests covering installSkill end-to-end: file copying, directory structure preservation, SHA-256 hash return, deterministic hashing, hash changes on content/file changes, automatic target directory creation, and hash consistency with direct computeSkillHash.
+- Files changed: `apps/cli/tests/core/skill-installer.test.ts` (new)
+- **Learnings for future iterations:**
+  - `installSkill` is a thin wrapper: mkdir + cp(recursive) + computeSkillHash — test the end-to-end flow, not the internals
+  - The destination path is `join(targetDir, skill.name)` — the skill name becomes a subdirectory
+  - `cp` with `{ recursive: true }` copies the entire directory tree faithfully
+  - Use `makeResolvedSkill` helper to build the `ResolvedSkill` type for test inputs
+---
+
+## 2026-03-25 - US-004
+- Implemented: Created `apps/cli/tests/services/cache.test.ts` with 16 tests covering getCachePath (path construction), isCacheStale (fresh/expired/missing/corrupt/NaN), getCachedRepoPath (.git present/absent), discoverSkills (nested dirs, multiple skills, invalid frontmatter, empty repo, node_modules/.git skipping), and fetchRepo (clone for new, fetch+resetHard for existing, metadata write).
+- Files changed: `apps/cli/tests/services/cache.test.ts` (new)
+- **Learnings for future iterations:**
+  - `vi.fn().mockImplementation(() => ({...}))` does NOT work as a constructor mock for workspace packages — use a class with property assignments instead
+  - `vi.hoisted()` is required when mock factory functions reference variables defined at module scope — otherwise vi.mock hoisting runs before variable initialization
+  - `isCacheStale` with NaN `lastFetched` returns `false` (not `true`) because `NaN > number` evaluates to `false` in JS — this is a quirk of the implementation
+  - `loadConfig` mock needs explicit return type cast to avoid `@typescript-eslint/no-unsafe-return` lint error
+---
+
+## 2026-03-25 - US-005
+- Implemented: Improved `loadManifest` error handling to distinguish JSON parse errors, Zod validation errors, and filesystem errors (ENOENT returns null, others re-throw). Added 5 new tests: corrupted JSON logs chalk.yellow warning, invalid Zod shape logs schema warning, non-ENOENT filesystem errors re-throw, getSkill missing key edge case, removeSkill missing key idempotency.
+- Files changed: `apps/cli/src/core/manifest.ts` (improved error handling), `apps/cli/tests/core/manifest.test.ts` (extended with error path tests)
+- **Learnings for future iterations:**
+  - The original `loadManifest` had a bare `catch` swallowing all errors — improved to distinguish error types
+  - Use `vi.spyOn(console, "warn").mockImplementation(() => undefined)` not `() => {}` to satisfy `@typescript-eslint/no-empty-function`
+  - To simulate non-ENOENT filesystem errors, create `.my-skills.json` as a directory (triggers EISDIR on readFile)
+---
+
+## 2026-03-25 - US-006
+- Implemented: Added error handling to `migrateFromSkillsLock` for corrupt JSON (catches parse error, logs chalk.yellow warning, returns null) and legacy 'gitlab' sourceType defaulting to 'github'. Added 3 new tests: corrupt JSON handling, gitlab->github sourceType migration, and valid migration shape verification (version, installedAt timestamp, sourceType, agents array). Also fixed existing test's `() => {}` to `() => undefined`.
+- Files changed: `apps/cli/src/core/migration.ts` (added chalk import, try/catch for JSON.parse, gitlab->github defaulting), `apps/cli/tests/core/migration.test.ts` (3 new error path tests + lint fix)
+- **Learnings for future iterations:**
+  - `migrateFromSkillsLock` previously had no error handling for corrupt `skills-lock.json` — `JSON.parse` would throw unhandled
+  - The `sourceType` cast was `as "github" | "gitlab" | "url" | "local"` — gitlab is a legacy value that should be defaulted to github
+  - Follow the same chalk.yellow warning pattern used in manifest.ts for consistency
+---
+
+## 2026-03-25 - US-007
+- Implemented: Created `apps/cli/tests/commands/add-errors.test.ts` with 7 tests covering restoreFromManifest error paths (non-github sourceType skipping, hash mismatch re-install, fetch failure continuation, hash computation failure fallback) and installSingleSkill error paths (skill not found message, process.exitCode=1 on failure, success manifest update). Added `process.exitCode = 1` to installSingleSkill catch block.
+- Files changed: `apps/cli/tests/commands/add-errors.test.ts` (new), `apps/cli/src/commands/add.ts` (added process.exitCode = 1)
+- **Learnings for future iterations:**
+  - `vi.restoreAllMocks()` clears ALL mock return values including those set during `vi.hoisted()` — must re-apply in `beforeEach`
+  - `mockReturnThis()` doesn't work on plain objects — use explicit `mockReturnValue(spinner)` for chainable mocks like ora
+  - Avoid `importOriginal()` with spread for manifest mock — `@typescript-eslint/no-unsafe-return` rejects spreading unknown types. Inline pure functions instead.
+  - `installSingleSkill` didn't set `process.exitCode = 1` on failure — added to match config command pattern
+  - Separate test files for heavily-mocked vs real-filesystem tests avoids `vi.mock` hoisting conflicts
+---
+
+## 2026-03-25 - US-008
+- Implemented: Created `apps/cli/tests/commands/add-flags.test.ts` with 11 tests covering all add command flags: `--list` (shows skills without installing, empty repo message), `--all` (installs all with `*` wildcard), `--skill` (comma-separated parsing, `*` wildcard), `--agent` (valid IDs validated, invalid ID rejected), `--favorite` (adds to config, no duplicate), `--global` (targets ~/.agents/skills), `--yes` (skips interactive prompts).
+- Files changed: `apps/cli/tests/commands/add-flags.test.ts` (new)
+- **Learnings for future iterations:**
+  - Use `Commander.exitOverride()` to prevent `process.exit` during tests — throws `CommanderError` instead
+  - The add command action handler is tested through `program.parseAsync(["node", "ms", "add", ...args])` — this exercises the full Commander flag parsing pipeline
+  - `--all` flag sets `opts.skill ??= "*"` and `opts.agent ??= "*"` and `opts.yes = true` — it doesn't override explicit values
+  - `--favorite` checks `config.favoriteRepos.includes(githubSource.url)` before adding — deduplication is built-in
+  - Mock `process.cwd()` with `vi.spyOn(process, "cwd").mockReturnValue(projectRoot)` to control `resolveTargetDir` behavior
+---
+
+## 2026-03-25 - US-009
+- Implemented: Created `apps/cli/tests/commands/remove-flags.test.ts` with 8 tests covering all remove command flags: `--skill` (comma-separated names removes multiple skills), `--all` (removes all installed skills, implies `--yes`), `--global` (targets `~/.agents/skills`), `--yes` (skips confirmation), skill-not-installed error message, no-skills-installed early exit (empty manifest and null manifest), and adapter removal failure (logs warning, continues).
+- Files changed: `apps/cli/tests/commands/remove-flags.test.ts` (new)
+- **Learnings for future iterations:**
+  - The remove command's early exit checks `Object.keys(manifest.skills).length === 0` — to test "skill not installed" error from `removeSingleSkill`, the manifest must have at least one OTHER skill
+  - `--all` sets `opts.yes = true` implicitly — no confirmation prompt needed
+  - `removeSkill` mock must return a new manifest with the skill key deleted (use destructuring `{ [name]: _, ...rest }`)
+  - The remove command uses `@inquirer/checkbox` for interactive selection (no args, no `--skill`, no `--all`) and `@inquirer/confirm` for per-skill confirmation (dynamic import inside `removeSingleSkill`)
+---
+
+## 2026-03-25 - US-010
+- Implemented: Extended `apps/cli/tests/commands/update.test.ts` with 8 new tests (13 total) covering single skill argument (updates only named skill, error for missing skill), error paths (fetch failure, process.exitCode=1 on failure, unsupported source type), and summary output (mixed counts, updated count, manifest hash and installedAt verification). Added `process.exitCode = 1` when failures occur, matching other commands' patterns.
+- Files changed: `apps/cli/tests/commands/update.test.ts` (extended), `apps/cli/src/commands/update.ts` (added process.exitCode = 1)
+- **Learnings for future iterations:**
+  - The update command was missing `process.exitCode = 1` on failure — added for consistency with add and config commands
+  - Avoid nested `expect.objectContaining()` — triggers `@typescript-eslint/no-unsafe-assignment` because inner matchers return `any`. Use `as unknown as Type` cast on mock call args instead
+  - `vi.mocked(fn).mock.calls[0][1]` is the cleanest way to inspect specific call arguments — cast with `as unknown as Type` to avoid lint issues
+  - `@typescript-eslint/no-non-null-assertion` and `@typescript-eslint/non-nullable-type-assertion-style` conflict — using `as unknown as Type` avoids both
+---
+
+## 2026-03-25 - US-011
+- Implemented: Created `apps/cli/tests/commands/list-extended.test.ts` with 8 tests covering scanSkillsDir (ENOENT returns empty silently, invalid SKILL.md skipped while valid returned, all-invalid returns empty), --interactive flag (checkbox presented with skills, selected triggers removeSingleSkill, empty selection shows message, null manifest during removal handled), and --json output format (valid JSON with correct fields, empty result with filters).
+- Files changed: `apps/cli/tests/commands/list-extended.test.ts` (new)
+- **Learnings for future iterations:**
+  - `scanSkillsDir` is only exercised via `--global` flag — mock `node:os` homedir to control the directory path
+  - Use `vi.mock("node:os", async (importOriginal) => { const actual = await importOriginal<typeof import("node:os")>(); ... })` — generic `importOriginal` avoids unnecessary type assertion lint error
+  - The list command's `--interactive` path imports `removeSingleSkill` from `./remove.js` — mock that module to isolate list command behavior
+  - `scanSkillsDir` silently catches errors from `parseSkillFrontmatter` and `readFile` — no warning is logged, the skill is just skipped
+  - Create a `getJsonOutput()` helper to extract and parse JSON from `console.log` mock calls — avoids non-null assertions on the call array
+---
+
+## 2026-03-25 - US-012
+- Implemented: Improved `checkSingleSkill` error handling to distinguish error types: non-github sourceType now logs `unsupported source type "<type>"` via `console.warn`, and caught errors now log the actual error message instead of silently returning "remote unavailable". Added 6 new tests (11 total) covering: unsupported source type warning, actual network error message logging, resolveSkill failure message, non-Error thrown values (String coercion), null manifest, and empty skills manifest.
+- Files changed: `apps/cli/src/commands/check.ts` (improved error logging), `apps/cli/tests/commands/check.test.ts` (6 new tests)
+- **Learnings for future iterations:**
+  - The `checkSingleSkill` catch block previously swallowed all errors — now logs `chalk.yellow` with actual message for debuggability
+  - For testing non-Error rejection, use `new Promise((_resolve, reject) => { reject("value"); })` with inline eslint-disable — `Promise.reject("value")` with block-level eslint-disable doesn't work
+  - The `CheckStatus` type is a union used in table formatting — keep error details in `console.warn`, not in the status column
+---
+
+## 2026-03-25 - US-013
+- Implemented: Created `apps/cli/tests/adapters/registry.test.ts` with 26 tests covering SYMLINK_AGENTS (exactly 7 IDs), adapterRegistry (all 10 agents registered, correct adapter types — 7 SymlinkAdapter, CopilotAdapter, CodexAdapter, GeminiAdapter), getAdapter (returns adapter for all 10 IDs, throws for invalid), getEnabledAdapters (correct list, empty input, invalid ID throws). Created `apps/cli/tests/bin/my-skills.test.ts` with 2 tests covering entry point (createProgram + parse called, error propagation on parse failure).
+- Files changed: `apps/cli/tests/adapters/registry.test.ts` (new), `apps/cli/tests/bin/my-skills.test.ts` (new)
+- **Learnings for future iterations:**
+  - The adapterRegistry uses SymlinkAdapter for 7 agents, CopilotAdapter/CodexAdapter/GeminiAdapter for 3 specialized agents — the NativeAdapter fallback loop registers zero agents since all 10 are already covered
+  - Testing side-effecting modules (like bin/my-skills.ts) requires `vi.mock` before dynamic `import()` — module caching means re-import won't re-execute, use `vi.resetModules()` + `vi.doMock()` for re-testing
+  - `instanceof` checks work for adapter type verification since the registry exports the actual class instances, not mocked versions
+  - The entry point has no error handler — parse errors propagate unhandled
+---
+
+## 2026-03-25 - US-014
+- Implemented: Created `packages/api/src/lib/safe-json.ts` with `safeParseJsonArray` utility and `packages/api/src/lib/__tests__/safe-json.test.ts` with 8 tests covering: null input, valid JSON array, empty array, invalid JSON (warns), non-array object/string/number (warns), and mixed array with non-strings (filters to strings, warns).
+- Files changed: `packages/api/src/lib/safe-json.ts` (new), `packages/api/src/lib/__tests__/safe-json.test.ts` (new)
+- **Learnings for future iterations:**
+  - The safe-json source file didn't exist on the branch despite `.d.ts` in dist — the dist artifacts were stale from a previous build. Had to create the implementation from the type signature.
+  - API package vitest config uses `globals: true` but explicit imports from "vitest" still work and are preferred for clarity
+  - `console.warn` spy pattern: `vi.spyOn(console, "warn").mockImplementation(() => undefined)` — same pattern as CLI tests
+---
+
+## 2026-03-25 - US-016
+- Implemented: Created `packages/api/src/router/__tests__/skill.test.ts` with 28 tests (skill router: list with category/tag filters, byId, create with disk write, update with disk write, delete with disk cleanup; artifact router: list excludes 'skill' category, create with valid categories, rejects 'skill' category, byId, update, delete with disk cleanup). Created `packages/api/src/router/__tests__/composition.test.ts` with 22 tests (create, byId with resolved fragments preserving order, list with outdated detection, update, delete, preview with merge ordering, exportMarkdown).
+- Files changed: `packages/api/src/router/__tests__/skill.test.ts` (new), `packages/api/src/router/__tests__/composition.test.ts` (new)
+- **Learnings for future iterations:**
+  - Use `as unknown as Parameters<typeof caller.artifact.create>[0]` to pass invalid enum values in tests — avoids `@typescript-eslint/no-unsafe-assignment` from `as any`
+  - Insert test data directly via `rawDb.exec` for setup when you don't want router side effects (like disk writes from skill.create)
+  - The artifact router uses `CATEGORY_DIR_MAP` for disk paths: agents → `artifacts/agents/`, prompts → `artifacts/prompts/`, claudemds → `artifacts/claudemds/`
+  - Composition `list` checks `outdated` by comparing fragment `updated_at` vs composition `updated_at` — update skills with `unixepoch() + N` offset to test this
+  - The `mergeFragments` function from `lib/merge.ts` is the engine behind both `preview` and `exportMarkdown` — it does heading-aware markdown merging
+---
+
+## 2026-03-25 - US-015
+- Implemented: Created `packages/api/src/test-utils.ts` with `createTestCaller` that provisions an in-memory SQLite DB (all 5 tables + FTS5), wraps with drizzle, and returns a tRPC caller. Created `packages/api/src/router/__tests__/favorite.test.ts` with 23 tests covering: add (new, duplicate, skill-level, NULL skillName), remove (by ID, nonexistent), toggle (add/remove/boolean return), isFavorited (true/false/repo-vs-skill distinction), list (pagination, search by name/repoUrl, type filter, sort asc/desc, defaults), stats (counts, zeros, topRepos). Added `better-sqlite3` and `drizzle-orm` as devDeps to API package.
+- Files changed: `packages/api/src/test-utils.ts` (new), `packages/api/src/router/__tests__/favorite.test.ts` (new), `packages/api/package.json` (devDeps), `pnpm-lock.yaml`
+- **Learnings for future iterations:**
+  - Must mock `@curiouslycory/db/client` in test files to prevent the real DB client from initializing at import time — it runs `initFTS(sqlite)` as a side effect
+  - Must mock `../../lib/config-sync` to prevent `syncConfigToFile` from writing to `~/.my-skills/config.json`
+  - Use dynamic import `const { createTestCaller } = await import("../../test-utils")` after `vi.mock` calls to ensure mocks are in place
+  - SQLite `unixepoch()` has 1-second resolution — items inserted in the same second have identical timestamps, so don't assert ordering by addedAt
+  - `createTestCaller` needs explicit return type annotation (`Promise<TestContext>`) to avoid TS2742/TS4058 errors about unportable inferred types from `@trpc/server` internals
+  - Use `(added as { id: string }).id` pattern instead of `added!.id` to satisfy `@typescript-eslint/no-non-null-assertion`
+---
+
+## 2026-03-25 - US-017
+- Implemented: Created `packages/api/src/lib/__tests__/disk-sync.test.ts` with 8 tests covering scanAndSync: adds new skills to DB, updates existing on content change, removes stale DB entries not on disk, handles invalid frontmatter (skips), empty skills dir (zero counts), nonexistent skills dir (zero counts), artifacts from category subdirectories (agent/prompt), and mixed add/update/remove in one pass. Created `packages/api/src/lib/__tests__/config-sync.test.ts` with 6 tests covering syncConfigToFile: default config on empty DB, config assembly from DB rows, defaultAgents JSON parsing, invalid JSON fallback, favorite repos from favorites table (repo type only), and invalid symlinkBehavior ignored.
+- Files changed: `packages/api/src/lib/__tests__/disk-sync.test.ts` (new), `packages/api/src/lib/__tests__/config-sync.test.ts` (new)
+- **Learnings for future iterations:**
+  - `config-sync.ts` has `CONFIG_DIR = join(homedir(), ".my-skills")` computed at module scope — mock `node:os` homedir BEFORE any import chain triggers that module load. Use `vi.hoisted()` with `require()` calls (not ESM imports) to create a temp dir synchronously.
+  - ESM imports are NOT available inside `vi.hoisted()` callbacks — use `require("node:fs")`, `require("node:os")`, etc. instead
+  - The test drizzle instance from `createTestCaller` has type `BetterSQLite3Database<typeof schema>` but `scanAndSync` expects `typeof dbInstance` which includes `$client: Database`. Cast with `as Parameters<typeof scanAndSync>[1]` to satisfy TypeScript.
+  - Disk-sync tests share a `repoPath` temp dir — must clean up `skills/` and `artifacts/` directories in `beforeEach` to prevent leaked state from prior tests affecting counts
+  - `CATEGORY_DIR_MAP` maps `agent` → `"agents"`, `prompt` → `"prompts"`, `claudemd` → `"claudemds"` — artifact dirs are `artifacts/<map value>/<name>/SKILL.md`
+---
+
+## 2026-03-25 - US-018
+- Implemented: Created `packages/api/src/router/__tests__/search.test.ts` with 16 tests covering: empty query (returns recent items, category filter, non-existent category), FTS match (search term with snippets/mark tags, matches across fields, prefix matching, category filter with FTS), pagination (limit, offset, limit+offset together), result shape (camelCase field mapping, snippet with mark tags, null snippet for empty queries), edge cases (empty DB, whitespace-only query, multi-word search).
+- Files changed: `packages/api/src/router/__tests__/search.test.ts` (new)
+- **Learnings for future iterations:**
+  - FTS5 triggers auto-populate `skills_fts` when inserting into `skills` table — no manual FTS insert needed
+  - The search router uses raw SQL with `ctx.db.all()` for FTS queries (not drizzle query builder) — returns snake_case columns that are manually mapped to camelCase
+  - `snippet(skills_fts, -1, '<mark>', '</mark>', '...', 48)` generates highlighted snippets — the `-1` means match any column
+  - Whitespace-only queries are treated as empty queries (returns all recent items) due to the `!query || query.trim() === ""` check
+  - Seed test data with `rawDb.exec(INSERT ...)` to avoid router side effects (like disk writes from skill.create)
+---
+
+## 2026-03-25 - US-019
+- Implemented: Set up vitest + testing-library infrastructure for the web app. Created `apps/web/vitest.config.ts` (jsdom environment, `@vitejs/plugin-react` for JSX, path alias `~` → `./src`, CSS disabled). Created `apps/web/src/test-setup.ts` (imports `@testing-library/jest-dom/vitest` for extended matchers). Created `apps/web/src/test-utils.tsx` (mocks `next/navigation`, wraps with `QueryClientProvider`, exports custom `render`, `screen`, `userEvent`, etc.). Added `test` script to package.json. Created smoke test at `apps/web/src/app/_components/__tests__/smoke.test.tsx`.
+- Files changed: `apps/web/vitest.config.ts` (new), `apps/web/src/test-setup.ts` (new), `apps/web/src/test-utils.tsx` (new), `apps/web/src/app/_components/__tests__/smoke.test.tsx` (new), `apps/web/package.json` (added devDeps + test script), `pnpm-lock.yaml`
+- **Learnings for future iterations:**
+  - Next.js uses `jsx: "preserve"` in tsconfig — vitest needs `@vitejs/plugin-react` to handle JSX transform (without it, "React is not defined" error)
+  - `@vitejs/plugin-react` resolves via `catalog:` in this monorepo (pnpm workspace catalogs)
+  - `vitest` version must be `^3.2.3` to match other packages — sherif enforces version consistency across workspaces
+  - The `import/consistent-type-specifier-style` ESLint rule requires top-level `import type` instead of inline `type` in import specifiers
+  - `@testing-library/jest-dom/vitest` (not `/extend-expect`) is the correct import for vitest integration
+  - `next/navigation` (not `next/router`) is what Next.js App Router uses — mock `useRouter`, `useSearchParams`, `usePathname`
+---
+
+## 2026-03-25 - US-020
+- Implemented: Created `apps/web/src/app/_components/__tests__/search-results.test.tsx` with 16 tests covering: parseTags (valid JSON array renders tags, invalid JSON renders no tags), component rendering (search input, category filter select with all options), empty state (no results message), loading skeleton (animate-pulse elements), result cards (name/description/category badge), link routing (skill → `/skills/:id`, artifact → `/artifacts/:category/:id`), snippet rendering (dangerouslySetInnerHTML with mark tags), tag badges on cards, search input interactivity (type and controlled value), queryOptions integration (called with query/category), multiple results, null category handling.
+- Files changed: `apps/web/src/app/_components/__tests__/search-results.test.tsx` (new)
+- **Learnings for future iterations:**
+  - `useSearchParams` mock must return a STABLE reference — `new URLSearchParams()` per call creates a new object each render, triggering the `[searchParams]` effect which resets controlled input state to `""`
+  - Mock `next/link` as `<a href={href}>{children}</a>` for testing link `href` attributes
+  - Mock `@tanstack/react-query` useQuery with `importOriginal` spread — need `eslint-disable @typescript-eslint/no-unsafe-return` for the wrapper function
+  - The component uses `useTRPC().search.query.queryOptions(...)` with `useQuery` — mock both: `useTRPC` returns nested object, `useQuery` returns `{ data, isLoading }`
+  - `dangerouslySetInnerHTML` content can be asserted via `screen.getByText` with a custom matcher checking `element?.innerHTML`
+  - The PRD mentions `sanitizeSnippet` and `sanitize-html` but the component doesn't use them — test what actually exists
+---
+
+## 2026-03-25 - US-021
+- Implemented: Created `apps/web/src/app/_components/__tests__/favorite-list.test.tsx` with 21 tests covering: render with data (table items with name/type badge/repo URL, skill name column, null skill name dash, date formatting), search input (placeholder, typing updates value), type filter buttons (All/Repos/Skills rendered, clicking Repos/Skills calls router.replace with correct type param), pagination (page indicator, Previous disabled on first page, multi-page count), empty state (no favorites message, Add Favorite button, "No results." when filter active), remove action (Remove button per row, confirmation dialog opens, Cancel/Remove in dialog, confirming calls mutate with correct id), query options (correct params passed, type filter forwarded).
+- Files changed: `apps/web/src/app/_components/__tests__/favorite-list.test.tsx` (new)
+- **Learnings for future iterations:**
+  - The `vi.mock("next/navigation")` in test-utils.tsx OVERRIDES any `vi.mock("next/navigation")` in test files — test-utils is imported later, so its mock wins. To control navigation mocks per-test, either: (a) use `vi.mocked()` if test-utils uses `vi.fn()` wrappers, or (b) bypass test-utils by importing `@testing-library/react` directly and creating a local render wrapper
+  - FavoriteList uses `useSuspenseQuery` (not `useQuery`) — mock must return `{ data: { items, totalCount } }` synchronously (no loading state needed since Suspense handles it)
+  - The `useRouter()` mock MUST return a stable object reference — returning `{ replace: vi.fn() }` per call creates a new object each render, causing `useCallback` deps to change and cascading re-renders that break controlled input state
+  - AlertDialog from Radix UI works in jsdom — clicking the trigger button opens the dialog content, no special portal mocking needed
+  - Mock `AddFavoriteDialog` as a simple button to isolate FavoriteList tests from its tRPC dependencies
+---

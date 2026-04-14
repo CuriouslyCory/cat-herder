@@ -1,0 +1,324 @@
+{
+  "project": "my-skills",
+  "branchName": "feat/code-review-fixes",
+  "description": "Resolve 27 code review findings: security vulnerabilities, silent failure patterns, type safety gaps, dead code, and code quality improvements",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Harden auth secret when auth is enabled",
+      "description": "As a deployer, I want the app to refuse to start with a guessable JWT secret when auth is enabled, so that forgetting to set AUTH_SECRET doesn't create a security hole.",
+      "acceptanceCriteria": [
+        "In packages/auth/src/index.ts, modify getSecret() to throw an error when isAuthEnabled() returns true and AUTH_SECRET env var is not set",
+        "Keep the 'dev-secret-do-not-use-in-prod' fallback only when auth is disabled (ADMIN_USER not set)",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "isAuthEnabled() checks for ADMIN_USER env var. The getSecret() function is at line 30-34. Only 2-3 lines need to change."
+    },
+    {
+      "id": "US-002",
+      "title": "Sanitize search snippet HTML to prevent XSS",
+      "description": "As a user, I want search result snippets to be safe from XSS so that malicious skill content cannot execute scripts in my browser.",
+      "acceptanceCriteria": [
+        "Install isomorphic-dompurify (or sanitize-html) as a dependency in apps/web",
+        "In apps/web/src/app/_components/search-results.tsx, sanitize the result.snippet HTML before passing to dangerouslySetInnerHTML, allowing only the <mark> tag",
+        "The search highlight <mark> tags still render correctly after sanitization",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "The dangerouslySetInnerHTML is on line 146. The snippet comes from FTS5 snippet() function which wraps matches in <mark></mark> tags. Configure the sanitizer to ONLY allow <mark> tags."
+    },
+    {
+      "id": "US-003",
+      "title": "Remove CORS headers from tRPC route (same-origin only)",
+      "description": "As a developer, I want the tRPC API to be same-origin only so that cross-origin requests cannot reach the API.",
+      "acceptanceCriteria": [
+        "In apps/web/src/app/api/trpc/[trpc]/route.ts, remove the setCorsHeaders function entirely",
+        "Remove the OPTIONS export (preflight handler)",
+        "Remove the setCorsHeaders(response) call in the handler function",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "The file currently has: setCorsHeaders function (lines 13-18), OPTIONS export (lines 20-26), and setCorsHeaders(response) call (line 46). Remove all three. Keep the handler function and its GET/POST exports."
+    },
+    {
+      "id": "US-004",
+      "title": "Protect git read endpoints behind auth",
+      "description": "As a deployer, I want git status/log/diff/branches to require authentication when auth is enabled, so that repository information is not leaked to unauthenticated users.",
+      "acceptanceCriteria": [
+        "In packages/api/src/router/git.ts, change status, log, diff, and branches from publicProcedure to protectedProcedure",
+        "Import protectedProcedure from ../trpc if not already imported",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "When auth is disabled, getSession() in apps/web/src/auth/server.ts returns { user: { username: 'local' } }, so protectedProcedure will pass automatically. No conditional logic needed. The write operations (commit, push, pull, fetch, checkout) already use protectedProcedure."
+    },
+    {
+      "id": "US-005",
+      "title": "Fix merge.ts dead code, JSDoc, and parameter naming",
+      "description": "As a developer, I want the merge algorithm code to be accurate and free of dead branches so that the code matches its documentation.",
+      "acceptanceCriteria": [
+        "In packages/api/src/lib/merge.ts function findInMerged: remove the duplicate condition block at lines 123-126 (identical check to lines 120-122)",
+        "The second loop at lines 138-157 can never match because the first loop already returned on normalizedHeading match — remove it along with findInMergedByStructure and getChildSignature functions if they become unused",
+        "Remove the _sourceLevel parameter (and sourceSections/sourceIdx if unused after removing the second loop) or rename _sourceLevel to sourceLevel if still used",
+        "Update the mergeFragments JSDoc (line ~233) to remove the claim 'Level-offset matching: headings with same name at different levels merge if structure matches' since that behavior is not implemented",
+        "Existing merge tests must still pass: pnpm --filter api test",
+        "pnpm typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Read the full findInMerged function (lines 111-160) and mergeFragments JSDoc (lines 227-237) carefully. The key insight: line 120 checks ms.normalizedHeading === normalizedHeading and returns, so line 124 (same check) is dead, and lines 140-141 (same check with additional level condition) can never be true. Also check the merge test file at packages/api/src/lib/__tests__/merge.test.ts to ensure no tests depend on level-offset behavior."
+    },
+    {
+      "id": "US-006",
+      "title": "Fix cache.ts error handling and NaN staleness bug",
+      "description": "As a CLI user, I want cache staleness checks to handle corrupted metadata correctly so that a broken cache file doesn't silently make the cache appear fresh forever.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/services/cache.ts function isCacheStale: after parsing meta.lastFetched with new Date(), check if the resulting timestamp is NaN and treat it as stale (return true)",
+        "In the catch block, check for ENOENT specifically using (err as NodeJS.ErrnoException).code === 'ENOENT' — return true silently for ENOENT, log a console.warn for other errors then return true",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "The bug: new Date(meta.lastFetched).getTime() returns NaN for corrupted strings. Date.now() - NaN is NaN. NaN > ttlMs is false. So corrupted metadata makes the cache appear FRESH indefinitely instead of stale. The fix must check for NaN after the Date parse."
+    },
+    {
+      "id": "US-007",
+      "title": "Fix config env overrides bypassing Zod validation",
+      "description": "As a developer, I want environment variable overrides to be validated through the same Zod schema as the config file.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/core/config.ts, move the environment variable override assignments (process.env.MY_SKILLS_CACHE_DIR and process.env.MY_SKILLS_DIR) to apply to the merged object BEFORE calling ConfigSchema.parse(), not after",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Currently the env overrides are applied at lines ~34-39 AFTER ConfigSchema.parse(). Move them to before the parse call so they go through Zod validation too."
+    },
+    {
+      "id": "US-008",
+      "title": "Unify AdapterSkillEntry and ResolvedSkill types",
+      "description": "As a developer, I want a single canonical type for resolved skills so that the two identical type definitions cannot drift apart.",
+      "acceptanceCriteria": [
+        "Keep AdapterSkillEntry in apps/cli/src/adapters/types.ts as the canonical type (it has more importers)",
+        "In apps/cli/src/core/skill-resolver.ts, remove the local ResolvedSkill type definition and import AdapterSkillEntry from ../adapters/types instead",
+        "Re-export it as ResolvedSkill for backward compatibility: export type ResolvedSkill = AdapterSkillEntry",
+        "Update any direct imports of ResolvedSkill (check skill-installer.ts) to ensure they still resolve",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Both types have identical fields: name, sourcePath, frontmatter (SkillFrontmatter), content, files (string[]). AdapterSkillEntry is imported by 5 adapter files and 2 command files. ResolvedSkill is only imported by skill-installer.ts."
+    },
+    {
+      "id": "US-009",
+      "title": "Strengthen Zod schemas in shared-types",
+      "description": "As a developer, I want the Zod schemas to enforce real constraints so that invalid data is caught at parse time.",
+      "acceptanceCriteria": [
+        "In packages/shared-types/src/frontmatter.ts: add .min(1) to both name and description in SkillFrontmatterSchema",
+        "In packages/shared-types/src/index.ts: change ManifestSchema.agents from z.array(z.string()) to z.array(AgentIdSchema)",
+        "In packages/shared-types/src/index.ts: remove 'gitlab' and 'url' from SourceTypeSchema, leaving only z.enum(['github', 'local'])",
+        "In apps/cli/src/core/migration.ts: update the sourceType cast (line ~55) to default to 'github' if the legacy value is not 'github' or 'local', since removed values need a graceful fallback during migration",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "The SourceTypeSchema phantom variants 'gitlab' and 'url' have zero runtime handlers. No parser, adapter, or resolver handles them. The migration.ts cast at line 55 uses 'as' to force the type — replace with a conditional check that defaults unknown values to 'github'."
+    },
+    {
+      "id": "US-010",
+      "title": "Extract duplicated sourceToGitHub into shared utility",
+      "description": "As a developer, I want sourceToGitHub to exist in one place so that bug fixes don't need to be applied to three copies.",
+      "acceptanceCriteria": [
+        "Add a sourceToGitHub function to apps/cli/src/services/source-parser.ts that parses an 'owner/repo' manifest source string into a GitHubSource — use the same implementation currently in add.ts lines 47-59",
+        "Remove the sourceToGitHub function from apps/cli/src/commands/add.ts, check.ts, and update.ts",
+        "Update imports in all three command files to import sourceToGitHub from ../services/source-parser",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "The function is identically duplicated in add.ts (line 47), check.ts (line 25), and update.ts (line 35). source-parser.ts already exports parseSource and GitHubSource — sourceToGitHub is a natural addition."
+    },
+    {
+      "id": "US-011",
+      "title": "Improve adapter file-read helpers — distinguish ENOENT",
+      "description": "As a CLI user, I want adapter file reads to only return empty for missing files, so that permission errors don't silently clobber my config files.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/adapters/gemini.ts readFileOr function: catch only ENOENT errors and return the fallback; re-throw all other errors using (err as NodeJS.ErrnoException).code === 'ENOENT'",
+        "Apply the same fix to apps/cli/src/adapters/codex.ts readTomlFile function",
+        "Apply the same fix to apps/cli/src/adapters/copilot.ts readCopilotFile function",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "All three helper functions currently have bare catch blocks that return empty string for ANY error. The fix pattern: catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return fallback; throw err; }"
+    },
+    {
+      "id": "US-012",
+      "title": "Rename postRouter to skillsPreview (T3 scaffold cleanup)",
+      "description": "As a developer, I want the T3 scaffold 'post' naming cleaned up so that the router and component names match the domain.",
+      "acceptanceCriteria": [
+        "Rename packages/api/src/router/post.ts to packages/api/src/router/skills-preview.ts and rename the export from postRouter to skillsPreviewRouter",
+        "In packages/api/src/root.ts: update import and change the router key from 'post' to 'skillsPreview'",
+        "Rename apps/web/src/app/_components/posts.tsx to skills-preview.tsx; rename components from PostList/PostCard/PostCardSkeleton to SkillsPreviewList/SkillsPreviewCard/SkillsPreviewCardSkeleton",
+        "Grep for all trpc.post. references across the web app and update to trpc.skillsPreview. — also check for RouterOutputs['post']",
+        "Update the import in apps/web/src/app/(dashboard)/page.tsx or wherever PostList is imported",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "This is NOT dead code — the postRouter is actively used. It queries the skills table and displays them on the dashboard. The naming is just misleading T3 scaffold remnant. Grep thoroughly for 'post' references in the tRPC client usage."
+    },
+    {
+      "id": "US-013",
+      "title": "Clean up T3 boilerplate comments and validators package",
+      "description": "As a developer, I want stale T3 scaffold comments removed and the empty validators package documented.",
+      "acceptanceCriteria": [
+        "In packages/api/src/trpc.ts: remove the T3 header block (lines 1-8 starting with 'YOU PROBABLY DON'T NEED TO EDIT THIS FILE'), update the stale path reference from '/src/server/api/routers' to 'packages/api/src/router/'",
+        "In packages/validators/src/index.ts: replace the placeholder export with a comment explaining it is intentionally empty pending shared Zod schema consolidation, and keep a minimal export so the package compiles (export {})",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "The trpc.ts header (lines 1-8) and inline path references are T3 boilerplate that reference paths that don't exist in this project. The validators package at packages/validators/src/index.ts currently has only a placeholder 'unused' string schema."
+    },
+    {
+      "id": "US-014",
+      "title": "Add CLI exit codes and top-level error handler",
+      "description": "As a CI/CD operator, I want the CLI to exit with code 1 on failure so that automated pipelines can detect errors.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/bin/my-skills.ts: switch from program.parse() to program.parseAsync() with a .catch() handler that prints a user-friendly error message and sets process.exitCode = 1",
+        "In apps/cli/src/commands/add.ts function installSingleSkill: when installation fails in the catch block, set process.exitCode = 1",
+        "In apps/cli/src/commands/update.ts: when an update fails, set process.exitCode = 1",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "The CLI entry point at apps/cli/src/bin/my-skills.ts is only 4 lines. Commander.js supports parseAsync() for async command handlers. Setting process.exitCode (not process.exit()) allows cleanup to complete."
+    },
+    {
+      "id": "US-015",
+      "title": "Improve CLI config/manifest/migration error handling",
+      "description": "As a CLI user, I want meaningful error messages when my config or manifest files are corrupted.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/core/manifest.ts loadManifest(): catch ENOENT specifically and return null; for JSON SyntaxError, log a chalk.yellow warning suggesting the manifest is corrupted; for ZodError, log a warning suggesting a version mismatch; for other errors (EACCES etc), re-throw",
+        "In apps/cli/src/core/config.ts loadConfig(): catch ENOENT specifically and use defaults silently; for other errors, log a chalk.yellow warning before falling back to defaults",
+        "In apps/cli/src/core/migration.ts migrateFromSkillsLock(): wrap the JSON.parse(lockContent) call at line 44 in a try-catch that logs a warning about corrupted lock file and returns null",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "Import chalk in migration.ts if not already imported. The key pattern: catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return fallback; if (err instanceof SyntaxError) warn('corrupted JSON'); if (err instanceof ZodError) warn('schema mismatch'); throw err; }"
+    },
+    {
+      "id": "US-016",
+      "title": "Create safeParseJsonArray utility and fix unsafe JSON.parse calls",
+      "description": "As a developer, I want JSON text columns to be parsed safely so that one corrupted database row doesn't crash entire API endpoints.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/safe-json.ts with a safeParseJsonArray(raw: string | null): string[] function that tries JSON.parse, validates the result is an array of strings, returns [] on any failure with a console.warn log",
+        "In packages/api/src/router/skill.ts: replace JSON.parse(row.tags) as string[] with safeParseJsonArray(row.tags)",
+        "In packages/api/src/router/composition.ts: replace all JSON.parse(comp.fragments) as string[] and JSON.parse(comp.order) as string[] calls with safeParseJsonArray",
+        "pnpm typecheck passes",
+        "pnpm --filter api test passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "There are at least 5 instances of JSON.parse(...) as string[] across the API routers: skill.ts line 36, composition.ts lines 20, 45, 177, 178. The utility should handle null input gracefully (return [])."
+    },
+    {
+      "id": "US-017",
+      "title": "Improve CLI silent failure handling across commands",
+      "description": "As a CLI user, I want warnings when operations partially fail so that I can diagnose issues instead of getting misleading results.",
+      "acceptanceCriteria": [
+        "In apps/cli/src/core/skill-resolver.ts walkForSkillByName(): in the catch block where frontmatter parse fails (line ~62-69), add console.warn with chalk.yellow showing the file path and error message",
+        "In apps/cli/src/commands/list.ts scanSkillsDir(): in the readdir catch (line ~41), check for ENOENT and return [] silently; for other errors log a warning. In the SKILL.md parsing catch (line ~56), log a warning that the skill was skipped",
+        "In apps/cli/src/commands/check.ts checkSingleSkill(): in the catch block (line ~75-82), log the actual error message instead of always saying 'remote unavailable'",
+        "In apps/cli/src/commands/add.ts restoreFromManifest(): in the empty catch block (line ~147-149), add a console.warn logging why the hash check failed",
+        "pnpm typecheck passes",
+        "pnpm --filter cli test passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Import chalk in any file that doesn't already have it. The pattern: catch (err) { console.warn(chalk.yellow(`Warning: ...${(err as Error).message}`)); }"
+    },
+    {
+      "id": "US-018",
+      "title": "Use ArtifactCategorySchema consistently in routers",
+      "description": "As a developer, I want category inputs validated against the actual enum so that invalid categories are rejected at the API boundary.",
+      "acceptanceCriteria": [
+        "In packages/api/src/router/skill.ts: replace z.string().optional() for category in list/create/update inputs with ArtifactCategorySchema.optional() — import ArtifactCategorySchema from @curiouslycory/shared-types",
+        "In packages/api/src/router/artifact.ts: remove the local artifactCategorySchema declaration and import ArtifactCategorySchema from @curiouslycory/shared-types; for the artifact-only subset excluding 'skill', use z.enum(['agent', 'prompt', 'claudemd']) or ArtifactCategorySchema.exclude(['skill']) if supported by the Zod version",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Check the Zod version in use — the project uses zod/v4. If .exclude() is not available, define a separate ArtifactOnlyCategorySchema in shared-types or keep a local z.enum(['agent', 'prompt', 'claudemd']) but add a comment referencing ArtifactCategorySchema as the source of truth."
+    },
+    {
+      "id": "US-019",
+      "title": "Improve API-layer error handling in disk-sync and config-sync",
+      "description": "As a web app user, I want to know when background sync operations fail so I don't think my changes were saved when they weren't.",
+      "acceptanceCriteria": [
+        "In packages/api/src/lib/disk-sync.ts: add skipped count and errors string array to the return type of syncSkillsFromDisk and syncArtifactsFromDisk; in the catch-continue blocks, push the error message and increment skipped; add console.warn for each skipped item",
+        "In packages/api/src/lib/config-sync.ts: in the defaultAgents JSON.parse catch block, add a console.warn log about the parse failure",
+        "In packages/api/src/router/favorite.ts and packages/api/src/router/config.ts: ensure the syncConfigToFile .catch() handlers log enough context (which operation, which file) to be debuggable in server logs",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "The disk-sync return type currently has { added, updated, removed }. Add { skipped, errors } fields. The config-sync catch at lines 36-42 silently keeps defaults on parse failure."
+    },
+    {
+      "id": "US-020",
+      "title": "Add DB CHECK constraints for category and type columns",
+      "description": "As a developer, I want the database to reject invalid category and type values at the DB layer.",
+      "acceptanceCriteria": [
+        "In packages/db/src/schema.ts: add a CHECK constraint on skills.category limiting values to ('skill', 'agent', 'prompt', 'claudemd') using Drizzle's check() or raw SQL",
+        "Add a CHECK constraint on favorites.type limiting values to ('repo', 'skill')",
+        "If Drizzle's current version doesn't support .check() on SQLite, add the constraints via raw SQL in the FTS initialization code or a separate initConstraints function",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "Drizzle ORM's SQLite dialect may or may not support .check() constraints depending on version. Check the Drizzle docs and the project's drizzle-orm version. If not supported, use db.run(sql`ALTER TABLE...`) or create a migration. Note: existing data must already conform to these constraints."
+    },
+    {
+      "id": "US-021",
+      "title": "Fix FTS5 trigger design — use rowid-based matching",
+      "description": "As a developer, I want FTS5 triggers to use rowid-based matching so that updates and deletes are reliable.",
+      "acceptanceCriteria": [
+        "In packages/db/src/fts.ts: convert to FTS5 external content table: CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(name, description, tags, content, content=skills, content_rowid=rowid)",
+        "Update INSERT trigger to include rowid: INSERT INTO skills_fts(rowid, name, description, tags, content) VALUES (NEW.rowid, ...)",
+        "Update UPDATE trigger DELETE to use rowid: DELETE FROM skills_fts WHERE rowid = OLD.rowid (replaces the fragile 4-column match)",
+        "Update DELETE trigger similarly: DELETE FROM skills_fts WHERE rowid = OLD.rowid",
+        "In packages/api/src/router/search.ts: update the FTS JOIN from s.name = skills_fts.name AND s.description = skills_fts.description to s.rowid = skills_fts.rowid",
+        "Search must still work end-to-end after the change",
+        "pnpm typecheck passes",
+        "pnpm build passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "HIGH RISK STORY. SQLite tables always have an implicit rowid even with TEXT primary keys. The external content table pattern (content=skills, content_rowid=rowid) tells FTS5 to read content from the skills table by rowid. The old FTS table must be dropped and recreated — add DROP TABLE IF EXISTS skills_fts before the CREATE. Also drop the old triggers before recreating them (DROP TRIGGER IF EXISTS skills_ai/skills_au/skills_ad). Test search thoroughly."
+    }
+  ]
+}

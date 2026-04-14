@@ -1,0 +1,1187 @@
+{
+  "project": "my-skills",
+  "branchName": "feat/my-skills-v1",
+  "description": "my-skills - AI Agent Skills Manager CLI and Web App. Backwards-compatible replacement for npx skills with multi-tool support, web UI, composition builder, and favorites system.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Scaffold monorepo with create-t3-turbo",
+      "description": "As a developer, I need the monorepo scaffolded so that all packages can be developed and built together.",
+      "acceptanceCriteria": [
+        "Run `npx create-turbo@latest -e https://github.com/t3-oss/create-t3-turbo --name my-skills` with non-interactive flags in a temp directory, then move contents into this repo",
+        "Rename namespace from @acme/ to @curiouslycory/ across all packages using find-and-replace",
+        "Root pnpm-workspace.yaml includes apps/*, packages/*, tooling/*",
+        "Root turbo.json defines task pipeline: build, dev, typecheck, lint, test, clean",
+        "Remove the expo and tanstack-start apps (keep only nextjs, renamed to web)",
+        "Create empty skills/ and artifacts/{agents,prompts,claudemds,compositions} directories with .gitkeep files",
+        ".gitignore covers node_modules/, dist/, *.db, .env, .my-skills/",
+        "pnpm install succeeds from root",
+        "pnpm build succeeds (or at minimum pnpm typecheck passes)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "This is the foundation. create-t3-turbo includes: Next.js app, packages (api, auth, db, ui), and tooling (eslint, prettier, tailwind, typescript). The nextjs app should be renamed to 'web' in its directory and package.json. Preserve the existing .claude/ and .agents/ directories - do NOT delete them."
+    },
+    {
+      "id": "US-002",
+      "title": "Create shared-types package with core Zod schemas",
+      "description": "As a developer, I need shared TypeScript types and Zod schemas so the CLI and web app use consistent definitions.",
+      "acceptanceCriteria": [
+        "packages/shared-types/ exists as @curiouslycory/shared-types with package.json, tsconfig.json extending @curiouslycory/tsconfig",
+        "Exports ArtifactCategory type: 'skill' | 'agent' | 'prompt' | 'claudemd'",
+        "Exports AgentId type: 'claude-code' | 'cursor' | 'cline' | 'warp' | 'amp' | 'opencode' | 'github-copilot' | 'codex' | 'gemini-cli' | 'kimi-code'",
+        "Exports SkillFrontmatter interface: name, description, license?, compatibility?, metadata?, allowed-tools?",
+        "Exports ManifestSchema Zod schema: version (literal 1), agents (string array), skills (record of SkillEntrySchema)",
+        "Exports SkillEntrySchema: source (string), sourceType (enum github/gitlab/url/local), computedHash, version?, installedAt, agents?, variations?",
+        "Exports ConfigSchema: defaultAgents[], favoriteRepos[], cacheDir, skillsDir, autoDetectAgents, symlinkBehavior",
+        "Exports CATEGORY_DIR_MAP: skill->skills, agent->agents, prompt->prompts, claudemd->claudemds",
+        "Exports DEPLOY_PATH_MAP: skill->.agents/skills, agent->.agents/agents, prompt->.agents/prompts, claudemd->.",
+        "Exports AGENT_NATIVE_SUPPORT: map of which agents read .agents/skills/ natively (claude-code, cline, cursor, warp, amp, opencode -> true)",
+        "Package builds successfully",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "This package is dependency-free (only zod). Other packages will import from it. Use zod .infer<> for TypeScript types derived from schemas."
+    },
+    {
+      "id": "US-003",
+      "title": "Create shared-types frontmatter utilities",
+      "description": "As a developer, I need frontmatter parsing utilities so skills can be read and written consistently.",
+      "acceptanceCriteria": [
+        "Add gray-matter as a dependency to @curiouslycory/shared-types",
+        "Exports parseSkillFrontmatter(content: string): { frontmatter: SkillFrontmatter, body: string }",
+        "Exports buildSkillContent(frontmatter: SkillFrontmatter, body: string): string that produces valid SKILL.md with YAML frontmatter",
+        "parseSkillFrontmatter correctly handles SKILL.md files with --- delimited YAML frontmatter",
+        "Round-trip: buildSkillContent(parseSkillFrontmatter(content)) preserves content semantically",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Use gray-matter library for parsing. The frontmatter format follows the agent skills spec: --- delimited YAML with name and description as required fields."
+    },
+    {
+      "id": "US-004",
+      "title": "Create git-service package",
+      "description": "As a developer, I need a shared git abstraction so both the web app and CLI use consistent git operations.",
+      "acceptanceCriteria": [
+        "packages/git-service/ exists as @curiouslycory/git-service with package.json",
+        "GitService class wraps simple-git with methods: clone(url, path, opts), fetch(opts), pull(), status(), log(filePath?, maxCount?), diff(filePath?, fromCommit?, toCommit?), commit(files, message), push(), branches(), checkout(ref), showFileAtCommit(filePath, commitHash)",
+        "clone() supports { depth: 1 } option for shallow clones",
+        "Constructor accepts repoPath parameter",
+        "All methods have proper TypeScript types for inputs and return values",
+        "Package builds successfully",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Use simple-git npm package. This is used by both the CLI (for cache management) and the web app (for git UI operations)."
+    },
+    {
+      "id": "US-005",
+      "title": "Create database package with Drizzle schema",
+      "description": "As a developer, I need the database schema so the web app can store and search skill data.",
+      "acceptanceCriteria": [
+        "packages/db/ exists as @curiouslycory/db (modify existing create-t3-turbo db package)",
+        "Replace Supabase/Postgres with SQLite via better-sqlite3 and drizzle-orm/better-sqlite3",
+        "skills table: id (text PK, UUID default), name (text, unique), description (text), tags (text, JSON array), author (text), version (text), content (text), dirPath (text, unique), category (text), createdAt (integer timestamp), updatedAt (integer timestamp)",
+        "variations table: id (text PK), name (text), description (text), tags (text), content (text), filePath (text), skillId (text FK -> skills.id, cascade delete)",
+        "favorites table: id (text PK), repoUrl (text, unique), name (text), description (text), addedAt (integer timestamp)",
+        "compositions table: id (text PK), name (text), description (text), fragments (text, JSON), order (text, JSON), createdAt (integer timestamp), updatedAt (integer timestamp)",
+        "config table: id (text PK), key (text, unique), value (text)",
+        "DB_DIALECT env var support in client.ts (sqlite default, with seam for turso/postgres future expansion)",
+        "DB_PATH env var for SQLite file location (default: ./data/my-skills.db)",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Modify the existing @acme/db package from create-t3-turbo. Replace the Supabase/Postgres setup with SQLite. Keep the adapter pattern seam by reading DB_DIALECT but only implement sqlite for now. Add data/ to .gitignore."
+    },
+    {
+      "id": "US-006",
+      "title": "Set up FTS5 virtual table for full-text search",
+      "description": "As a developer, I need FTS5 so the web app can perform fast full-text search across skills.",
+      "acceptanceCriteria": [
+        "Create packages/db/src/fts.ts with initFTS(db) function",
+        "Creates FTS5 virtual table skills_fts with columns: name, description, tags, content using CREATE VIRTUAL TABLE IF NOT EXISTS",
+        "Creates AFTER INSERT trigger on skills table to insert into skills_fts",
+        "Creates AFTER UPDATE trigger on skills table to update skills_fts",
+        "Creates AFTER DELETE trigger on skills table to delete from skills_fts",
+        "Export initFTS function from package",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "FTS5 is SQLite-specific. Use db.run(sql`...`) with raw SQL since Drizzle cannot model virtual tables. The triggers use content= syntax to keep FTS in sync automatically."
+    },
+    {
+      "id": "US-007",
+      "title": "Scaffold CLI with Commander",
+      "description": "As a developer, I need the CLI scaffolded with Commander.js so I can add commands incrementally.",
+      "acceptanceCriteria": [
+        "apps/cli/ exists with package.json: name 'my-skills', type 'module', engines node >=18",
+        "bin field registers both 'my-skills' and 'ms' pointing to dist/bin/my-skills.js",
+        "tsup.config.ts configured: ESM output, node18 target, entry src/bin/my-skills.ts with shebang banner",
+        "src/bin/my-skills.ts creates Commander program with name('my-skills'), version from package.json, description",
+        "src/program.ts exports the program creation function",
+        "Dependencies: commander, chalk, ora, @inquirer/search, @inquirer/checkbox, gray-matter",
+        "Workspace dependencies: @curiouslycory/shared-types, @curiouslycory/git-service",
+        "pnpm build --filter my-skills produces dist/bin/my-skills.js with shebang",
+        "Vitest configured in vitest.config.ts",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "The CLI is a separate app in apps/cli/. It uses tsup for bundling. The bin entry should have #!/usr/bin/env node shebang via tsup banner option."
+    },
+    {
+      "id": "US-008",
+      "title": "Implement CLI config system",
+      "description": "As a developer, I need the global config module so the CLI can store and retrieve user preferences.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/core/config.ts",
+        "loadConfig() reads ~/.my-skills/config.json, validates with ConfigSchema from @curiouslycory/shared-types, returns config with defaults for missing fields",
+        "saveConfig(config) writes atomically: write to .tmp file then rename",
+        "Creates ~/.my-skills/ directory if it doesn't exist (using fs.mkdir recursive)",
+        "Environment variables MY_SKILLS_CACHE_DIR, MY_SKILLS_SKILLS_DIR override file config values",
+        "Returns sensible defaults when config file doesn't exist: favoriteRepos defaults to empty array, cacheDir defaults to ~/.my-skills/cache, skillsDir defaults to .agents/skills",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Use node:fs/promises and node:os (homedir). The config file is the bridge between CLI and web app."
+    },
+    {
+      "id": "US-009",
+      "title": "Implement CLI manifest module",
+      "description": "As a developer, I need the manifest module so the CLI can track which skills are installed in a project.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/core/manifest.ts",
+        "loadManifest(projectRoot) reads .my-skills.json, validates with ManifestSchema, returns null if file missing",
+        "saveManifest(projectRoot, manifest) writes atomically with pretty-printed JSON (2-space indent)",
+        "addSkill(manifest, name, entry) returns new manifest with skill added (pure function)",
+        "removeSkill(manifest, name) returns new manifest with skill removed (pure function)",
+        "getSkill(manifest, name) returns SkillManifestEntry or undefined",
+        "Create apps/cli/src/core/skill-hasher.ts with computeSkillHash(dirPath) that computes SHA-256 from all files in directory sorted alphabetically for determinism",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Use node:crypto for SHA-256. The manifest is .my-skills.json in the project root. Pure functions make testing easy."
+    },
+    {
+      "id": "US-010",
+      "title": "Implement source parser",
+      "description": "As a developer, I need to parse skill source strings into structured objects so the CLI can resolve where to fetch skills from.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/services/source-parser.ts",
+        "parseSource('owner/repo') returns { type: 'github', owner: 'owner', repo: 'repo', skill: undefined, url: 'https://github.com/owner/repo.git' }",
+        "parseSource('owner/repo/skill-name') returns { type: 'github', owner, repo, skill: 'skill-name', url }",
+        "parseSource('https://github.com/owner/repo') returns { type: 'github', owner, repo, url }",
+        "parseSource('https://github.com/owner/repo.git') also works",
+        "parseSource('./local/path') returns { type: 'local', path: absoluteResolvedPath }",
+        "Throws descriptive error for unparseable sources",
+        "Export SkillSource union type",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "GitHub URL parsing should handle both https://github.com/owner/repo and https://github.com/owner/repo.git formats. The owner/repo shorthand always assumes GitHub."
+    },
+    {
+      "id": "US-011",
+      "title": "Implement cache service for remote repos",
+      "description": "As a developer, I need the cache service so the CLI can maintain shallow git clones of remote skill repositories.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/services/cache.ts",
+        "getCachePath(source) returns ~/.my-skills/cache/<owner>/<repo>/",
+        "fetchRepo(source) does shallow clone (depth 1) on first fetch using @curiouslycory/git-service",
+        "fetchRepo(source) does git fetch --depth 1 + git reset --hard origin/HEAD on subsequent fetches",
+        "Stores .my-skills-cache-meta.json with { lastFetched: ISO8601 } in each cache dir",
+        "isCacheStale(source, ttlMs) compares lastFetched against TTL (default 1 hour)",
+        "getCachedRepoPath(source) returns path if cached, null if not",
+        "discoverSkills(repoPath) walks repo for SKILL.md files, parses frontmatter, returns array of { name, description, path }",
+        "Creates ~/.my-skills/cache/ directory if needed",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "discoverSkills should search: root SKILL.md, skills/*/SKILL.md, */SKILL.md, and deeper nested directories. Use recursive directory walking with fs.readdir."
+    },
+    {
+      "id": "US-012",
+      "title": "Implement skill resolver and installer",
+      "description": "As a developer, I need the skill resolver to locate skills in cached repos and the installer to deploy them.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/core/skill-resolver.ts with resolveSkill(source, skillName, cachePath) that returns { name, sourcePath, frontmatter, content, files[] }",
+        "Resolver searches cached repo for matching skill by name in SKILL.md frontmatter",
+        "Create apps/cli/src/core/skill-installer.ts with installSkill(skill, targetDir) that copies the entire skill directory to targetDir/<skill-name>/",
+        "Installer creates parent directories if needed using fs.mkdir recursive",
+        "Installer returns the computed content hash of the installed skill",
+        "Installer copies all files in the skill directory (SKILL.md + any supporting files like scripts/, references/, assets/)",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "The resolver reads from the cache, the installer writes to the project. They are separate concerns. Use fs.cp with recursive option for directory copying."
+    },
+    {
+      "id": "US-013",
+      "title": "Implement skills-lock.json migration",
+      "description": "As a developer, I need migration logic so projects using skills.sh can seamlessly transition to my-skills.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/core/migration.ts",
+        "migrateFromSkillsLock(projectRoot) detects skills-lock.json when .my-skills.json is missing",
+        "Transforms skills-lock format: copies source, sourceType, computedHash; adds installedAt as current ISO timestamp; sets version to 1, agents to empty array",
+        "Writes .my-skills.json with migrated data",
+        "Does NOT delete skills-lock.json (preserves for backwards compat)",
+        "Returns the migrated manifest object",
+        "Returns null if no skills-lock.json found",
+        "Prints informative message: 'Migrated skills-lock.json -> .my-skills.json'",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "The skills-lock.json format: { version: 1, skills: { 'skill-name': { source, sourceType, computedHash } } }. See existing skills-lock.json in project root for reference."
+    },
+    {
+      "id": "US-014",
+      "title": "Implement add command - core install from repo",
+      "description": "As a developer, I want the core add command that installs a skill from a GitHub repository.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/add.ts registered on the Commander program with aliases 'a', 'i', 'install'",
+        "ms add owner/repo/skill-name: parses source, fetches repo to cache, resolves skill, installs to .agents/skills/<name>/, updates .my-skills.json manifest",
+        "ms add owner/repo (no skill name): fetches repo, discovers skills, presents @inquirer/search interactive picker showing name + description, then installs selected skill",
+        "Shows ora spinner during fetch and install operations",
+        "Shows chalk success message with skill name and target path after install",
+        "Shows error message if skill not found in repo",
+        "Checks manifest first - if skill already installed, warns and suggests 'ms update' instead",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "This is the core add flow without flags. Use source-parser, cache service, skill-resolver, skill-installer, and manifest module. The interactive picker uses @inquirer/search."
+    },
+    {
+      "id": "US-015",
+      "title": "Implement add command - restore from manifest",
+      "description": "As a developer, I want ms add with no arguments to install all skills from the manifest, like npm install.",
+      "acceptanceCriteria": [
+        "ms add (no arguments) reads .my-skills.json manifest",
+        "If no manifest found, checks for skills-lock.json and migrates first",
+        "For each skill entry: resolves source via cache, installs if not already present locally",
+        "Skips skills already installed with matching hash (prints 'already up to date')",
+        "Shows summary: N installed, N already up-to-date, N failed",
+        "Shows per-skill errors for missing repos or invalid sources",
+        "If manifest is empty or missing, prints helpful message about usage",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "This enables the npm install workflow: clone a repo, run ms add, and all skills from the manifest are installed."
+    },
+    {
+      "id": "US-016",
+      "title": "Implement add command flags",
+      "description": "As a developer, I need the add command flags for controlling installation behavior.",
+      "acceptanceCriteria": [
+        "--skill <names> flag: comma-separated skill names to install without interactive picker",
+        "--agent <agents> flag: comma-separated agent targets to override defaults",
+        "-y / --yes flag: skip all confirmation prompts",
+        "-g / --global flag: install to ~/.agents/skills/ instead of project .agents/skills/",
+        "--copy flag: copy files instead of relying on canonical location (for environments without symlink support)",
+        "--all flag: shorthand for --skill '*' --agent '*' -y",
+        "-l / --list flag: list available skills in the repo without installing",
+        "All flags work correctly with both owner/repo and owner/repo/skill-name source formats",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "Flags modify the behavior of the core add flow from US-014. --list just runs discoverSkills and prints the table without installing."
+    },
+    {
+      "id": "US-017",
+      "title": "Implement remove command",
+      "description": "As a developer, I want ms remove to uninstall skills from a project.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/remove.ts registered with aliases 'r', 'uninstall'",
+        "ms remove <skill-name>: removes .agents/skills/<name>/ directory, removes entry from .my-skills.json",
+        "Prompts for confirmation before deleting (unless -y flag)",
+        "ms remove (no args): shows interactive list of installed skills from manifest for selection",
+        "Supports --skill <names> for removing multiple skills",
+        "Supports -g / --global to remove from ~/.agents/skills/",
+        "Supports -y / --yes to skip confirmation",
+        "Supports --all shorthand",
+        "Shows error if skill is not installed",
+        "Shows success message after removal",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Use fs.rm with recursive and force options. Read manifest to verify skill is installed before attempting removal."
+    },
+    {
+      "id": "US-018",
+      "title": "Implement list command",
+      "description": "As a developer, I want ms list to see all installed skills.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/list.ts registered with alias 'ls'",
+        "ms list reads .my-skills.json and displays installed skills as formatted table using chalk",
+        "Table columns: name, source, version (or hash truncated to 8 chars)",
+        "--global flag lists globally installed skills from ~/.agents/skills/",
+        "--agent <name> flag filters to skills targeting a specific agent",
+        "--json flag outputs machine-readable JSON array (no ANSI codes)",
+        "Shows 'No skills installed' if manifest is empty or missing",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "For --global, scan ~/.agents/skills/ directories and read SKILL.md frontmatter since there may not be a global manifest."
+    },
+    {
+      "id": "US-019",
+      "title": "Implement adapter interface and registry",
+      "description": "As a developer, I need the adapter system so skills can be deployed to different AI coding tools.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/adapters/types.ts with AgentAdapter interface: id (AgentId), displayName (string), detect(projectRoot): Promise<boolean>, install(projectRoot, skill): Promise<void>, remove(projectRoot, skillName): Promise<void>, sync(projectRoot, skills): Promise<void>, getSkillsPath(projectRoot): string",
+        "Create SkillEntry type: name, sourcePath, frontmatter (SkillFrontmatter), content (string), files (string[])",
+        "Create apps/cli/src/adapters/registry.ts with adapterRegistry Map<AgentId, AgentAdapter>",
+        "Export getAdapter(id) and getEnabledAdapters(agents) functions",
+        "All 10 agent IDs from AgentId type have an adapter registered (even if some are initially NativeAdapter)",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": "The registry is the central lookup for all adapters. Initially all agents can use NativeAdapter, then we'll add specialized adapters in subsequent stories."
+    },
+    {
+      "id": "US-020",
+      "title": "Implement agent detection",
+      "description": "As a developer, I need auto-detection so the CLI discovers which AI tools are present in a project.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/adapters/detect.ts with detectAgents(projectRoot): Promise<AgentId[]>",
+        "Checks for: .claude/ or CLAUDE.md (claude-code), .cursor/ or .cursorrules (cursor), .cline/ or .clinerules (cline), .warp/ (warp), .amp/ or AGENTS.md (amp), .opencode/ (opencode), .github/copilot-instructions.md (github-copilot), .codex/ (codex), .gemini/ or GEMINI.md (gemini-cli), .kimi/ (kimi-code)",
+        "On first run (no agents in manifest or config): presents @inquirer/checkbox with detected agents pre-selected",
+        "Saves selection to manifest agents array and global config defaultAgents",
+        "Prints info: 'Run `ms config set defaultAgents ...` to change defaults'",
+        "Subsequent runs use saved config without prompting",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": "Use fs.access or fs.stat to check for directory/file existence. The checkbox prompt allows users to select/deselect any detected agents."
+    },
+    {
+      "id": "US-021",
+      "title": "Implement NativeAdapter and SymlinkAdapter",
+      "description": "As a developer, I need the native and symlink adapters for the majority of AI tools.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/adapters/native.ts: NativeAdapter where install/remove/sync are no-ops (tools read .agents/skills/ directly)",
+        "NativeAdapter used for: claude-code, cline, cursor, warp, amp, opencode (check AGENT_NATIVE_SUPPORT from shared-types)",
+        "Create apps/cli/src/adapters/symlink.ts: SymlinkAdapter creates/removes symlinks from tool-specific dirs to .agents/skills/<name>/",
+        "Symlink paths configurable per agent: .claude/skills/, .cursor/skills/, etc.",
+        "SymlinkAdapter.install creates symlink and parent directory if needed",
+        "SymlinkAdapter.remove removes the symlink (not the target)",
+        "Symlink adapter only used when user explicitly configures symlinkBehavior in config",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "Use fs.symlink for creating symlinks, fs.unlink for removing. On Windows, consider using fs.symlink with 'junction' type as fallback."
+    },
+    {
+      "id": "US-022",
+      "title": "Implement CopilotAdapter",
+      "description": "As a developer, I need the Copilot adapter to manage skill content in copilot-instructions.md.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/adapters/copilot.ts implementing AgentAdapter",
+        "install() adds skill content between <!-- my-skills:skill-name:start --> and <!-- my-skills:skill-name:end --> markers in .github/copilot-instructions.md",
+        "All managed content is wrapped in outer <!-- my-skills:start --> and <!-- my-skills:end --> markers",
+        "remove() removes the skill's section (its start/end markers and content between them)",
+        "Preserves all content outside the managed markers",
+        "Creates .github/copilot-instructions.md with markers if file doesn't exist",
+        "Creates .github/ directory if needed",
+        "sync() replaces entire managed section with all current skills",
+        "detect() checks for .github/copilot-instructions.md or .github/ directory",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "The marker approach is similar to how tools like Prettier manage sections in config files. Read the file, find markers, replace content between them."
+    },
+    {
+      "id": "US-023",
+      "title": "Implement CodexAdapter and GeminiAdapter",
+      "description": "As a developer, I need adapters for Codex and Gemini CLI to convert skills to their native formats.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/adapters/codex.ts: reads/writes .codex/config.toml, adds [skills.<name>] sections with description and instructions",
+        "CodexAdapter.remove() removes the [skills.<name>] section from TOML",
+        "CodexAdapter preserves all other TOML content",
+        "Creates .codex/config.toml if it doesn't exist",
+        "Create apps/cli/src/adapters/gemini.ts: writes .gemini/commands/<skill-name>.toml with skill metadata",
+        "GeminiAdapter also manages <!-- my-skills:start/end --> markers in GEMINI.md for skill references",
+        "GeminiAdapter.remove() deletes the TOML file and removes reference from GEMINI.md",
+        "Creates .gemini/commands/ directory and GEMINI.md if needed",
+        "Add smol-toml (or @iarna/toml) as dependency for TOML parsing",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": "Codex uses TOML config, Gemini uses TOML command files. Both need a TOML parser. smol-toml is a lightweight option."
+    },
+    {
+      "id": "US-024",
+      "title": "Integrate adapters into add/remove commands",
+      "description": "As a developer, I need the add and remove commands to invoke agent adapters after skill installation.",
+      "acceptanceCriteria": [
+        "After installing a skill via add command, run adapter.install() for each enabled agent",
+        "After removing a skill via remove command, run adapter.remove() for each enabled agent",
+        "If no agents configured yet, trigger agent detection flow (from US-020) before running adapters",
+        "Log which adapters were invoked (e.g., 'Deployed to: claude-code, cursor, github-copilot')",
+        "Adapter failures are logged as warnings but don't fail the overall command",
+        "Store the agents list in the manifest entry for each installed skill",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": "This wires together the adapter system with the existing add/remove commands. Use getEnabledAdapters() from the registry."
+    },
+    {
+      "id": "US-025",
+      "title": "Implement update command",
+      "description": "As a developer, I want ms update to update installed skills to their latest versions.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/update.ts registered with alias 'up'",
+        "ms update (no args) updates all installed skills from manifest",
+        "ms update <skill-name> updates a specific skill",
+        "For each skill: fetches latest from remote via cache, computes new hash, compares with manifest",
+        "If hash differs: removes old files, installs new version, re-runs adapter install, updates manifest entry (hash, updatedAt)",
+        "If hash matches: prints 'skill-name: already up to date'",
+        "Shows summary: N updated, N already up-to-date, N failed",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": "Similar to add but overwrites existing installations. Force-fetches from remote (ignores cache staleness)."
+    },
+    {
+      "id": "US-026",
+      "title": "Implement check command",
+      "description": "As a developer, I want ms check to see which skills have updates available.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/check.ts",
+        "Reads manifest, for each skill: fetches latest from remote, computes hash, compares",
+        "Displays table: skill name, status (up-to-date / update available / remote unavailable), current hash (8 chars), latest hash (8 chars)",
+        "Shows 'No skills installed' if manifest is empty",
+        "Shows spinner during fetch operations",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": "check is read-only - it reports status but doesn't modify anything. Use the cache service with forced fetch."
+    },
+    {
+      "id": "US-027",
+      "title": "Implement find command with favorites search",
+      "description": "As a developer, I want ms find to search for skills across my favorites and installed skills.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/find.ts",
+        "ms find (no query) launches @inquirer/search interactive fuzzy-find",
+        "ms find <query> pre-fills the search with the query string",
+        "Search index includes: installed skills (from manifest) + all skills from cached favorite repos",
+        "Favorite repos fetched if not cached or if cache is stale (1 hour TTL)",
+        "Each search result shows: skill name, description, source repo, '[installed]' badge if already installed",
+        "Fuzzy match against name and description",
+        "Selecting a result prompts: 'Install skill-name from owner/repo?' then delegates to add flow",
+        "Reads favoriteRepos from global config",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": "The find command is the discovery tool. It aggregates skills from all favorite repos + installed skills into one searchable list."
+    },
+    {
+      "id": "US-028",
+      "title": "Implement init command",
+      "description": "As a developer, I want ms init to scaffold a new SKILL.md.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/init.ts",
+        "ms init <name> creates .agents/skills/<name>/SKILL.md with frontmatter template",
+        "ms init (no name) prompts for name using @inquirer/input",
+        "Prompts for description using @inquirer/input",
+        "Generated SKILL.md has --- delimited YAML frontmatter with name and description, plus placeholder markdown body",
+        "Creates directory .agents/skills/<name>/ if it doesn't exist",
+        "Shows error if skill already exists (with suggestion to use --force)",
+        "--force flag overwrites existing skill",
+        "Shows success message with path to created file",
+        "Typecheck passes"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": "The generated SKILL.md should follow the agent skills spec format with name and description frontmatter."
+    },
+    {
+      "id": "US-029",
+      "title": "Implement config command",
+      "description": "As a developer, I want ms config to manage global configuration.",
+      "acceptanceCriteria": [
+        "Create apps/cli/src/commands/config.ts with subcommands: get, set, list, delete",
+        "ms config get <key>: reads and prints a config value (supports dot-notation for nested values)",
+        "ms config set <key> <value>: sets a value, validates with ConfigSchema, saves",
+        "ms config set defaultAgents claude-code,cursor handles comma-separated arrays",
+        "ms config list: pretty-prints all config key-value pairs with chalk formatting",
+        "ms config delete <key>: removes key (resets to default), saves",
+        "All operations read from / write to ~/.my-skills/config.json",
+        "Shows current value after set operations",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": "Model after npm config. Use Commander subcommands for get/set/list/delete."
+    },
+    {
+      "id": "US-030",
+      "title": "Scaffold Next.js web app with tRPC",
+      "description": "As a developer, I need the Next.js app wired up with tRPC and Drizzle so we can build frontend features.",
+      "acceptanceCriteria": [
+        "apps/web/ exists (rename from apps/nextjs/ if needed) as the Next.js app",
+        "Update package.json name and all imports/references from nextjs to web",
+        "tRPC client configured in apps/web/ connecting to @curiouslycory/api",
+        "REPO_PATH env var read for filesystem operations (defaults to process.cwd())",
+        "Workspace dependencies: @curiouslycory/shared-types, @curiouslycory/db, @curiouslycory/git-service, @curiouslycory/api, @curiouslycory/ui",
+        "pnpm dev --filter @curiouslycory/web starts dev server without errors",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": "The create-t3-turbo scaffold already has a Next.js app with tRPC. Rename it from nextjs to web and ensure the wiring works with the modified db package."
+    },
+    {
+      "id": "US-031",
+      "title": "Implement auth package",
+      "description": "As a developer, I need basic auth so the deployed web app can be password-protected.",
+      "acceptanceCriteria": [
+        "packages/auth/ exists as @curiouslycory/auth (modify existing create-t3-turbo auth package)",
+        "Replace Better Auth with simple cookie-based JWT auth",
+        "validate(username, password) checks against ADMIN_USER and ADMIN_PASSWORD env vars",
+        "createSession(username) returns a signed JWT using AUTH_SECRET env var",
+        "verifySession(token) validates JWT and returns decoded payload or null",
+        "isAuthEnabled() returns true only when ADMIN_USER env var is set",
+        "When auth is disabled (no ADMIN_USER), all requests are treated as authenticated",
+        "Uses jose library for JWT operations",
+        "Typecheck passes"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": "Replace the Better Auth setup from create-t3-turbo with this simpler approach. Auth is optional - disabled by default for local dev."
+    },
+    {
+      "id": "US-032",
+      "title": "Implement skill tRPC router",
+      "description": "As a developer, I need the skill CRUD API so the frontend can manage skills.",
+      "acceptanceCriteria": [
+        "Create skill router in packages/api/src/router/skill.ts",
+        "skill.list: query returning all skills from DB with optional category and tags filters",
+        "skill.byId: query returning single skill by ID with full content",
+        "skill.create: mutation that writes SKILL.md to skills/<name>/ on disk AND inserts into DB",
+        "skill.update: mutation that updates SKILL.md on disk AND updates DB record",
+        "skill.delete: mutation that removes skill directory AND deletes DB record",
+        "skill.syncFromDisk: mutation that scans skills/ directory, parses SKILL.md frontmatter, upserts into DB, removes stale DB entries",
+        "All inputs validated with Zod schemas",
+        "Create and update use protected procedures (auth required when enabled)",
+        "Register skill router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": "The skill router is the primary API for the web app. syncFromDisk is called on startup and after git pull to keep the DB in sync with the filesystem."
+    },
+    {
+      "id": "US-033",
+      "title": "Implement artifact tRPC router",
+      "description": "As a developer, I need the artifact CRUD API for agents, prompts, and claudemds.",
+      "acceptanceCriteria": [
+        "Create artifact router in packages/api/src/router/artifact.ts",
+        "artifact.list: query returning all artifacts with optional category filter",
+        "artifact.listByCategory: query filtering by category enum (agent/prompt/claudemd)",
+        "artifact.byId: query returning single artifact with full content",
+        "artifact.create: mutation writing to artifacts/<category>/<name>/ on disk + DB",
+        "artifact.update: mutation updating on disk + DB",
+        "artifact.delete: mutation removing directory + DB record",
+        "artifact.syncFromDisk: mutation scanning all artifacts/ subdirectories, upserting to DB",
+        "All mutations use protected procedures",
+        "Register artifact router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": "Same pattern as skill router but for artifacts directory. Category determines subdirectory: artifacts/agents/, artifacts/prompts/, artifacts/claudemds/."
+    },
+    {
+      "id": "US-034",
+      "title": "Implement disk sync service",
+      "description": "As a developer, I need a service that syncs the filesystem with the database on startup.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/disk-sync.ts with scanAndSync(repoPath, db) function",
+        "Walks skills/*/SKILL.md parsing frontmatter with gray-matter",
+        "Walks artifacts/*/*/SKILL.md (or metadata.json) parsing metadata",
+        "Upserts each found item into the skills DB table matched on dirPath",
+        "Removes DB records whose dirPath no longer exists on disk",
+        "Returns summary: { added: number, updated: number, removed: number }",
+        "Called from a tRPC procedure (skill.syncFromDisk and artifact.syncFromDisk should use this)",
+        "Typecheck passes"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": "This is the bridge between filesystem (source of truth) and database (search index). Use recursive directory walking."
+    },
+    {
+      "id": "US-035",
+      "title": "Implement search tRPC router with FTS5",
+      "description": "As a developer, I need full-text search so the web app can find skills and artifacts.",
+      "acceptanceCriteria": [
+        "Create search router in packages/api/src/router/search.ts",
+        "search.query procedure: accepts query string, optional category filter, limit (default 20), offset",
+        "Uses FTS5 MATCH query with prefix matching (append * to each search term)",
+        "Returns results with highlighted snippets using FTS5 snippet() function",
+        "Results ordered by FTS5 rank for relevance",
+        "Handles empty query gracefully (returns recent items ordered by updatedAt)",
+        "Register search router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": "FTS5 queries use raw SQL via db.run(sql`...`). The snippet() function wraps matches in <mark> tags. Initialize FTS tables (from US-006) on app startup."
+    },
+    {
+      "id": "US-036",
+      "title": "Implement git tRPC router",
+      "description": "As a developer, I need git operations API for the web UI.",
+      "acceptanceCriteria": [
+        "Create git router in packages/api/src/router/git.ts",
+        "git.status: query returning current branch, clean/dirty, list of modified files",
+        "git.log: query returning recent commits with hash, message, author, date (supports path filter and pagination)",
+        "git.diff: query returning diff for a specific commit or working tree changes",
+        "git.commit: mutation staging specified files and creating commit",
+        "git.push: mutation pushing current branch to origin",
+        "git.pull: mutation pulling from origin",
+        "git.fetch: mutation fetching from origin",
+        "git.branches: query listing all branches with current branch indicator",
+        "git.checkout: mutation switching to a branch",
+        "All mutations use protected procedures",
+        "Uses @curiouslycory/git-service instantiated with repoPath from context",
+        "Register git router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": "The git router wraps the git-service package. repoPath comes from the tRPC context (REPO_PATH env var or cwd)."
+    },
+    {
+      "id": "US-037",
+      "title": "Implement config and favorites tRPC router",
+      "description": "As a developer, I need the config API for managing settings and favorites from the web UI.",
+      "acceptanceCriteria": [
+        "Create config router in packages/api/src/router/config.ts",
+        "config.get: query returning config value by key from DB config table",
+        "config.getAll: query returning all config entries",
+        "config.set: mutation upserting config value in DB",
+        "config.favorites.list: query returning all favorites from DB",
+        "config.favorites.add: mutation inserting into favorites table",
+        "config.favorites.remove: mutation deleting from favorites table",
+        "All mutations use protected procedures",
+        "Register config router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": "Config and favorites are stored in the DB for the web app. They get synced to ~/.my-skills/config.json for CLI access (sync implemented in a later story)."
+    },
+    {
+      "id": "US-038",
+      "title": "Implement auth tRPC router and login page",
+      "description": "As a developer, I need auth endpoints and a login page for remote web app deployment.",
+      "acceptanceCriteria": [
+        "Create auth router in packages/api/src/router/auth.ts",
+        "auth.login: mutation validating credentials and returning session token (sets httpOnly cookie)",
+        "auth.logout: mutation clearing session cookie",
+        "auth.session: query returning current session state (authenticated or not)",
+        "Create apps/web/src/app/(auth)/login/page.tsx with username/password form",
+        "Login form calls auth.login mutation, redirects to / on success",
+        "Create middleware.ts that redirects unauthenticated users to /login when auth is enabled",
+        "Auth is completely bypassed when ADMIN_USER env var is not set",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": "Use the @curiouslycory/auth package for JWT operations. The middleware reads the session cookie and verifies it."
+    },
+    {
+      "id": "US-039",
+      "title": "Build web app layout and navigation",
+      "description": "As a user, I want a sidebar and header so I can navigate the web app.",
+      "acceptanceCriteria": [
+        "Root layout with sidebar navigation containing links: Dashboard, Skills, Artifacts, Compositions, Git, Settings",
+        "Header with app title 'my-skills' and global search input",
+        "Active nav item is visually highlighted based on current route",
+        "Search input navigates to /search?q=<query> on submit (Enter key)",
+        "Sidebar is responsive: collapses to hamburger menu on mobile (<768px)",
+        "Uses @curiouslycory/ui components (shadcn/ui Button, Input, etc.)",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": "Use the existing shadcn/ui sidebar component pattern if available in the ui package, otherwise create one."
+    },
+    {
+      "id": "US-040",
+      "title": "Build skill browse page",
+      "description": "As a user, I want to browse skills so I can discover available tooling.",
+      "acceptanceCriteria": [
+        "Create /skills page (apps/web/src/app/skills/page.tsx) showing all skills in a filterable grid",
+        "Each skill card shows: name, description, tags as badges, category badge",
+        "Tag filter chips at the top for narrowing results (populated from unique tags across all skills)",
+        "Cards link to /skills/[id] detail page",
+        "Empty state message when no skills exist: 'No skills found. Add skills to the skills/ directory.'",
+        "Calls skill.list tRPC query on page load",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": "Use Next.js App Router with RSC for initial data fetch. Use shadcn/ui Card, Badge components."
+    },
+    {
+      "id": "US-041",
+      "title": "Build skill detail page with version history",
+      "description": "As a user, I want to view a skill's content and version history.",
+      "acceptanceCriteria": [
+        "Create /skills/[id] page showing full skill detail",
+        "Renders SKILL.md body as formatted markdown with syntax highlighting (use remark/rehype or similar)",
+        "Metadata sidebar: name, description, tags as badges, author, version, category",
+        "Edit button linking to /skills/[id]/edit",
+        "Delete button with confirmation dialog (calls skill.delete mutation)",
+        "Version history section below content showing git log for the skill's directory (calls git.log with path filter)",
+        "Each commit entry shows: hash (8 chars), message, author, relative date",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": "Use react-markdown or similar for rendering. The git log is scoped to the skill's directory path."
+    },
+    {
+      "id": "US-042",
+      "title": "Implement Plate.js editor component",
+      "description": "As a developer, I need a reusable Plate.js WYSIWYG editor for editing SKILL.md files.",
+      "acceptanceCriteria": [
+        "Install @udecode/plate, @udecode/plate-markdown, and required plugins",
+        "Create apps/web/src/app/_components/plate-editor.tsx as a 'use client' component",
+        "Configure Plate with plugins: paragraph, heading, bold, italic, code, code block, link, list, blockquote",
+        "Markdown serialization via @udecode/plate-markdown (deserialize markdown string to Plate value, serialize Plate value back to markdown string)",
+        "Editor toolbar with formatting buttons (bold, italic, heading levels, code, link, list)",
+        "Component accepts initialContent (markdown string) and onSave callback",
+        "Lazy loaded via next/dynamic to minimize bundle impact",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": "Plate.js is a rich-text editor built on Slate. The markdown plugin handles the serialization round-trip. This component is reused by skill edit, artifact edit, and composition preview."
+    },
+    {
+      "id": "US-043",
+      "title": "Build frontmatter form component",
+      "description": "As a developer, I need a form component for editing SKILL.md frontmatter fields.",
+      "acceptanceCriteria": [
+        "Create apps/web/src/app/_components/frontmatter-form.tsx as a 'use client' component",
+        "Form fields: name (text input), description (textarea), tags (multi-input with add/remove), author (text input), version (text input)",
+        "Tags field allows typing a tag and pressing Enter to add it, clicking X to remove",
+        "Form accepts initial values and onChange callback that emits the full frontmatter object",
+        "Uses shadcn/ui Input, Textarea, Badge, Button components",
+        "Form validates name is non-empty",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": "This is the top section of the skill/artifact edit page. The Plate editor sits below it for the body content."
+    },
+    {
+      "id": "US-044",
+      "title": "Build skill create and edit pages",
+      "description": "As a user, I want to create and edit skills through the web UI.",
+      "acceptanceCriteria": [
+        "/skills/new page with FrontmatterForm + Plate.js editor",
+        "Save button calls skill.create mutation: assembles YAML frontmatter from form + serialized markdown from Plate editor, writes to disk + DB",
+        "/skills/[id]/edit page loads existing skill: gray-matter splits frontmatter -> form fields, body -> Plate deserializer",
+        "Save button calls skill.update mutation",
+        "After save, shows toast confirmation and redirects to skill detail page",
+        "Cancel button returns to previous page",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": "The create page assembles a new SKILL.md. The edit page loads an existing one. Both use the same FrontmatterForm + PlateEditor components."
+    },
+    {
+      "id": "US-045",
+      "title": "Build artifact browse, detail, and edit pages",
+      "description": "As a user, I want to browse, view, and edit artifacts (agents, prompts, claudemds).",
+      "acceptanceCriteria": [
+        "/artifacts page with category tabs: All, Agents, Prompts, Claude.mds",
+        "Tab selection filters the list via artifact.listByCategory query",
+        "/artifacts/[category]/[id] shows artifact detail (same layout as skill detail page)",
+        "/artifacts/[category]/[id]/edit uses FrontmatterForm + Plate.js editor",
+        "/artifacts/[category]/new for creating new artifacts in a specific category",
+        "Delete with confirmation dialog on detail page",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": "Same UI patterns as skills pages but scoped to the artifacts/ directory. Reuse the FrontmatterForm and PlateEditor components."
+    },
+    {
+      "id": "US-046",
+      "title": "Build search results page",
+      "description": "As a user, I want to search and see highlighted results.",
+      "acceptanceCriteria": [
+        "Create /search page (apps/web/src/app/search/page.tsx)",
+        "Reads ?q= URL param and pre-fills search input",
+        "Debounced search (300ms) calls search.query tRPC procedure",
+        "Results show: name, category badge, description, content snippet with <mark> highlighted matches",
+        "Results link to the appropriate detail page (skill or artifact)",
+        "Optional category filter dropdown on the page",
+        "Shows 'No results found' for empty result sets",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": "The FTS5 snippet() function returns HTML with highlighted matches. Render carefully to avoid XSS (sanitize or use dangerouslySetInnerHTML on trusted content only)."
+    },
+    {
+      "id": "US-047",
+      "title": "Implement heading merge algorithm",
+      "description": "As a developer, I need the merge algorithm for composing multi-fragment CLAUDE.md files.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/merge.ts with mergeFragments(fragments: string[]): string",
+        "Parses each fragment into heading-tree sections by splitting on /^(#{1,6})\\s+(.+)$/m",
+        "Matches headings by normalized text: lowercase, trimmed, compared across fragments",
+        "Matched headings: concatenate body content in fragment order under single heading",
+        "Deduplicate identical lines (after trim) within merged sections",
+        "Level-offset matching: # Foo in fragment A matches ## Foo in fragment B if structural pattern matches (same relative children). Use the level from the first occurrence.",
+        "Unmatched headings: insert at best structural position (closest matching parent chain)",
+        "Multiple structural matches: merge into first match and stop",
+        "Preamble (content before first heading): concatenated, identical lines deduplicated",
+        "Post-process: collapse 3+ consecutive blank lines to 2, ensure trailing newline",
+        "Typecheck passes"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": "This is the core algorithm for the composition builder. It must be a pure function for easy testing. The level-offset matching is the most complex part - see the PRD for detailed examples."
+    },
+    {
+      "id": "US-048",
+      "title": "Implement merge algorithm unit tests",
+      "description": "As a developer, I need comprehensive tests for the heading merge algorithm.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/__tests__/merge.test.ts using vitest",
+        "Test: single fragment returns unchanged",
+        "Test: two fragments with no overlapping headings concatenates them",
+        "Test: two fragments with same ## heading merges content under one heading",
+        "Test: level-offset matching (# Foo and ## Foo with same structure merge correctly)",
+        "Test: duplicate identical lines within merged section are deduplicated",
+        "Test: fragment ordering is preserved (first fragment's content appears first)",
+        "Test: preamble content is merged and deduplicated",
+        "Test: 3+ blank lines collapsed to 2",
+        "Test: empty fragments array returns empty string",
+        "Test: complex scenario from PRD with 3 files merging at different heading levels",
+        "All tests pass"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": "Use the exact examples from the PRD (File 1, File 2, File 3 and expected combined result) as test cases."
+    },
+    {
+      "id": "US-049",
+      "title": "Implement composition tRPC router",
+      "description": "As a developer, I need the composition API for the composition builder UI.",
+      "acceptanceCriteria": [
+        "Create composition router in packages/api/src/router/composition.ts",
+        "composition.list: query returning all saved compositions from DB",
+        "composition.byId: query returning single composition with resolved fragment content (joins with skills table)",
+        "composition.create: mutation saving name, description, fragment IDs, order to DB",
+        "composition.update: mutation updating composition",
+        "composition.delete: mutation removing composition",
+        "composition.preview: query accepting fragment IDs + order, fetches content from DB, runs mergeFragments(), returns merged markdown string",
+        "composition.exportMarkdown: query returning final merged markdown",
+        "All mutations use protected procedures",
+        "Register composition router in the app router",
+        "Typecheck passes"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": "The preview endpoint is called frequently (on every selection change) so it should be efficient. Fragment content is fetched from the skills DB table."
+    },
+    {
+      "id": "US-050",
+      "title": "Build composition builder - fragment selection table",
+      "description": "As a user, I want to select fragments from a data table to compose a CLAUDE.md file.",
+      "acceptanceCriteria": [
+        "Create /compositions/new page with data table of all claudemd artifacts",
+        "Table columns: checkbox, name, description, tags (as badges), updated date",
+        "Checkbox multi-select with 'select all' header checkbox",
+        "Selected fragments appear in a sidebar panel on the right showing current selection",
+        "Sidebar shows fragment count and 'Clear all' button",
+        "Uses shadcn/ui DataTable pattern with checkboxes",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": "This is the left panel of the composition builder. The right panel (preview) is added in a subsequent story."
+    },
+    {
+      "id": "US-051",
+      "title": "Build composition builder - drag-and-drop ordering",
+      "description": "As a user, I want to reorder selected fragments via drag-and-drop.",
+      "acceptanceCriteria": [
+        "Install @dnd-kit/core and @dnd-kit/sortable",
+        "Selected fragments in the sidebar have drag handles (grip icon)",
+        "Drag-and-drop reordering using DndContext + SortableContext from @dnd-kit",
+        "Order changes update the fragment list state immediately",
+        "Deselecting a fragment (unchecking in table) removes it from the order list",
+        "Fragment order is used when calling composition.preview",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": "The ordering determines the merge order for the heading merge algorithm. First fragment takes precedence for heading levels."
+    },
+    {
+      "id": "US-052",
+      "title": "Build composition builder - live preview panel",
+      "description": "As a user, I want a live preview of the merged composition output.",
+      "acceptanceCriteria": [
+        "Add a preview panel below the sidebar (or as a third column on wide screens)",
+        "Preview renders the merged markdown using Plate.js in read-only mode",
+        "Preview updates live as fragments are selected/deselected/reordered",
+        "Calls composition.preview tRPC query debounced (500ms) when selection or order changes",
+        "'Copy as Markdown' button copies raw merged markdown to clipboard using navigator.clipboard.writeText()",
+        "Shows toast confirmation after copy",
+        "CLI command preview text: 'ms add claudemd <name>' with 'Copy Command' button",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": "Use the Plate.js editor from US-042 in read-only mode. The preview is the right-most panel in the three-panel composition builder layout."
+    },
+    {
+      "id": "US-053",
+      "title": "Build composition save and load",
+      "description": "As a user, I want to save and load compositions for reuse.",
+      "acceptanceCriteria": [
+        "'Save Composition' button opens dialog with name and description inputs",
+        "Saves via composition.create mutation",
+        "/compositions page lists saved compositions with name, description, fragment count, date",
+        "/compositions/[id] loads saved composition: restores fragment selection checkboxes and order in the builder UI",
+        "'Update' button saves changes to existing composition via composition.update",
+        "'Delete' button with confirmation on the list page",
+        "Shows 'outdated' badge on compositions where a constituent fragment has been modified since save",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": "Outdated detection: compare fragment updatedAt timestamps against composition's updatedAt."
+    },
+    {
+      "id": "US-054",
+      "title": "Build git status page",
+      "description": "As a user, I want to see the git status of my skills repository.",
+      "acceptanceCriteria": [
+        "Create /git page (apps/web/src/app/git/page.tsx)",
+        "Shows current branch name and clean/dirty status",
+        "Lists modified files grouped by: staged, unstaged, untracked",
+        "Git log section showing recent commits: hash (8 chars), message, author, relative date",
+        "Log is paginated or shows last 20 commits",
+        "Uses git.status and git.log tRPC queries",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": "The git page is the control center for repository operations. Build the read-only status view first, mutations in subsequent stories."
+    },
+    {
+      "id": "US-055",
+      "title": "Build diff viewer component",
+      "description": "As a user, I want to view diffs for specific commits.",
+      "acceptanceCriteria": [
+        "Install react-diff-viewer-continued",
+        "Create apps/web/src/app/_components/diff-viewer.tsx wrapping ReactDiffViewer",
+        "Renders unified diff with syntax highlighting",
+        "Additions highlighted in green, deletions in red",
+        "Clicking a commit on the git page or skill version history expands to show the diff inline",
+        "Uses git.diff tRPC query with the commit hash",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": "react-diff-viewer-continued accepts oldValue and newValue strings. Parse the git diff output to extract the before/after content."
+    },
+    {
+      "id": "US-056",
+      "title": "Build commit dialog and push button",
+      "description": "As a user, I want to commit and push changes from the web UI.",
+      "acceptanceCriteria": [
+        "'Commit' button on git page opens dialog with: file checklist (checkboxes for each modified file), commit message textarea",
+        "Submit calls git.commit mutation with selected files and message",
+        "'Push' button calls git.push mutation",
+        "Shows loading spinner during operations",
+        "Shows success/error toast after each operation",
+        "Refreshes git status after commit or push",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": "Use shadcn/ui Dialog, Checkbox, Textarea, Button, Toast components."
+    },
+    {
+      "id": "US-057",
+      "title": "Build branch selector and pull/fetch buttons",
+      "description": "As a user, I want to switch branches and pull updates from the web UI.",
+      "acceptanceCriteria": [
+        "Branch selector dropdown on git page populated by git.branches query",
+        "Current branch shown as selected/highlighted",
+        "Selecting a different branch calls git.checkout mutation",
+        "'Pull' button calls git.pull mutation, then triggers skill.syncFromDisk + artifact.syncFromDisk to refresh DB",
+        "'Fetch' button calls git.fetch mutation",
+        "Shows loading states during operations",
+        "Shows success/error toasts",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": "After pulling, the DB must be resynced since files may have changed on disk."
+    },
+    {
+      "id": "US-058",
+      "title": "Build settings page with favorites CRUD",
+      "description": "As a user, I want to manage my configuration and favorite repos from the web UI.",
+      "acceptanceCriteria": [
+        "Create /settings page with sections: General, Favorites, Agent Defaults",
+        "Favorites section: list of favorite repos with 'Add' form (repo URL input + name input) and 'Remove' button per entry",
+        "Add form calls config.favorites.add mutation, list refreshes",
+        "Remove button calls config.favorites.remove mutation with confirmation",
+        "Agent Defaults section: multi-select checkboxes for default agent targets, saves via config.set",
+        "All changes trigger config sync (next story)",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": "Use shadcn/ui Input, Button, Card, Checkbox components."
+    },
+    {
+      "id": "US-059",
+      "title": "Implement config sync from DB to local file",
+      "description": "As a developer, I need config changes from the web UI to sync to ~/.my-skills/config.json for CLI access.",
+      "acceptanceCriteria": [
+        "Create packages/api/src/lib/config-sync.ts with syncConfigToFile(db) function",
+        "Reads all config entries and favorites from DB",
+        "Assembles config object matching ConfigSchema shape",
+        "Writes to ~/.my-skills/config.json (creates directory if needed)",
+        "Called at the end of every config.set, config.favorites.add, config.favorites.remove mutation (fire-and-forget, errors logged but not thrown)",
+        "Typecheck passes"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": "This is the bridge between web app config (in DB) and CLI config (in file). The CLI reads this file for offline access."
+    },
+    {
+      "id": "US-060",
+      "title": "Implement CLI test suite for core modules",
+      "description": "As a developer, I need comprehensive tests for CLI core modules.",
+      "acceptanceCriteria": [
+        "Create apps/cli/tests/ directory structure: core/, adapters/, commands/, fixtures/",
+        "Unit tests for core/config.ts: load, save, env override, defaults",
+        "Unit tests for core/manifest.ts: load, save, addSkill, removeSkill, getSkill, empty manifest",
+        "Unit tests for core/skill-hasher.ts: hash computation, deterministic ordering",
+        "Unit tests for services/source-parser.ts: all source formats, error cases",
+        "Unit tests for core/migration.ts: migration from skills-lock, both files exist, neither exists",
+        "Tests use real temp directories (node:os tmpdir) with cleanup in afterEach",
+        "All tests pass with pnpm test --filter my-skills",
+        "Typecheck passes"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": "Use vitest. Create test fixtures with sample SKILL.md files and manifest files. Each test should be independent with its own temp directory."
+    },
+    {
+      "id": "US-061",
+      "title": "Implement adapter unit tests",
+      "description": "As a developer, I need tests for all agent adapters.",
+      "acceptanceCriteria": [
+        "Unit tests for NativeAdapter: verify install/remove are no-ops",
+        "Unit tests for SymlinkAdapter: verify symlink creation/removal with real temp dirs",
+        "Unit tests for CopilotAdapter: verify marker-based content management in copilot-instructions.md (fresh file, existing content, add skill, remove skill, sync all)",
+        "Unit tests for CodexAdapter: verify TOML section management (fresh file, add, remove, preserve other content)",
+        "Unit tests for GeminiAdapter: verify TOML file creation and GEMINI.md marker management",
+        "Unit tests for detect.ts: verify detection for each agent type (create temp dirs with marker files/directories)",
+        "All tests pass"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": "Each adapter test creates a temp project directory with the appropriate marker files, then verifies install/remove operations."
+    },
+    {
+      "id": "US-062",
+      "title": "CLI packaging and bin entry verification",
+      "description": "As a developer, I need the CLI packaged for npm publishing.",
+      "acceptanceCriteria": [
+        "pnpm build --filter my-skills produces dist/bin/my-skills.js with shebang",
+        "dist/bin/my-skills.js is executable (chmod +x)",
+        "pnpm --filter my-skills pack produces a valid .tgz tarball",
+        "package.json bin field: { 'my-skills': './dist/bin/my-skills.js', 'ms': './dist/bin/my-skills.js' }",
+        "package.json files field includes dist/",
+        "package.json license: 'MIT'",
+        "Running node dist/bin/my-skills.js --help shows all commands",
+        "Running node dist/bin/my-skills.js --version shows the version",
+        "Typecheck passes"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": "This is the final verification that the CLI is ready for npm publish. The pack command creates the tarball that would be uploaded to npm."
+    },
+    {
+      "id": "US-063",
+      "title": "Responsive design polish for web app",
+      "description": "As a user, I want the web app to work well on different screen sizes.",
+      "acceptanceCriteria": [
+        "Sidebar collapses to hamburger menu on screens < 768px",
+        "Composition builder panels stack vertically on screens < 1024px",
+        "Data tables are horizontally scrollable on small screens",
+        "Editor toolbar wraps gracefully on narrow screens",
+        "All pages are usable at 320px width minimum",
+        "Git page controls wrap properly on mobile",
+        "Typecheck passes",
+        "Verify in browser using dev server"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": "Use Tailwind responsive utilities (sm:, md:, lg:). Test by resizing browser window."
+    }
+  ]
+}

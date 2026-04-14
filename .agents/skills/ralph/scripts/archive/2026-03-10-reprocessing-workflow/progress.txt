@@ -1,0 +1,135 @@
+# Ralph Progress Log
+Started: Tue Mar 10 05:31:56 PM MST 2026
+---
+
+## 2026-03-10 - US-003
+- Created `src/routes/workflows/reprocess/` directory
+- Created `src/routes/workflows/reprocess/types.ts` with all feedback types: FactCheckIssue, FactCheckFeedback, VoiceClarityEdit, VoiceClarityFeedback, EditorialChange, EditorialFeedback
+- Files changed: `src/routes/workflows/reprocess/types.ts` (new)
+- **Learnings for future iterations:**
+  - Workflows directory uses flat files (e.g., `summary.ts`, `score.ts`) but reprocess uses a subdirectory since it has multiple files
+  - Typecheck runs clean with `npx tsc --noEmit`
+  - Types are plain exported type aliases, not interfaces - consistent with keeping things simple for in-memory pipeline objects
+---
+
+## 2026-03-10 - US-004
+- Created `src/routes/workflows/reprocess/fact-check.ts` with `factCheckArtifact` function
+- Two-step fact-checking: (1) reasoning model compares artifact against original document for internal issues, (2) research agent externally verifies specific factual claims via DuckDuckGo/Tavily/Wikipedia
+- Returns structured `FactCheckFeedback` with issues array
+- Files changed: `src/routes/workflows/reprocess/fact-check.ts` (new)
+- **Learnings for future iterations:**
+  - Use `getReasoningModel().getModel().invoke()` for direct LLM calls with structured JSON output
+  - Use `createPlanningWorkflow(task, context)` from `~/agents/planning-agent` to leverage the research agent with search tools
+  - Reasoning model returns `{ content }` - call `.content.toString()` to get the string
+  - JSON parsing from LLM responses needs try/catch with graceful fallback
+  - The planning workflow has 3 stages: createPlan → executeResearch → createOutput, and returns `{ plan, research, result }`
+---
+
+## 2026-03-10 - US-005
+- Created `src/routes/workflows/reprocess/voice-clarity.ts` with `voiceClarityReview` function
+- Reviews artifacts for readability, tone consistency, jargon usage, sentence structure, and conciseness
+- Accepts fact-check feedback as context to avoid reintroducing factual issues
+- Returns structured `VoiceClarityFeedback` with edits array
+- Files changed: `src/routes/workflows/reprocess/voice-clarity.ts` (new)
+- **Learnings for future iterations:**
+  - Voice/clarity pass is simpler than fact-check since it only needs the reasoning model (no research agent)
+  - Pattern: pass prior feedback as context in system prompt to prevent downstream passes from undoing earlier corrections
+  - All reprocess passes follow same structure: get model, invoke with system+user messages, parse JSON response with try/catch fallback
+---
+
+## 2026-03-10 - US-006
+- Created `src/routes/workflows/reprocess/editorial-review.ts` with `editorialReview` function
+- Reviews artifacts for completeness, logical flow, redundancy, missing context, and coherence
+- Accepts both fact-check and voice/clarity feedback as context to avoid duplicating prior feedback
+- Returns structured `EditorialFeedback` with overall assessment and changes array
+- Files changed: `src/routes/workflows/reprocess/editorial-review.ts` (new)
+- **Learnings for future iterations:**
+  - Editorial review follows the exact same pattern as voice-clarity: reasoning model + JSON parse with try/catch
+  - The `app` parameter is accepted for consistency with the other passes even though it's not used directly (future-proofing for potential logging/events)
+  - Prior feedback from both passes should be included in the prompt to avoid redundant recommendations
+---
+
+## 2026-03-10 - US-007
+- Created `src/routes/workflows/reprocess/final-rewrite.ts` with `finalRewrite` function
+- Saves artifact version history before overwriting via `saveArtifactVersion`
+- Fetches artifact by documentId + title compound lookup, rewrites content using pro/reasoning model with all three feedback sets as context
+- Updates artifact in DB with rewritten content
+- Files changed: `src/routes/workflows/reprocess/final-rewrite.ts` (new)
+- **Learnings for future iterations:**
+  - No `getProModel()` helper exists — use `getReasoningModel(["gemini-2.5-pro", ...])` to prefer the pro model
+  - Use `app.prisma.documentArtifact.findFirst({ where: { documentId, title } })` to look up artifacts by compound key
+  - Final rewrite returns plain text (not JSON), so no JSON parsing needed — just `.content.toString()`
+  - The `saveArtifactVersion` utility takes `(prisma, artifactId)` — need to fetch the artifact ID first
+---
+
+## 2026-03-10 - US-008
+- Created `src/routes/workflows/reprocess/run-reprocess.ts` with `handleReprocessWorkflow` orchestrator
+- Pipeline runs 4 steps sequentially (fact-check → voice-clarity → editorial → rewrite), with artifacts processed in parallel within each step via Promise.all
+- Added reprocess event types to WorkflowEvents in `src/routes/document.ts`: pipeline-started, step-started, step-completed, step-failed, pipeline-completed
+- Updated `src/routes/workflow-progress.ts` to forward reprocess:* events via SSE
+- Files changed: `src/routes/workflows/reprocess/run-reprocess.ts` (new), `src/routes/document.ts` (modified), `src/routes/workflow-progress.ts` (modified)
+- **Learnings for future iterations:**
+  - Reprocess events use `reprocess:` prefix to distinguish from `workflow:` events used by run-all
+  - The orchestrator tracks feedback per-artifact in a Map so each pass can reference prior feedback
+  - For the rewrite step, re-fetch artifact content from DB since it could theoretically be modified by other processes
+  - Failed artifacts are skipped in subsequent steps (tracked via results array)
+  - WORKFLOW_EVENT_NAMES in workflow-progress.ts must be updated whenever new event types are added
+---
+
+## 2026-03-10 - US-009
+- Registered GET `/document/reprocess` route with required `documentId` query param in `document.ts`
+- Added import for `handleReprocessWorkflow` from `./workflows/reprocess/run-reprocess`
+- Route follows existing async workflow pattern: `executeWorkflowAsync` wraps the handler, returns immediate "processing" response
+- Reprocess event types in WorkflowEvents and SSE forwarding in workflow-progress.ts were already done in US-008
+- Files changed: `src/routes/document.ts` (modified)
+- **Learnings for future iterations:**
+  - US-008 already added the reprocess event types and SSE forwarding, so US-009 only needed the route registration and import
+  - All async workflow routes follow the same pattern: schema + executeWorkflowAsync + immediate return with status "processing"
+  - Place new routes logically near related ones (reprocess before run-all)
+---
+
+## 2026-03-10 - US-010
+- Registered GET `/document/reprocess-batch` route with required `startId` and `endId` query params
+- Added `reprocess:batch-progress` event type to WorkflowEvents in document.ts
+- Added `reprocess:batch-progress` to WORKFLOW_EVENT_NAMES in workflow-progress.ts for SSE forwarding
+- Route processes documents sequentially in a for loop, calling `handleReprocessWorkflow` for each
+- Skips documents with no artifacts or no processable artifacts (only "Original Document")
+- Emits `reprocess:batch-progress` event after each document with currentDocumentId, completedCount, totalCount
+- Returns per-document results: success, failure, or skipped
+- Files changed: `src/routes/document.ts` (modified), `src/routes/workflow-progress.ts` (modified)
+- **Learnings for future iterations:**
+  - Batch routes use `executeWorkflowAsync` the same as single-document routes — the batch loop goes inside the async callback
+  - For batch operations, emit progress after every document (including skipped ones) so the UI can track progress accurately
+  - The `executeWorkflowAsync` helper needs a documentId for the workflow:complete/error events — for batch routes, passing startId works since the per-document events come from handleReprocessWorkflow itself
+---
+
+## 2026-03-10 - US-011
+- Registered GET `/document/artifact-versions` route with required `documentId` and `title` query params
+- Uses `documentArtifact.findUnique` with `documentId_title` compound key to find the artifact
+- Fetches all `ArtifactVersion` records ordered by version descending
+- Returns current (live) content as the latest entry with `isCurrent: true`, plus all historical versions
+- Returns 404 if artifact not found
+- Files changed: `src/routes/document.ts` (modified)
+- **Learnings for future iterations:**
+  - Prisma compound unique keys use the format `modelName_fieldName` (e.g., `documentId_title`) in `findUnique` where clauses
+  - The current version number is derived from the latest historical version + 1 (or 1 if no history exists)
+  - This is a synchronous route (not async workflow) since it just reads data — no need for `executeWorkflowAsync`
+---
+
+## 2026-03-10 - US-012
+- Added "Re-Process This Document" button to dashboard below the existing workflow grid and event log
+- Added "Batch Re-Process" section with start/end ID number inputs and "Start Batch" button
+- Buttons call fetch() to `/document/reprocess` and `/document/reprocess-batch` endpoints
+- Added SSE listeners for all reprocess:* events (pipeline-started, step-started, step-completed, step-failed, pipeline-completed, batch-progress)
+- Buttons are disabled while re-processing is in progress, re-enabled on completion
+- Shows progress bars and status text for both single and batch re-processing
+- Shows completion summary with artifact/document counts when finished
+- Added CSS styles for reprocess sections (purple primary button, blue secondary button, batch input layout)
+- Files changed: `src/routes/dashboard.ts` (modified)
+- **Learnings for future iterations:**
+  - Dashboard HTML is built as a template string in `buildDashboardHtml()` — all JS must be vanilla (no TypeScript, no modules)
+  - The `startReprocess()` and `startBatch()` functions are defined outside the IIFE so they can be called from `onclick` handlers
+  - SSE listeners for reprocess events share the same `EventSource` connection as the workflow events
+  - Dev server must be running on port 3000 for browser verification — if not available, note manual verification needed
+  - Browser verification was not possible (dev server not running) — manual verification needed
+---
