@@ -7,7 +7,11 @@ import { Game } from "./engine/Game";
 import { TestMap } from "./maps/TestMap";
 
 const clientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-const redirectUri = import.meta.env.VITE_WORKOS_REDIRECT_URI as string;
+// redirectUri defaults to window.origin when omitted — which is the recommended
+// setup per authkit-react docs. Only override if explicitly set in env.
+const redirectUri =
+  (import.meta.env.VITE_WORKOS_REDIRECT_URI as string | undefined) ??
+  window.origin;
 
 const rootEl = document.getElementById("react-root");
 if (!rootEl) throw new Error("Missing #react-root element");
