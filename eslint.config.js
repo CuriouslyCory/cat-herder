@@ -13,6 +13,13 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      // Allow intentionally-unused params/vars when prefixed with _
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
   },
   {
     files: ["*.config.{js,ts}", "*.config.*.{js,ts}"],
