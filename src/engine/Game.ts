@@ -8,12 +8,8 @@ import { RenderSystem } from "../systems/RenderSystem";
 import { MovementSystem } from "../systems/MovementSystem";
 import { CollisionSystem } from "../systems/CollisionSystem";
 import { MapManager } from "../game/MapManager";
+import { UIManager } from "../ui/UIManager";
 import type { AuthModule } from "../modules/auth/AuthModule";
-
-// UIManager stub — will be replaced in US-020
-class UIManagerStub {
-  update(_dt: number): void {}
-}
 
 const FIXED_STEP = 1 / 60; // seconds
 const MAX_ACCUMULATED = 0.25; // cap to prevent spiral of death
@@ -30,7 +26,7 @@ export class Game {
   private readonly renderSystem: RenderSystem;
   private readonly movementSystem: MovementSystem;
   private readonly collisionSystem: CollisionSystem;
-  private readonly uiManager: UIManagerStub;
+  readonly uiManager: UIManager;
   private rafHandle: number | null = null;
   private lastTime: number | null = null;
   private accumulator = 0;
@@ -48,7 +44,7 @@ export class Game {
     this.world = new World();
     this.cameraController = new CameraController(this.sceneManager);
     this.mapManager = new MapManager(this.world);
-    this.uiManager = new UIManagerStub();
+    this.uiManager = new UIManager();
 
     // Systems in update order (see frame order spec in PRD US-018)
     this.movementSystem = new MovementSystem(this.inputManager);
@@ -87,6 +83,7 @@ export class Game {
     this.eventBus.clear();
     this.inputManager.dispose();
     this.sceneManager.dispose();
+    this.uiManager.dispose();
   }
 
   private readonly loop = (timestamp: number): void => {
