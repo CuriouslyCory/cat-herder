@@ -1,3 +1,19 @@
+## Codebase Patterns
+- ESLint flat config (eslint.config.js) must scope typed rules to `files: ["src/**/*.ts"]` — the config file itself isn't in tsconfig and will error if type-checked
+- The project uses `typescript-eslint` (unified package v8+) not the older `@typescript-eslint/eslint-plugin` + `@typescript-eslint/parser` split packages
+- pnpm is the package manager; pnpm lint, pnpm typecheck, pnpm build are the quality gates
+- vite.config.ts is included in tsconfig.json "include" array
+---
+
 # Ralph Progress Log
 Started: Tue Apr 14 05:19:41 PM MST 2026
+---
+
+## 2026-04-14 - US-001
+- Implemented project scaffolding: Vite + TypeScript + Three.js with full toolchain
+- Files changed: package.json (updated ESLint deps), eslint.config.js (fixed flat config scoping), plus committed all existing project files (.env.example, .prettierrc, .prettierignore, .gitignore, .npmrc, tsconfig.json, vite.config.ts, src/main.ts, index.html, pnpm-lock.yaml)
+- **Learnings for future iterations:**
+  - The project was largely pre-scaffolded but deps were mismatched: `@typescript-eslint/eslint-plugin` + `@typescript-eslint/parser` + `eslint-plugin-prettier` were installed, but eslint.config.js was already written for the newer `typescript-eslint` unified package + `@eslint/js`
+  - Fixed by removing old split packages and adding `@eslint/js` and `typescript-eslint` to devDependencies
+  - ESLint flat config must scope `recommendedTypeChecked` (type-aware rules) only to `src/**/*.ts` — applying it globally causes the config file itself to fail since it's not in tsconfig
 ---
