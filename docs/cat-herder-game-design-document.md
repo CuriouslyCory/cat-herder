@@ -1,6 +1,6 @@
 # Cat Herder - Game Design Document (MVP)
 
-**Version**: 0.1  
+**Version**: 0.2  
 **Last Updated**: 2026-04-14  
 **Scope**: MVP (Character Creation → Playable Session Loop)  
 **Status**: Design Phase
@@ -103,7 +103,7 @@ Attributes are **not** manually assigned; they flow from ability loadout. This k
 
 | Attribute      | Source                          | MVP Default | Purpose                |
 |----------------|---------------------------------|-------------|------------------------|
-| Speed          | Movement ability tier           | 5.0 m/s     | Walk/run speed         |
+| Speed          | Movement ability tier           | 4.5 u/s     | Walk/run speed (per Map & Movement System spec) |
 | Carrying Cap   | Inventory ability tier          | 10 slots    | Max inventory slots    |
 | Gather Speed   | Gathering ability tier          | 1.0x        | Time to collect resource |
 | Herding Range  | Herding ability tier            | 3.0m        | Detect cats in radius  |
@@ -178,11 +178,13 @@ Tier 3 (Cost: 1 AP) → Effect +50% / +25% cooldown reduction / specialized bonu
 **Purpose**: Reduce traversal friction as players explore larger maps  
 **Player Fantasy**: "I'm faster on the farm"  
 **Mechanics**:
-- Tier 1: Base speed +20% (5.0 → 6.0 m/s)
-- Tier 2: Base speed +35% (5.0 → 6.75 m/s)
-- Tier 3: Base speed +50% (5.0 → 7.5 m/s); sprint ability unlock (hold button for 2x speed, 5s max, 10s cooldown)
+- Tier 1: Base speed +20% (4.5 → 5.4 u/s)
+- Tier 2: Base speed +35% (4.5 → 6.075 u/s)
+- Tier 3: Base speed +50% (4.5 → 6.75 u/s); sprint ability unlock (hold `Shift` for 2x speed, 5s max, 10s cooldown)
 
-**Tuning Notes**: Movement speed is feel-critical. `[PLACEHOLDER]` - test at different speeds to ensure farm size matches locomotion pacing.
+**Tuning Notes**: Movement speed is feel-critical. Base speed 4.5 u/s is canonical (per Map & Movement System spec). `[PLACEHOLDER]` - test at different speeds to ensure farm size matches locomotion pacing.
+
+**Note on Dash vs Sprint**: The Map & Movement System spec defines a Dash at 7.2 u/s as a future base ability. For MVP, speed bursts are gated behind Tier 3 sprint (progression-based). Dash as a base ability is deferred to post-MVP. See Map & Movement System § 2.1.
 
 ---
 
@@ -331,7 +333,7 @@ Character:
         [Pond]   (Unlocked L5)
 ```
 
-**Dimensions**: `[PLACEHOLDER - 50m x 50m grid; test if too large/small for 20min session]`
+**Dimensions**: `[PLACEHOLDER - 50u x 50u grid; test if too large/small for 20min session]` (Note: use "units" not "meters" for consistency with Map & Movement System spec. All traversal calculations in the Balance Spreadsheet use this 50u baseline.)
 
 **Spawn Rules**:
 - Grass nodes: 8–12 scattered randomly, respawn 30s after collect
@@ -479,7 +481,27 @@ Character:
 
 ---
 
-## 12. Out of Scope (Post-MVP)
+## 12. Design Reconciliation Notes
+
+### Cat Companion System vs Cat Herding System
+
+This GDD describes two distinct cat-related systems that will need reconciliation post-MVP:
+
+1. **Cat Herding** (GDD §§ 4-5): Wild cats are herded to farm buildings for passive resource generation. Cats have relationship scores, states (wild/herding/captured), and names. Driven by the Herding ability.
+2. **Cat Companions** (Map & Movement System § 4): Cats are summoned with yarn as puzzle/traversal tools. Each has a unique ability (Loaf, Zoomies, Curiosity Cat, Pounce, etc.). Driven by yarn economy.
+
+**MVP scope follows the Cat Companion system** (PRD-02). The Herding/Farm/Building progression from this GDD is deferred to post-MVP phases.
+
+**Open design question**: How do these systems coexist long-term? Possible approaches:
+- Herded wild cats could become "unlocked" companion types in the roster
+- Farm buildings could reduce yarn costs for specific companion types
+- Companion cats and herded cats could be entirely separate systems (different gameplay loops)
+
+This reconciliation should be resolved before the Herding ability is implemented.
+
+---
+
+## 13. Out of Scope (Post-MVP)
 
 These features are **not** included in MVP but are mentioned for roadmap clarity:
 
@@ -491,10 +513,12 @@ These features are **not** included in MVP but are mentioned for roadmap clarity
 - [ ] Leaderboards or competitive progression
 - [ ] Console/controller support (keyboard + mouse only for MVP)
 - [ ] Accessibility options (beyond colorblind palette consideration)
+- [ ] Base Dash mechanic (7.2 u/s, `Shift` + direction) — deferred; MVP uses Tier 3 sprint instead
+- [ ] Mouse click-to-move / A* pathfinding — deferred per PRD-02
 
 ---
 
-## 13. Design Decisions & Rationales
+## 14. Design Decisions & Rationales
 
 ### Why no currency/economy in MVP?
 
@@ -544,15 +568,16 @@ These features are **not** included in MVP but are mentioned for roadmap clarity
 
 ---
 
-## 14. Version History
+## 15. Version History
 
 | Version | Date       | Changes                                           | Author |
 |---------|------------|---------------------------------------------------|--------|
 | 0.1     | 2026-04-14 | Initial MVP design document                       | GDD    |
+| 0.2     | 2026-04-14 | Cross-document consistency pass: aligned base speed to 4.5 u/s (per Map & Movement System), recalculated movement tier progression, added Dash/click-to-move deferral notes, added cat system reconciliation section, renumbered sections | Consistency Review |
 
 ---
 
-## 15. Next Steps
+## 16. Next Steps
 
 1. **Engineering**: Build data model from Section 9; implement auto-save
 2. **Engineering**: Integrate debug menu (Section 8); ensure hot-tuning works

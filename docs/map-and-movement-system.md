@@ -16,10 +16,10 @@
 ## 2. Ground Movement (2D Plane)
 
 ### 2.1 Basic Locomotion
-- **Input**: `WASD` / `Arrow Keys` for 8-directional movement, or **mouse click-to-move** (A* pathfinding with 0.3s acceleration curve)
+- **Input**: `WASD` / `Arrow Keys` for 8-directional movement. Mouse click-to-move (A* pathfinding with 0.3s acceleration curve) is **deferred to post-MVP** — see PRD-02 Non-Goals.
 - **Movement Speed**: 
-  - Walk: 4.5 units/second
-  - Dash (`Shift` + direction): 7.2 units/second (consumes minor stamina)
+  - Walk: 4.5 units/second (canonical base speed — all ability tier calculations derive from this value)
+  - Dash (`Shift` + direction): 7.2 units/second (consumes minor stamina) — **deferred to post-MVP**. MVP speed bursts are gated behind Movement Speed ability Tier 3 sprint (see GDD § 4.4).
 - **Acceleration/Deceleration**: 0.3s ramp-up, 0.2s ramp-down for responsive but weighted feel
 - **Collision**: Circle collision (radius: 0.4 units) with 0.1 unit skin width for wall sliding
 
@@ -42,10 +42,13 @@
 - **Surface Swim**: Normal 360° movement (speed: 3.2 units/second)
 - **Dive (`S` / mouse click on depth)**: Submerge at 2 units/second
 - **Swim Up (`W` / `Spacebar`)**: Ascend at 2.5 units/second
-- **Oxygen System**: 30-second breath meter (depletes 1% per 0.3s underwater)
-  - Visual: Circular gauge appears at top-center when submerged
+- **Oxygen System**: 30-second breath meter (depletes 1% per 0.3s **while diving only** — surface swimming does not drain oxygen)
+  - Rationale: Surface swimming is a traversal mechanic; oxygen pressure applies only during deliberate diving for underwater collectibles. Aligns with "Zen Engagement" pillar (forgiving, not punishing).
+  - Visual: Circular gauge appears at top-center when submerged, hidden on land
   - Warning: Flashing red pulse at 20% remaining
   - Depletion: -1 heart damage per second after meter empties
+  - Surfacing: Oxygen refills at 5%/s when on water surface
+  - Exiting water: Oxygen resets to 100%, gauge hides
 - **Depth Layers**: Swimming areas have vertical depth of 8-15 units with collectibles at varying depths
 
 ## 4. Cat Companion System

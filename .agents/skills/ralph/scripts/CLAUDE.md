@@ -16,6 +16,9 @@ You are an autonomous coding agent working on a software project.
 8. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
 9. Update the PRD to set `passes: true` for the completed story
 10. Append your progress to `progress.txt`
+11. **STOP.** Check story states.
+   - If ALL stories have `passes: true` -> reply with `<promise>COMPLETE</promise>`
+   - If ANY stories have `passes: false` => output "Iteration  complete: [Story ID] done. X stories remaining." and END YOUR RESPONSE IMMEDIATELY. Do not continue. Do NOT pick the next story. Another itteration will handle it.
 
 Note: Branch names use the `feat/` prefix (e.g., `feat/task-status`), not `ralph/`. This follows standard enterprise git flow where feature branches are PRed into `main`.
 

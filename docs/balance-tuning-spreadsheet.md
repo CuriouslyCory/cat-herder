@@ -204,20 +204,24 @@
 
 ## 9. Movement Speed Tuning
 
+> **Canonical source**: Map & Movement System § 2.1 — base walk speed is **4.5 u/s**. All tier calculations derive from this value.
+
 ### Speed Progression Table
 
-| Ability Tier | Speed (m/s) | % Increase | Traversal Time (50m map diagonal) | Feel |
+| Ability Tier | Speed (u/s) | % Increase | Traversal Time (50m map diagonal ≈ 70.7u) | Feel |
 |--------------|-------------|----------|-----------------------------------|------|
-| Tier 0 (base) | 5.0        | 0%       | 14.1 seconds                      | Slow, deliberate |
-| Tier 1       | 6.0        | +20%     | 11.8 seconds                      | Noticeably faster |
-| Tier 2       | 6.75       | +35%     | 10.5 seconds                      | Comfortable |
-| Tier 3       | 7.5        | +50%     | 9.4 seconds                       | Zippy |
-| Tier 3 + Sprint | 15.0    | +200%    | 4.7 seconds                       | Quick burst |
+| Tier 0 (base) | 4.5        | 0%       | 15.7 seconds                      | Deliberate, weighted |
+| Tier 1       | 5.4        | +20%     | 13.1 seconds                      | Noticeably faster |
+| Tier 2       | 6.075      | +35%     | 11.6 seconds                      | Comfortable |
+| Tier 3       | 6.75       | +50%     | 10.5 seconds                      | Zippy |
+| Tier 3 + Sprint | 13.5    | +200%    | 5.2 seconds                       | Quick burst |
 
 **Playtest Goals**:
-- Base speed (5.0 m/s) should feel deliberate but not ponderous
-- Tier 3 (7.5 m/s) should feel noticeably faster; sprint at 15.0 m/s should feel "quick dash"
-- Map size and speed must be balanced: if 50m diagonal takes 14 seconds, gathering cycle + traversal = ~30 seconds per resource loop (acceptable)
+- Base speed (4.5 u/s) should feel deliberate but not ponderous — movement has weight per Map & Movement System spec (0.3s accel, 0.2s decel)
+- Tier 3 (6.75 u/s) should feel noticeably faster; sprint at 13.5 u/s should feel like a quick burst
+- Map size and speed must be balanced: if 50m diagonal takes ~16 seconds at base, gathering cycle + traversal = ~30 seconds per resource loop (acceptable)
+
+**Note on Dash**: The Map & Movement System spec defines a base Dash at 7.2 u/s (`Shift` + direction, consumes stamina). This is **deferred to post-MVP** — speed bursts in MVP are gated behind the Tier 3 sprint ability unlock. See PRD-02 Non-Goals.
 
 **Tuning Lever**: `[PLACEHOLDER]` Adjust base speed if traversal feels tedious or trivial after first playtest.
 
