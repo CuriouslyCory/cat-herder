@@ -1,0 +1,220 @@
+{
+  "project": "Cat Herder",
+  "branchName": "feat/map-editor-and-polish",
+  "description": "Map Editor & Polish — Developer-facing map editor, 2D map overlay, balance tuning passes, edge case fixes, visual polish, and final quality gate.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Map editor mode — toggle, camera, and core module",
+      "description": "As a developer, I want to enter a map editor mode so I can design levels visually.",
+      "acceptanceCriteria": [
+        "Ctrl+E toggles map editor mode (only in import.meta.env.DEV builds)",
+        "Entering editor: game pauses (Game.pause()), camera switches to free mode via CameraController.setMode('free')",
+        "Exiting editor: game resumes (Game.resume()), camera returns to follow mode",
+        "Editor does NOT destroy existing game entities — they persist while editing",
+        "src/maps/MapEditor.ts exposes: enable(), disable(), isActive(): boolean, getMapData(): MapData, loadMapData(data: MapData)",
+        "getMapData() serializes current map state into a valid MapData object",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Map editor — terrain placement tools",
+      "description": "As a developer, I want to place and modify terrain blocks so I can shape the map geometry.",
+      "acceptanceCriteria": [
+        "src/ui/MapEditorUI.ts renders a side panel with tool palette when editor is active",
+        "Tool palette contains: Grass block, Dirt block, Stone block, Water zone",
+        "Select tool then click on map: terrain block entity created at grid-snapped position (1u grid, Math.round())",
+        "Terrain blocks have adjustable height via side panel input (0.5u to 5u in 0.5u steps)",
+        "Click existing terrain block: selects it, side panel shows editable properties (type dropdown, height input, position display)",
+        "Delete key removes selected terrain block entity",
+        "Water zone tool: click-drag to define rectangular water area, depth input in side panel",
+        "Ghost preview of block shown at mouse position before placement",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Map editor — entity placement tools",
+      "description": "As a developer, I want to place spawn points, resource nodes, and special zones on the map.",
+      "acceptanceCriteria": [
+        "Entity tools added to tool palette: Player Spawn, Cat Spawn, Resource Node (Grass/Sticks/Water dropdown), Hidden Terrain Zone, Yarn Pickup",
+        "Player Spawn: only one allowed on map — placing a new one moves the existing one",
+        "Cat Spawn: place multiple markers, each shows as a distinct colored icon",
+        "Resource Node: select resource type from dropdown, place on map, respawn time editable in side panel",
+        "Hidden Terrain Zone: click-drag to define rectangular area, height editable in side panel",
+        "Yarn Pickup: place collectible marker, yarn amount editable in side panel (default 3)",
+        "All placed entities show as distinct colored markers/shapes distinguishable from terrain",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Map editor — move, delete, and keyboard shortcuts",
+      "description": "As a developer, I want to move and delete placed objects so I can iterate on map layouts.",
+      "acceptanceCriteria": [
+        "Move tool: click entity to select, drag to new position, release to place (grid-snapped to 1u)",
+        "Delete tool: click entity to remove it from the map",
+        "Keyboard shortcuts when editor active: V for move tool, X for delete tool, 1-9 for tool palette selection",
+        "Selected entity has highlighted border or outline for visual feedback",
+        "Undo is explicitly NOT implemented (out of scope for MVP)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Map editor — save and load JSON files",
+      "description": "As a developer, I want to save map layouts as JSON files and load them so that maps are portable.",
+      "acceptanceCriteria": [
+        "Save button in editor UI: calls MapEditor.getMapData(), JSON.stringify() result, triggers browser download dialog",
+        "Filename auto-generated: map-[MapData.name]-[ISO timestamp].json",
+        "Load button: opens file picker, reads selected JSON file, validates it has required MapData fields, calls MapEditor.loadMapData(parsed)",
+        "Loaded map replaces current map entirely (all terrain/entity entities destroyed and recreated from loaded data)",
+        "Play button: calls MapManager.loadMap(mapEditor.getMapData()), then MapEditor.disable() — exits editor and plays on edited map",
+        "Invalid JSON file shows error message in editor UI (does not crash or corrupt state)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "2D map overlay — overhead navigation view",
+      "description": "As a player, I want to see an overhead 2D map so I can orient myself in the world.",
+      "acceptanceCriteria": [
+        "src/game/NavigationOverlay.ts renders when M key pressed (InputManager GameAction.ToggleMap)",
+        "Uses a separate HTML5 canvas element overlaid on game (not Three.js), centered on screen, ~400x400px",
+        "Draws terrain cells as colored rectangles: Grass=green, Dirt=brown, Stone=gray, Water=blue",
+        "Hidden terrain NOT shown unless currently revealed by Curiosity Cat",
+        "Player icon: colored circle matching character color with arrow showing facing direction",
+        "Active cat positions: small colored squares at their world positions",
+        "Resource nodes: small dots colored by type (green=Grass, brown=Sticks, blue=Water)",
+        "Map scales terrain grid to fit the overlay canvas size",
+        "Pressing M again or Escape closes the overlay",
+        "Game continues running behind overlay (NOT paused) but movement input consumed while overlay open",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Edge case fixes — stuck states and death respawn",
+      "description": "As a developer, I want all known edge cases handled gracefully so the game never enters an unrecoverable state.",
+      "acceptanceCriteria": [
+        "Player cannot get stuck in terrain — PhysicsEngine push-out resolution if clipping detected (raycast check + position correction)",
+        "Player cannot walk out of map bounds — collision walls at all 4 map edges (created by MapManager.loadMap())",
+        "Cat summon inside collision geometry: auto-raise attempt (move up 0.5u, retry up to 3 times) — if all fail, summon returns null with console warning",
+        "Cat dismissed while player standing on it: player falls normally via gravity (no void or clip)",
+        "Health reaches 0 (from oxygen drain): player respawns at map spawn point with 3 hearts and full oxygen (no death screen — Zen Engagement pillar)",
+        "Inventory full + gathering attempt: clear 'Inventory Full' text feedback near player, gathering does not start",
+        "Save while swimming: on load, if saved position is inside water zone, SwimmingState component added correctly",
+        "Rapid input (hold multiple keys, mash jump, spam cat summon): no crashes, no inconsistent state — input debouncing prevents duplicate actions",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+              "id": "US-008",
+      "title": "Visual polish — shadows, animations, and effects",
+      "description": "As a developer, I want visual refinements that make the game feel more alive without adding art assets.",
+      "acceptanceCriteria": [
+        "Ground plane shadows: player and cat entities cast elliptical shadows onto ground plane (add shadow plane mesh below each dynamic entity via SceneManager)",
+        "Terrain color variation: slight random tint variation per terrain cell (e.g., grass cells vary +/-10% in hue/brightness)",
+        "Water zone: semi-transparent blue (opacity 0.4) with subtle opacity pulse animation (0.35-0.45 over 2s cycle)",
+        "Cat summon effect: entity scales from 0 to 1 over 0.2 seconds when created (Transform.scale interpolation in RenderSystem)",
+        "Cat dismiss effect: entity scales from 1 to 0 over 0.2 seconds before entity destruction",
+        "Gather progress bar: smooth CSS width transition (not jerky step increments)",
+        "Hidden terrain reveal: opacity fade from 0 to 1 over 0.5 seconds (not instant snap)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Movement balance pass",
+      "description": "As a developer, I want to verify all movement values feel correct and adjust if needed.",
+      "acceptanceCriteria": [
+        "Walk speed (4.5 u/s) verified: map traversal feels purposeful, not sluggish or too fast",
+        "Acceleration (0.3s) verified: movement start feels responsive but weighted",
+        "Deceleration (0.2s) verified: stopping feels controlled, not slippery",
+        "Jump impulse (3.5u) verified: reaches intended 1.2u apex and intended platforms",
+        "Coyote time (5 frames) verified: jumping after walking off edges works reliably",
+        "Jump buffer (5 frames) verified: rapid repeated jumps feel responsive",
+        "Air control (70%) verified: mid-air steering works without feeling like ice physics",
+        "Swimming speeds verified: surface 3.2, dive 2.0, ascend 2.5 u/s feel appropriate",
+        "Any values adjusted documented with comment in config.ts explaining rationale",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Cat and resource balance pass",
+      "description": "As a developer, I want cat costs/effects and resource gathering tuned to GDD feel targets.",
+      "acceptanceCriteria": [
+        "Loaf (1 yarn) height verified: stacking 2-3 reaches elevated platforms correctly",
+        "Zoomies (2 yarn) verified: 2x speed and 8s duration feels impactful but balanced",
+        "Curiosity Cat (2 yarn) verified: 5u radius reveals enough, 20s is sufficient to explore",
+        "Pounce (3 yarn) verified: 3.5u launch reliably reaches elevated platforms",
+        "Starting yarn (10) verified: enough to experiment with all cat types in one session",
+        "Cat limit (3) verified: creates meaningful placement decisions",
+        "Grass gather time (1.5s) verified: feels snappy per GDD 'instant gratification' target",
+        "Resource respawn timers verified: Grass 30s, Sticks 45s, Water 60s feel balanced",
+        "Inventory cap (10) verified: creates tension without frustration",
+        "Any adjusted values documented with comments in config.ts or cat definition files",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Final quality gate — lint, typecheck, build, integration verification",
+      "description": "As a developer, I need all quality checks passing so the MVP is shippable.",
+      "acceptanceCriteria": [
+        "pnpm lint passes with zero warnings",
+        "pnpm typecheck passes with zero errors",
+        "pnpm build succeeds and produces optimized bundle",
+        "No console errors on clean startup in browser",
+        "Game maintains 60 FPS with test map fully populated (all resource nodes, 3 active cats, swimming active)",
+        "Auth flow works end-to-end: sign in -> game, sign out -> title screen, refresh -> session persists",
+        "Save/load round trip verified: play 1 minute, close tab, reopen, state matches (position, yarn, inventory, cats)",
+        "All 4 cat types functional and produce intended effects",
+        "Swimming + oxygen system functional (enter water, dive, oxygen drains, surface, exit)",
+        "Debug menu opens with Ctrl+D, all tabs functional, changes apply immediately",
+        "Map editor: Ctrl+E opens editor, place terrain, save JSON, load JSON, play on edited map",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

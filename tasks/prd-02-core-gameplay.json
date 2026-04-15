@@ -1,0 +1,285 @@
+{
+  "project": "Cat Herder",
+  "branchName": "feat/core-gameplay",
+  "description": "Core Gameplay — Swimming, Cat Companions & Resource Gathering. Adds swimming/diving with oxygen, 4 cat companion types (Loaf, Zoomies, Curiosity Cat, Pounce), resource nodes with gathering, inventory system, and yarn economy.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "SwimmingState component and water trigger volumes",
+      "description": "As a player, I want to swim when I enter water so that water areas feel like a distinct environment.",
+      "acceptanceCriteria": [
+        "src/ecs/components/SwimmingState.ts component with fields: isSwimming (bool), isDiving (bool), oxygen (number 0-100), currentDepth (number)",
+        "Water zones from MapData are created as trigger volumes in PhysicsEngine during MapManager.loadMap()",
+        "When player entity overlaps a water trigger: SwimmingState component added automatically, PLAYER_ENTERED_WATER event emitted via EventBus",
+        "When player exits water: SwimmingState component removed, PLAYER_EXITED_WATER event emitted",
+        "Water zones on test map render as semi-transparent blue planes",
+        "Transition is seamless — no teleporting or state glitches at water boundary",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Swimming movement — surface swim, dive, ascend",
+      "description": "As a player, I want to swim on the surface and dive underwater with distinct controls.",
+      "acceptanceCriteria": [
+        "MovementSystem detects SwimmingState component on player entity and switches to swim physics",
+        "Surface swim: 360deg movement at 3.2 u/s (from config.ts swimming.surfaceSpeed)",
+        "Dive: S-key moves player downward at 2.0 u/s",
+        "Ascend: W-key or Spacebar moves player upward at 2.5 u/s",
+        "Player cannot jump while swimming (Spacebar triggers ascend instead)",
+        "Player surfaces automatically when reaching water edge boundary",
+        "Water zones have configurable depth (depth property in MapData waterZone)",
+        "Movement feels floaty compared to ground (reduced acceleration curve)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Oxygen system with HUD gauge and health drain",
+      "description": "As a player, I want an oxygen meter when diving so that underwater exploration has tension and stakes.",
+      "acceptanceCriteria": [
+        "Oxygen starts at 100 when submerging, drains at 3.33 per second (1% per 0.3s) while isDiving is true",
+        "Oxygen does NOT drain while on water surface (only when isDiving = true)",
+        "HUD oxygen gauge: bar element appears at top-center when SwimmingState is present, hidden on land",
+        "Warning: pulsing red visual on gauge at 20% oxygen remaining, OXYGEN_WARNING event emitted",
+        "Depletion: when oxygen hits 0, player loses 1 health per second, OXYGEN_DEPLETED event emitted",
+        "Surfacing: oxygen refills at 5% per second when on water surface (isDiving = false)",
+        "Exiting water completely: oxygen resets to 100, gauge hides",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Cat definition data structure and registry",
+      "description": "As a developer, I need a data-driven cat definition system so that adding new cat types requires only a definition file and enum entry.",
+      "acceptanceCriteria": [
+        "src/game/cats/CatDefinition.ts defines CatDefinition interface with: type (CatType enum), yarnCost (number), name (string), description (string), behavior config (duration, cooldown), meshConfig (shape, color, size for primitive), effectType ('terrain' | 'movement' | 'utility' | 'launch')",
+        "src/game/cats/definitions/ directory created with one file per cat type",
+        "src/game/cats/definitions/index.ts barrel exports a registry Map<CatType, CatDefinition>",
+        "Registry is iterable and lookup by CatType is O(1)",
+        "Placeholder definitions created for all 4 MVP cats (Loaf, Zoomies, CuriosityCat, Pounce) with correct yarn costs and effect types",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "CatBehavior component and CatAISystem",
+      "description": "As a developer, I need a generic system that drives all cat behaviors from their definitions so that cat behavior is data-driven.",
+      "acceptanceCriteria": [
+        "src/ecs/components/CatBehavior.ts component with: catType (CatType), state (Idle | Active | Cooldown | Expired), stateTimer (number), ownerId (Entity reference)",
+        "src/systems/CatAISystem.ts implements System interface",
+        "Each frame: queries entities with CatBehavior + Transform",
+        "State machine per cat: Idle (just placed) -> Active (effect running) -> Expired (duration elapsed)",
+        "Terrain cats (effectType terrain/launch): stay in Active indefinitely until manually dismissed",
+        "Duration cats (effectType movement/utility): timer counts down from definition duration, auto-transition to Expired",
+        "When state is Expired: system removes the cat entity and emits CAT_DISMISSED event",
+        "System reads behavior config from CatDefinition registry — no cat-specific logic hardcoded",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "CatCompanionManager — summon, dismiss, catalog",
+      "description": "As a player, I want to summon and dismiss cat companions using yarn so that I can solve puzzles and traverse the world.",
+      "acceptanceCriteria": [
+        "src/game/CatCompanionManager.ts exposes: summon(catType, position): Entity | null, dismiss(entity), getCatalog(): CatCatalogEntry[], getActiveCompanions(): Entity[]",
+        "summon() validates: enough yarn (checks GameState player.yarn), under cat limit (3 active), position is valid (not inside static collider geometry)",
+        "On valid summon: deducts yarn from GameState, creates cat entity with Transform, Renderable, Collider, CatBehavior components, emits CAT_SUMMONED event",
+        "On invalid summon: returns null (no entity created)",
+        "dismiss(): destroys cat entity, returns yarn to GameState, emits CAT_DISMISSED event",
+        "getCatalog(): returns all cat definitions with type, name, yarnCost, description",
+        "Cat limit: if summoning would exceed limit of 3, oldest cat is auto-dismissed first",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Loaf cat — static platform block",
+      "description": "As a player, I want to summon a Loaf cat that becomes a solid platform so I can reach elevated areas by stacking.",
+      "acceptanceCriteria": [
+        "src/game/cats/definitions/Loaf.ts CatDefinition: type=Loaf, yarnCost=1, effectType='terrain', meshConfig with box geometry at 1.5u height",
+        "On summon: cat entity created with static Collider (isStatic=true, box shape, 1.5u tall)",
+        "Player can walk on top of the Loaf entity (collision response supports standing on static bodies)",
+        "Multiple Loafs stackable — player can place one atop another's top face",
+        "Loaf is immovable (static body — nothing pushes it)",
+        "Visual: box-shaped colored primitive (warm orange color distinct from terrain)",
+        "On dismiss: collider removed, entity destroyed — player falls if standing on it",
+        "Typecheck passes"
+      ],
+            "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Zoomies cat — speed trail with timed expiry",
+      "description": "As a player, I want to summon a Zoomies cat that creates a speed trail so I can move faster through an area.",
+      "acceptanceCriteria": [
+        "src/game/cats/definitions/Zoomies.ts CatDefinition: type=Zoomies, yarnCost=2, effectType='movement', duration=8 seconds, behavior.speedMultiplier=2.0",
+        "On summon: cat entity spawns at target position and creates a trigger zone (elongated box collider, 6u long) extending in player's current facing direction",
+        "When player overlaps the trail trigger: movement speed multiplied by 2x (MovementSystem checks for speed buff triggers)",
+        "Speed buff applies only while player is inside the trail zone",
+        "Trail persists for 8 seconds then auto-expires (CatAISystem handles via duration timer)",
+        "Visual: elongated colored zone (bright yellow/green) showing the trail path",
+        "On auto-expire: yarn is consumed (not returned). On manual right-click dismiss before expiry: yarn returned",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Curiosity Cat — reveal hidden terrain",
+      "description": "As a player, I want to summon a Curiosity Cat that reveals hidden terrain so I can discover secret paths and areas.",
+      "acceptanceCriteria": [
+        "src/game/cats/definitions/CuriosityCat.ts CatDefinition: type=CuriosityCat, yarnCost=2, effectType='utility', duration=20 seconds, behavior.revealRadius=5",
+        "Hidden terrain zones from MapData are created as entities with Renderable (initially invisible/opacity=0) and Collider (initially disabled/isTrigger=true)",
+        "On summon: all hidden terrain entities within 5u radius of cat position become visible (opacity fades to 1) and their colliders switch to solid (isTrigger=false, player can walk on them)",
+        "Revealed terrain persists for 20 seconds then fades back to hidden (opacity back to 0, collider back to trigger)",
+        "HIDDEN_TERRAIN_REVEALED event emitted with list of affected terrain entity IDs",
+        "Cat remains at summon position during reveal duration",
+        "Auto-expires after 20s (yarn consumed). Manual dismiss before expiry returns yarn",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Pounce cat — upward launch pad",
+      "description": "As a player, I want to summon a Pounce cat that launches me upward so I can reach high platforms in one move.",
+      "acceptanceCriteria": [
+        "src/game/cats/definitions/Pounce.ts CatDefinition: type=Pounce, yarnCost=3, effectType='launch', behavior.launchImpulse=3.5",
+        "On summon: cat entity created with trigger collider on top surface",
+        "When player walks onto the Pounce cat trigger: applies 3.5u upward impulse to player Velocity.dy",
+        "Launch occurs once per landing — a cooldown flag resets when player touches ground elsewhere (prevents infinite bouncing)",
+        "Pounce cat persists until manually dismissed (effectType='launch' treated as persistent like terrain)",
+        "Right-click dismiss returns yarn",
+        "Visual: low wide box primitive (crouching shape) with distinct purple/magenta color",
+        "Player retains 70% air control during launch (same as normal jump physics)",
+        "Test map elevated platforms at 3.5u height reachable via Pounce",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Cat placement UI — ghost preview, selection, dismiss",
+      "description": "As a player, I want to aim and place cats with my mouse so that positioning is intuitive and precise.",
+      "acceptanceCriteria": [
+        "Number keys 1-4 select cat type from roster (updates active selection state)",
+        "When cat type selected: ghost preview mesh (semi-transparent, 50% opacity) shown at mouse world position via SceneManager",
+        "Ghost preview snaps to valid ground positions (raycasts down from mouse position)",
+        "Ghost changes to red color when position is invalid (inside wall, off map, inside existing collider)",
+        "Left-click at valid position: calls CatCompanionManager.summon() with selected type and position",
+        "Right-click on an active cat entity: calls CatCompanionManager.dismiss() for that cat",
+        "HUD cat selection bar: shows all 4 cat types with icons, yarn costs, and current yarn count. Selected type highlighted",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "ResourceNode component and gathering system",
+      "description": "As a player, I want to gather resources from nodes on the map so that I feel productive and have materials to progress.",
+      "acceptanceCriteria": [
+        "src/ecs/components/ResourceNode.ts component: resourceType (Grass|Sticks|Water), gatherTime (seconds), yieldAmount (number), respawnTime (seconds), cooldownRemaining (number), isBeingGathered (bool)",
+        "Resource node entities have Transform, Renderable (distinct shape/color per type), Collider (trigger zone for interaction range ~1.5u), ResourceNode component",
+        "Player presses E while inside a resource node trigger zone: gathering starts if node cooldownRemaining is 0",
+        "Gathering takes gatherTime seconds (Grass 1.5s, Sticks 1.5s, Water 2.0s from config/GDD)",
+        "Player moving during gather cancels it (no penalty, progress resets)",
+        "Gather complete: resource added to inventory (GameState), node enters cooldown, visual dims/fades",
+        "After cooldown expires: node becomes gatherable again, visual restores to full opacity",
+        "Test map spawns nodes from MapData spawn points: 8-12 Grass, 3-5 Sticks, 1-2 Water",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Inventory system with capacity limits",
+      "description": "As a player, I want an inventory that holds gathered resources with a capacity limit so that I make strategic choices about what to carry.",
+      "acceptanceCriteria": [
+        "GameState tracks player.inventory as array of {resourceType, quantity} stacks and player.inventory.maxCapacity (default 10)",
+        "When gathering: if total items across all stacks < maxCapacity, add resource. If full, gathering fails with feedback",
+        "Resources of same type stack (e.g., 5 Grass is one stack entry with quantity 5, not 5 separate entries)",
+        "Capacity counts total items across all stacks (10 Grass + 5 Sticks = 15 items, exceeds cap of 10)",
+        "HUD inventory display: shows resource type icons with quantities and capacity indicator (e.g., '7/10')",
+        "GameState.onChange('player.inventory') triggers HUD update reactively",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Yarn economy, HUD display, and yarn pickups",
+      "description": "As a player, I need a yarn counter in the HUD and yarn pickups on the map so I can summon cats.",
+      "acceptanceCriteria": [
+        "GameState tracks player.yarn as number (starts at 10 for testing)",
+        "Summoning a cat deducts yarnCost from player.yarn; dismissing adds it back",
+        "HUD shows yarn count with a yarn ball icon (colored circle) at top of screen",
+        "When yarn insufficient for selected cat type: ghost preview shows red and summon is blocked",
+        "Yarn count updates reactively via GameState.onChange('player.yarn')",
+        "Yarn pickup entities on test map: trigger collider, when player overlaps: adds yarn amount to player.yarn, destroys pickup entity",
+        "2-3 yarn pickups on test map giving +3 yarn each",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+        {
+      "id": "US-015",
+      "title": "Enhanced HUD — complete status display",
+      "description": "As a player, I need a complete HUD showing health, yarn, inventory, oxygen, active cats, and gather progress.",
+      "acceptanceCriteria": [
+        "Health display: 5 hearts (filled/empty based on GameState player.stats.health)",
+        "Yarn count: yarn ball icon + number (already from US-014, ensure consistent styling)",
+        "Inventory: resource type icons with quantities + capacity bar (already from US-013, ensure consistent styling)",
+        "Oxygen gauge: appears ONLY when SwimmingState component present, hides on land",
+        "Active cat bar: shows small icons of summoned cats in bottom-left with right-click dismiss hint text",
+        "Cat selection: 4 cat type icons with yarn costs in bottom-center, selected type has highlighted border",
+        "Gather progress bar: appears during gathering near the resource node, smooth fill, disappears on complete/cancel",
+        "All HUD elements positioned at screen edges, not obstructing center gameplay",
+        "All elements update reactively via GameState.onChange()",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

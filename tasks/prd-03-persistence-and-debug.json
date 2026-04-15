@@ -1,0 +1,188 @@
+{
+  "project": "Cat Herder",
+  "branchName": "feat/persistence-and-debug",
+  "description": "Persistence & Debug Menu — Full game state save/load with auto-save to Neon DB, versioned save format with migrations, and comprehensive debug menu for rapid developer iteration.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "GameState central store with change detection",
+      "description": "As a developer, I need a central state store that tracks all game data with change detection so that UI updates reactively and serialization captures everything.",
+      "acceptanceCriteria": [
+        "src/state/GameState.ts exposes: get<T>(path: string): T, set<T>(path: string, value: T), onChange<T>(path: string, callback): Unsubscribe, serialize(): SaveData, restore(data: SaveData)",
+        "State shape tracks: player (appearance, position, stats.level, stats.health, stats.maxHealth, yarn, oxygen, inventory), world (currentMapId, activeCats array, hiddenTerrain array, resourceNodes array), session (totalPlaytimeMs, isSwimming, isDiving)",
+        "set() triggers registered onChange() callbacks for the matching path",
+        "serialize() excludes transient session state and debug overrides, returns JSON-safe object",
+        "restore() hydrates all state from saved snapshot and triggers all change callbacks",
+        "Validation: set() rejects invalid values (negative health, yarn below 0) by clamping or ignoring",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "SaveData format, types, and version migration",
+      "description": "As a developer, I need a versioned save format so that future schema changes don't break existing saves.",
+      "acceptanceCriteria": [
+        "src/modules/persistence/types.ts defines SaveData interface: version string, character (appearance, stats, inventory items, position), world (activeCats with type/position, resourceNodeCooldowns), session (totalPlaytimeMs)",
+        "src/modules/persistence/migrations.ts implements migrateIfNeeded(data: unknown): SaveData",
+        "Migration chain pattern: version '0.1' -> '0.2' -> ... each with a transform function in a Record",
+        "If version matches current: returns data as-is. If older: chains migrations sequentially. If unknown future version: throws descriptive error",
+        "Stub migration from '0.1' to '0.2' included as template showing the pattern",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Persistence module — save, load, auto-save with dirty tracking",
+      "description": "As a player, I want my game to auto-save so that I never lose progress.",
+      "acceptanceCriteria": [
+        "src/state/Persistence.ts exposes: save(): Promise<void>, load(): Promise<SaveData | null>, startAutoSave(intervalMs), stopAutoSave(), forceSave(): Promise<void>, isSaving (bool), lastSavedAt (Date | null)",
+        "save() calls gameState.serialize() and sends to Neon game_saves table via NeonClient.upsert()",
+        "load() fetches from Neon game_saves table, runs migrateIfNeeded(), returns SaveData or null",
+        "startAutoSave(30000) sets interval that calls save() only when isDirty flag is true",
+        "isDirty flag: set to true by GameState.set() calls, cleared after successful save",
+        "Position updates only set isDirty every 5 seconds (quantized, prevents excessive saves from movement)",
+        "forceSave() saves immediately regardless of dirty flag",
+        "window.beforeunload handler calls forceSave() using navigator.sendBeacon() as fallback",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Load and restore flow on app start",
+      "description": "As a returning player, I want to resume where I left off when I open the game.",
+      "acceptanceCriteria": [
+        "On app start after auth: Persistence.load() called automatically",
+        "If no save AND no character in DB: redirect to Character Creator",
+        "If character exists but no save: start new game at map spawn point with default state (10 yarn, full health, empty inventory)",
+        "If save exists: gameState.restore(saveData) called, player entity spawned at saved position with saved stats, inventory, yarn",
+        "Active cats from save re-summoned at saved positions via CatCompanionManager (invalid positions cause silent dismiss)",
+        "Resource node cooldowns restored (nodes on cooldown remain on cooldown with remaining time)",
+        "Loading screen shown while fetching from Neon",
+        "If load fails (network error): show retry button and allow starting new game as fallback",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Debug menu shell with tabs and toggle",
+      "description": "As a developer, I want a debug menu overlay that I can toggle on and off during gameplay.",
+      "acceptanceCriteria": [
+        "src/ui/DebugMenu.ts renders when Ctrl+D is pressed (only in import.meta.env.DEV builds)",
+        "Semi-transparent dark panel overlaying game canvas (does NOT pause game)",
+        "Organized in 4 tabs: Player, Cats, World, Session — clicking tab name switches visible content",
+        "Ctrl+D toggles menu closed",
+        "Menu has high z-index (renders above canvas and HUD)",
+        "All debug value changes emit DEBUG_VALUE_CHANGED events on EventBus",
+        "Debug values are session-only — never included in GameState.serialize()",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Debug menu — Player tab controls",
+      "description": "As a developer, I want to modify player stats in real-time so I can test different progression states.",
+      "acceptanceCriteria": [
+        "Player tab contains: Level selector (number input 0-10), Health setter (slider 0 to maxHealth), Yarn setter (number input 0-99), Teleport fields (X and Z coordinate inputs + Teleport button), Speed multiplier slider (0.5x to 3.0x that modifies runtimeConfig.movement.walkSpeed), God mode checkbox (prevents health loss)",
+        "Level change updates GameState player.stats.level immediately",
+        "Health change updates GameState player.stats.health immediately",
+        "Yarn change updates GameState player.yarn immediately",
+        "Teleport button moves player entity Transform to specified coordinates",
+        "Speed multiplier modifies runtimeConfig and is read by MovementSystem next frame",
+        "God mode flag checked by oxygen/damage systems to skip health reduction",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Debug menu — Cats tab controls",
+      "description": "As a developer, I want to test cat abilities without resource constraints so I can iterate on cat behavior rapidly.",
+      "acceptanceCriteria": [
+        "Cats tab contains: Force-summon button for each cat type (Loaf, Zoomies, CuriosityCat, Pounce — ignores yarn cost and cat limit), Yarn override number input, Cat limit override number input (1-10), Dismiss All button, Active cats list showing each cat's type and CatBehavior state",
+        "Force-summon spawns cat at player position + 2u offset in facing direction",
+        "Yarn override sets GameState player.yarn immediately",
+        "Cat limit override modifies runtimeConfig cats.maxActive",
+        "Dismiss All calls CatCompanionManager.dismiss() for every active companion",
+        "Active cats list updates in real-time as cats are summoned/dismissed/expire",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Debug menu — World tab controls",
+      "description": "As a developer, I want to manipulate world state so I can test edge cases and balance.",
+      "acceptanceCriteria": [
+        "World tab contains: Time scale slider (0.25x to 4.0x), Reload Map button, Show Collision Wireframes toggle, Entity Count display, Fill All Nodes button (resets all resource cooldowns to 0), Empty All Nodes button (sets all cooldowns to max)",
+        "Time scale multiplies dt at Game loop level before passing to systems (InputManager NOT scaled)",
+        "Reload Map calls MapManager.loadMap(TestMap) to reset all terrain",
+        "Collision wireframes toggle adds/removes wireframe meshes for all Collider entities via SceneManager",
+        "Entity count displays total and breakdown by component type (PlayerControlled, CatBehavior, ResourceNode, etc.)",
+        "Fill/Empty nodes iterates all entities with ResourceNode component and modifies cooldownRemaining",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Debug menu — Session tab controls",
+      "description": "As a developer, I want to control save/load and view session diagnostics.",
+      "acceptanceCriteria": [
+        "Session tab contains: Force Save button (calls Persistence.forceSave(), shows success/failure text), Force Load button (calls Persistence.load() + gameState.restore()), Reset All State button with confirmation dialog, Last Saved timestamp display, FPS counter, Entity count, Session playtime display, Auto-save toggle (enabled/disabled)",
+        "Force Save shows 'Saved!' or 'Save failed: [error]' text after completion",
+        "Force Load reloads entire game state from DB",
+        "Reset All State: shows 'Are you sure?' confirm dialog, then deletes save from DB via NeonClient.delete() and reloads game with default state (keeps character)",
+        "Last Saved timestamp updates reactively from Persistence.lastSavedAt",
+        "FPS counter updates every second with rolling average",
+        "Auto-save toggle calls Persistence.startAutoSave() or stopAutoSave()",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "HUD save indicator",
+      "description": "As a player, I want subtle save feedback so I know my progress is being saved without being interrupted.",
+      "acceptanceCriteria": [
+        "Small save icon (disk/floppy icon as text or simple SVG) appears in bottom-right corner when auto-save completes successfully",
+        "Icon shows for 2 seconds then fades out (CSS opacity transition)",
+        "On save failure: icon shows with red color and X mark, persists for 5 seconds",
+        "Save indicator does not block gameplay or overlap with other HUD elements",
+        "Triggered by listening to SAVE_COMPLETED event on EventBus",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
