@@ -134,56 +134,6 @@
 - [ ] `pnpm typecheck` passes
 
 ---
----
-
-### US-109: Curiosity Cat Implementation
-**Description:** As a player, I want to summon a Curiosity Cat that reveals hidden terrain so I can discover secret paths and areas.
-
-**Acceptance Criteria:**
-- [ ] `src/game/cats/definitions/CuriosityCat.ts` defines: type=CuriosityCat, yarnCost=2, effectType='utility', revealRadius=5u, revealDuration=20s
-- [ ] Hidden terrain zones defined in `MapData` as entities with `Renderable` (initially invisible) + `Collider` (initially disabled)
-- [ ] On summon: all hidden terrain entities within 5u radius become visible (shimmer/fade-in effect) and their colliders activate (walkable)
-- [ ] Revealed terrain persists for 20 seconds, then fades back to hidden
-- [ ] Event emitted: `HIDDEN_TERRAIN_REVEALED` with list of affected terrain IDs
-- [ ] Cat remains at summon position during reveal duration
-- [ ] Auto-dismisses after 20s (yarn consumed)
-- [ ] Right-click dismiss before expiry returns yarn
-- [ ] Test map includes at least one hidden terrain zone (bridge or platform) that connects otherwise inaccessible areas
-- [ ] `pnpm typecheck` passes
-
----
-
-### US-110: Pounce Cat Implementation
-**Description:** As a player, I want to summon a Pounce cat that launches me upward so I can reach high platforms in one move.
-
-**Acceptance Criteria:**
-- [ ] `src/game/cats/definitions/Pounce.ts` defines: type=Pounce, yarnCost=3, effectType='launch', launchImpulse=3.5u
-- [ ] On summon: cat entity created with upward-facing trigger zone on top
-- [ ] When player walks onto the Pounce cat's trigger zone: applies 3.5u upward impulse to player velocity (same as jump impulse — reaches High tier per spec)
-- [ ] Launch occurs once per "landing" — player must leave and re-enter the trigger to launch again
-- [ ] Pounce cat persists until dismissed (not consumed on use)
-- [ ] Right-click dismiss returns yarn
-- [ ] Visual: crouching-shaped primitive (low wide box) with distinct color
-- [ ] Player retains 70% air control during launch (same as normal jump)
-- [ ] Test map elevated platforms reachable via Pounce (3.5u high)
-- [ ] `pnpm typecheck` passes
-
----
-
-### US-111: CatAISystem
-**Description:** As a developer, I need a generic system that drives all cat behaviors from their definitions so that cat behavior is data-driven.
-
-**Acceptance Criteria:**
-- [ ] `src/ecs/components/CatBehavior.ts` component: `catType`, `state` (Idle | Active | Cooldown | Expired), `stateTimer`, `ownerId`
-- [ ] `src/systems/CatAISystem.ts` implements `System` interface
-- [ ] Each frame: queries entities with `CatBehavior` + `Transform`
-- [ ] State machine per cat: Idle (just placed) → Active (effect running) → Expired (duration elapsed, auto-dismiss)
-- [ ] Terrain cats (Loaf, Pounce): stay in Active indefinitely until manually dismissed
-- [ ] Duration cats (Zoomies 8s, Curiosity 20s): timer counts down, auto-dismiss on expiry
-- [ ] System reads behavior config from `CatDefinition` — no cat-specific logic hardcoded in the system
-- [ ] `pnpm typecheck` passes
-
----
 
 ### US-112: Resource Nodes & Gathering
 **Description:** As a player, I want to gather resources from nodes on the map so that I feel productive and have materials to progress.
@@ -249,13 +199,13 @@
 - FR-2: Oxygen drains at 1% per 0.3s (3.33/s) ONLY while diving, not on surface
 - FR-3: Health damage (1/s) applies when oxygen reaches 0
 - FR-4: Oxygen fully refills when player exits water
-- FR-5: Cat summon must validate: sufficient yarn, under limit (3), valid position (not inside geometry)
+- FR-5: Cat summon must validate: sufficient yarn, under limit (3 for MVP), valid position (not inside geometry). **Note**: Map & Movement System spec defines 3-5 active cats scaling with progression. MVP hardcodes to 3; this should be configurable in `config.ts` for future expansion.
 - FR-6: Cat limit exceeded → oldest active cat auto-dismissed with visual/audio feedback
 - FR-7: Loaf cat must be static (immovable), walkable, and stackable
 - FR-8: Zoomies trail must apply 2x speed multiplier while player overlaps, persist 8s
 - FR-9: Curiosity Cat must reveal hidden terrain within 5u radius for 20s
-- FR-10: Pounce cat must apply 3.5u upward impulse (reaches High tier platforms)
-- FR-11: Resource gathering requires E key + proximity, takes configurable time, cancellable by movement
+- FR-10: Pounce cat must apply 3.5u upward impulse **from the cat's resting height** (total reach = cat body height + 3.5u impulse apex). This exceeds a base jump (which reaches 1.2u apex from ground). The Pounce's value is positional — it launches from an elevated starting point. Test map should include platforms at ~3.5u height to validate reachability.
+- FR-11: Resource gathering requires E key + proximity, takes configurable time, cancellable by movement. **`E` key context resolution**: `E` is a context-sensitive interaction key. Priority order: (1) Resource node in range → gather, (2) Cat companion in range → bind. If both a resource node and a cat are in range, the nearest entity wins. The Map & Movement System spec assigns `E` to Bind; this PRD extends it as a shared interaction key.
 - FR-12: Inventory capacity limits total items (default 10), prevents gathering when full
 - FR-13: Resource nodes enter timed cooldown after harvesting and visually indicate unavailability
 
@@ -268,8 +218,8 @@
 - No gathering tier upgrades (Tier 2/3 speed or yield improvements — deferred)
 - No cat treats crafting
 - No resource node AOE gathering
-- No dash mechanic
-- No click-to-move pathfinding for gathering routes
+- No dash mechanic (Map & Movement System defines Dash at 7.2 u/s as a base ability — **deferred to post-MVP**. MVP speed bursts are gated behind Movement Speed ability Tier 3 sprint per GDD § 4.4)
+- No click-to-move pathfinding for gathering routes (Map & Movement System § 2.1 defines A* pathfinding — **deferred to post-MVP**)
 
 ## Technical Considerations
 

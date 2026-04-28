@@ -23,6 +23,7 @@ Build a minimal developer-facing map editor and 2D map overlay, then polish the 
 - [ ] `Ctrl+E` toggles map editor mode (only in `import.meta.env.DEV` builds)
 - [ ] Entering editor mode: game pauses, camera switches to `free` mode (WASD pans, mouse rotates, scroll zooms)
 - [ ] Exiting editor mode: game resumes, camera returns to `follow` mode
+- [ ] **Editor active indicator**: prominent "EDITOR MODE" banner visible at all times while editor is active (prevents confusion with gameplay keybindings — `M`, `D`, `1-9` are remapped in editor context)
 - [ ] Editor does NOT destroy existing game state — entities persist while editing
 - [ ] `src/maps/MapEditor.ts` exposes: `enable()`, `disable()`, `isActive(): boolean`, `getMapData(): MapData`, `loadMapData(data: MapData)`
 - [ ] `pnpm typecheck` passes
@@ -89,7 +90,7 @@ Build a minimal developer-facing map editor and 2D map overlay, then polish the 
 **Description:** As a player, I want to see an overhead 2D map so I can orient myself in the world.
 
 **Acceptance Criteria:**
-- [ ] `src/game/NavigationOverlay.ts` renders when `M` key pressed
+- [ ] `src/game/NavigationOverlay.ts` renders when `M` key pressed (gameplay mode only — `M` is remapped to Move tool when Map Editor is active per US-304)
 - [ ] 2D top-down view of the map rendered as colored regions:
   - Grass: green
   - Dirt: brown
@@ -130,9 +131,9 @@ Build a minimal developer-facing map editor and 2D map overlay, then polish the 
 - [ ] Loaf (1 yarn): height is appropriate for stepping — test stacking 2-3 Loafs to reach platforms
 - [ ] Zoomies (2 yarn): speed trail length and 2x multiplier tested — feels impactful but not game-breaking
 - [ ] Curiosity Cat (2 yarn): 5u reveal radius tested — reveals enough to be useful, 20s duration sufficient
-- [ ] Pounce (3 yarn): 3.5u launch tested — reliably reaches elevated platforms, feels satisfying
+- [ ] Pounce (3 yarn): 3.5u launch **from cat's resting height** tested — total reach = cat height + impulse apex. Must reliably reach High tier platforms (~3.5u). Verify that the 3-yarn cost feels justified by the height advantage over a free base jump (1.2u apex).
 - [ ] Starting yarn (10) tested: enough to experiment with all cats in a single session
-- [ ] Cat limit (3) tested: creates meaningful placement decisions
+- [ ] Cat limit (3 for MVP) tested: creates meaningful placement decisions. **Note**: Map & Movement System spec allows 3-5 scaling with progression. Ensure `config.ts` stores this as a tunable constant for post-MVP expansion.
 - [ ] Any values that feel wrong are adjusted in cat definition files with comments
 - [ ] `pnpm typecheck` passes
 
@@ -162,7 +163,7 @@ Build a minimal developer-facing map editor and 2D map overlay, then polish the 
 - [ ] Player cannot walk out of map bounds (collision walls at edges)
 - [ ] Cat cannot be summoned inside collision geometry (auto-raise per spec: 3 attempts, then fail with feedback)
 - [ ] Cat dismissed while player is standing on it: player falls safely (no void/clip)
-- [ ] Oxygen draining to 0 → health draining to 0: player "respawns" at map spawn point with 3 hearts and full oxygen (no death screen for MVP — "Zen Engagement" pillar)
+- [ ] Oxygen draining to 0 → health draining to 0: player "respawns" at map spawn point with **full health (5 hearts)** and full oxygen (no death screen, no health penalty — "Zen Engagement" pillar: respawn must feel like a gentle reset, not punishment)
 - [ ] Inventory full → gathering attempt: clear feedback message, gathering does not start
 - [ ] Saving while swimming: on load, if player position is in water, SwimmingState is correctly applied
 - [ ] Tab unfocus: game pauses (requestAnimationFrame stops naturally), auto-save still fires
@@ -211,7 +212,7 @@ Build a minimal developer-facing map editor and 2D map overlay, then polish the 
 - FR-3: Map editor must NOT corrupt game state when entering/exiting
 - FR-4: 2D map overlay must show terrain types as colored regions, player position as icon, active cats as icons
 - FR-5: 2D map overlay must NOT pause the game
-- FR-6: Player death (0 health) must respawn at spawn point with 3 hearts — no death screen (Zen Engagement)
+- FR-6: Player death (0 health) must respawn at spawn point with **full health (5 hearts)** and full oxygen — no death screen, no health penalty (Zen Engagement pillar)
 - FR-7: All edge cases must produce user-visible feedback — no silent failures
 - FR-8: Build must produce optimized bundle (`pnpm build`) with no errors
 

@@ -20,3 +20,6 @@ Lean on dedicated tools — Read, Glob, Grep unless the Bash command provides cr
 
 You have deep coding knowledge and incredible software engineering principals and patterns. Much of your domain knowledge may be out of date. Make a practice of checking official library docs, or internal documentation where available, especially when planning.
 
+### dev-browser
+
+dev-browser was a skill at one point, but is now a cli command. Run `dev-browser --help` to get started.
