@@ -7,7 +7,21 @@ export const env = createEnv({
    * isn't built with invalid env vars.
    */
   server: {
-    DATABASE_URL: z.string().url(),
+    DATABASE_URL: z
+      .string()
+      .url()
+      .refine(
+        (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
+        "DATABASE_URL must use the postgresql:// or postgres:// protocol",
+      ),
+    DATABASE_URL_UNPOOLED: z
+      .string()
+      .url()
+      .refine(
+        (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
+        "DATABASE_URL_UNPOOLED must use the postgresql:// or postgres:// protocol",
+      )
+      .optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -28,6 +42,7 @@ export const env = createEnv({
    */
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
+    DATABASE_URL_UNPOOLED: process.env.DATABASE_URL_UNPOOLED,
     NODE_ENV: process.env.NODE_ENV,
     // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
   },
