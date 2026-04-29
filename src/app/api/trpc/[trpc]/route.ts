@@ -1,5 +1,6 @@
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { type NextRequest } from "next/server";
+import { withAuth } from "@workos-inc/authkit-nextjs";
 
 import { env } from "~/env";
 import { appRouter } from "~/server/api/root";
@@ -10,8 +11,12 @@ import { createTRPCContext } from "~/server/api/trpc";
  * handling a HTTP request (e.g. when you make requests from Client Components).
  */
 const createContext = async (req: NextRequest) => {
+  const auth = await withAuth();
   return createTRPCContext({
     headers: req.headers,
+    user: auth.user ?? null,
+    accessToken: auth.accessToken ?? null,
+    organizationId: auth.organizationId ?? null,
   });
 };
 
