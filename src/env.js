@@ -8,14 +8,12 @@ export const env = createEnv({
    */
   server: {
     DATABASE_URL: z
-      .string()
       .url()
       .refine(
         (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
         "DATABASE_URL must use the postgresql:// or postgres:// protocol",
       ),
     DATABASE_URL_UNPOOLED: z
-      .string()
       .url()
       .refine(
         (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
@@ -36,7 +34,7 @@ export const env = createEnv({
    * `NEXT_PUBLIC_`.
    */
   client: {
-    NEXT_PUBLIC_WORKOS_REDIRECT_URI: z.string().url(),
+    NEXT_PUBLIC_WORKOS_REDIRECT_URI: z.url(),
   },
 
   /**
