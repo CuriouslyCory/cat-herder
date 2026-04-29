@@ -1,20 +1,12 @@
-import { defineConfig } from "drizzle-kit";
-import { createEnv } from "@t3-oss/env-core";
-import { z } from "zod";
+import { type Config } from "drizzle-kit";
 
-const env = createEnv({
-  server: {
-    DATABASE_URL: z.string().url(),
-  },
-  runtimeEnv: process.env,
-  emptyStringAsUndefined: true,
-});
+import { env } from "~/env";
 
-export default defineConfig({
-  schema: "./drizzle/schema.ts",
-  out: "./drizzle/migrations",
+export default {
+  schema: "./src/server/db/schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: env.DATABASE_URL,
+    url: env.DATABASE_URL_UNPOOLED ?? env.DATABASE_URL,
   },
-});
+  tablesFilter: ["cat-herder_*"],
+} satisfies Config;
