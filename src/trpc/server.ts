@@ -3,6 +3,7 @@ import "server-only";
 import { createHydrationHelpers } from "@trpc/react-query/rsc";
 import { headers } from "next/headers";
 import { cache } from "react";
+import { withAuth } from "@workos-inc/authkit-nextjs";
 
 import { createCaller, type AppRouter } from "~/server/api/root";
 import { createTRPCContext } from "~/server/api/trpc";
@@ -16,8 +17,13 @@ const createContext = cache(async () => {
   const heads = new Headers(await headers());
   heads.set("x-trpc-source", "rsc");
 
+  const auth = await withAuth();
+
   return createTRPCContext({
     headers: heads,
+    user: auth.user ?? null,
+    accessToken: auth.accessToken ?? null,
+    organizationId: auth.organizationId ?? null,
   });
 });
 
