@@ -199,8 +199,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "CollisionSystem implements System. Broad phase: AABB overlap in XZ plane. Narrow phase: circle-circle (push apart by overlap+skinWidth, shared equally or one-sided) and circle-box (closest-point-on-AABB push). Trigger pairs tracked with pairKey (smaller entity first); trigger:enter/exit emitted via EventBus. Solid collision:enter/exit also emitted. Layers/masks filter: (A.layer & B.mask) !== 0 && (B.layer & A.mask) !== 0. Non-static bodies have Transform mutated in-place."
     },
     {
       "id": "US-013",
@@ -217,8 +217,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Three tables added to schema.ts using createTable factory: characters (userId PK, shape, colorHex, sizeScale, timestamps), gameSaves (userId PK, version, saveData jsonb, timestamps), debugOverrides (userId PK, overrides jsonb, updatedAt). pnpm typecheck and pnpm build pass. pnpm db:push requires live Neon credentials — run manually to push to dev DB."
     },
     {
       "id": "US-014",

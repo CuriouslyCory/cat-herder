@@ -1,6 +1,37 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-013
+- Added three tables to `src/server/db/schema.ts` using the existing `createTable` factory
+- `characters`: userId (varchar 256 PK), shape (varchar 32), colorHex (varchar 7), sizeScale (real), createdAt, updatedAt
+- `gameSaves`: userId (varchar 256 PK), version (varchar 32), saveData (jsonb), createdAt, updatedAt
+- `debugOverrides`: userId (varchar 256 PK), overrides (jsonb), updatedAt
+- pnpm typecheck and pnpm build both pass
+- `pnpm db:push` requires live Neon credentials — must be run manually by the developer
+- **Learnings for future iterations:**
+  - Drizzle v0.45 callback-style column builder: `(d) => ({ field: d.varchar({ length: N })... })` — same pattern as `posts` table.
+  - `d.jsonb()` works directly without extra typing; consumers cast to their own types in tRPC procedures.
+  - `$onUpdate(() => new Date())` on `updatedAt` without a `.default()` means the column is nullable in DB (no default on INSERT). If `notNull()` updatedAt is required, add `.default(sql\`CURRENT_TIMESTAMP\`)` too — but for this schema the nullable pattern is intentional (null = never updated).
+  - All three tables use userId as PK (not serial) — one row per user, upsert semantics in tRPC procedures.
+---
+
+## 2026-04-29 - US-012
+- Created `src/game/systems/CollisionSystem.ts` — broad + narrow phase ECS collision detection
+- Broad phase: AABB overlap in XZ plane (2D top-down); skips pairs with no layer/mask intersection
+- Narrow phase: circle–circle (push apart by overlap+skinWidth, half-each for dual-dynamic or one-sided) and circle–box (closest-point-on-AABB + push-out)
+- Trigger pairs tracked with `pairKey()` (smaller entity id first for symmetry); `trigger:enter`/`trigger:exit` emitted via EventBus when pair state changes
+- Solid collisions also emit `collision:enter`/`collision:exit` via EventBus
+- Layer/mask filter: `(A.layer & B.mask) !== 0 && (B.layer & A.mask) !== 0` — both directions must pass
+- Mutates `Transform` in-place — downstream systems (RenderSystem, CameraController) see corrected positions automatically
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - CollisionSystem works in XZ plane only (isometric top-down). Y-axis collision is handled exclusively by PhysicsEngine's ground raycast. Do not mix the two.
+  - `pairKey(a, b)` always puts the smaller entity first — ensures both `(a,b)` and `(b,a)` produce the same key for `Set` de-duplication.
+  - Trigger and solid collision state machines use the same enter/exit pattern: snapshot new contacts, diff against previous frame's set, emit enter for new, emit exit for gone.
+  - Circle-inside-box edge case (distSq < epsilon): fall back to pushing along X axis to avoid NaN from normalizing a zero vector.
+  - Transform mutation is the correct output; the Game loop runs CollisionSystem before RenderSystem so corrected positions reach the renderer in the same frame.
+---
+
 ## 2026-04-29 - US-011
 - Created `src/game/engine/CameraController.ts` — isometric OrthographicCamera follow controller
 - Reads `cameraAzimuth` and `cameraElevation` from `runtimeConfig` on construction (45°/60°)
