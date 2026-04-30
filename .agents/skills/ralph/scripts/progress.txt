@@ -20,3 +20,13 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - `ResizeObserver` on the canvas element correctly handles resize; `renderer.setSize(w, h, false)` (false = don't set CSS style) is key to keeping pixel-perfect canvas sizing when CSS is handling the layout.
   - Branch `feat/engine-foundation` was already in use by a stale worktree pointing to an old Vite project. Created `feat/engine-foundation-v2` from current `main`.
 ---
+
+## 2026-04-29 - US-002
+- Created `src/game/types.ts` — GameAction, CatType, TerrainType enums; Vec2/Vec3 interfaces; GameEvent discriminated union (15 event types covering player, collision, trigger, map, save, debug, and game-state events)
+- Created `src/game/config.ts` — all GDD constants with named fields; CONFIG exported as `Object.freeze({...BASE_CONFIG})`; runtimeConfig is a mutable spread copy for the debug menu
+- Created `src/game/ecs/`, `src/game/systems/`, `src/game/ui/`, `src/game/maps/` subdirectories (required by the acceptance criteria folder layout)
+- **Learnings for future iterations:**
+  - CONFIG uses `Object.freeze({...BASE_CONFIG})` — frozen at the top level only (sufficient for primitive values). No deep freeze needed since all config values are primitives.
+  - runtimeConfig is initialized from BASE_CONFIG (not from CONFIG) so it's a true independent copy and not a reference to the frozen object.
+  - GameEvent discriminated union uses a `type` string literal tag — consumers can switch/if on `event.type` without casting.
+---

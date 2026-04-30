@@ -32,8 +32,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "GameAction, CatType, TerrainType enums; Vec2/Vec3 interfaces; GameEvent discriminated union in types.ts. CONFIG frozen + runtimeConfig mutable copy in config.ts."
     },
     {
       "id": "US-003",
