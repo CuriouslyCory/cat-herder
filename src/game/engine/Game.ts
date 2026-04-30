@@ -173,6 +173,7 @@ export class Game {
       this.mapManager,
       this.gameState,
       () => this.playerEntity,
+      this.physics,
     );
 
     // 11. CatPlacementSystem — ghost preview, number-key selection, click handling

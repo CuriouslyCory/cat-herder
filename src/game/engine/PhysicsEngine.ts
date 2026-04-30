@@ -223,6 +223,14 @@ export class PhysicsEngine {
       body.isGrounded = true;
     }
 
+    // Flat-floor fallback: prevents dynamic bodies from falling below the base terrain
+    // (y = 0). Elevated platforms are handled by registered static physics bodies.
+    if (!body.isGrounded && newPos.y < body.config.size) {
+      newPos.y = body.config.size;
+      if (body.velocity.y < 0) body.velocity.y = 0;
+      body.isGrounded = true;
+    }
+
     // Horizontal collision resolution (XZ plane) against static solids
     this.resolveHorizontalCollisions(body, newPos, cfg.skinWidth);
 

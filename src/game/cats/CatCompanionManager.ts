@@ -3,9 +3,11 @@ import type { Entity } from "../ecs/Entity";
 import type { EventBus } from "../engine/EventBus";
 import type { GameState } from "../engine/GameState";
 import type { MapManager } from "../maps/MapManager";
+import type { PhysicsEngine, BodyHandle } from "../engine/PhysicsEngine";
 import type { Vec3 } from "../types";
 import { CatType, TerrainType } from "../types";
 import { CAT_REGISTRY } from "./definitions";
+import type { CatDefinition } from "./CatDefinition";
 import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
@@ -46,6 +48,12 @@ export class CatCompanionManager {
    */
   private readonly companions = new Map<Entity, CatType>();
 
+  /**
+   * Physics body handles for terrain/launch cats.
+   * Populated in summon() for effectType 'terrain' | 'launch'; cleaned up in dismiss().
+   */
+  private readonly physicsHandles = new Map<Entity, BodyHandle>();
+
   constructor(
     private readonly world: World,
     private readonly eventBus: EventBus,
@@ -53,6 +61,7 @@ export class CatCompanionManager {
     private readonly gameState: GameState,
     /** Getter for the current player entity; may return null before first spawn. */
     private readonly getPlayerEntity: () => Entity | null,
+    private readonly physics: PhysicsEngine,
   ) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -95,28 +104,47 @@ export class CatCompanionManager {
     this.gameState.deductYarn(def.yarnCost);
 
     const surfaceY = this.mapManager.getHeightAt(position.x, position.z);
+    const halfHeight = getCatHalfHeight(def);
+    const centerY = surfaceY + halfHeight;
     const owner = this.getPlayerEntity() ?? 0;
 
     const entity = this.world.createEntity();
 
+    // Place entity so its bottom face rests on terrain (center = surfaceY + halfHeight).
     this.world.addComponent(
       entity,
-      createTransform(position.x, surfaceY, position.z),
+      createTransform(position.x, centerY, position.z),
     );
 
     this.world.addComponent(entity, createRenderable(def.meshConfig));
 
-    // Default collider: static solid box — individual cat type stories
-    // (US-106 through US-109) may replace this with type-specific geometry.
+    // XZ collision collider for CollisionSystem (horizontal push / trigger detection).
+    // Size is the XZ half-extent derived from the cat definition params or defaults.
+    const xzHalfExtent = getXZHalfExtent(def);
     this.world.addComponent(
       entity,
-      createCollider("box", 0.6, {
+      createCollider("box", xzHalfExtent, {
         isStatic: true,
         isTrigger: false,
         collisionLayer: 1,
         collisionMask: 1,
       }),
     );
+
+    // Terrain and launch cats need a PhysicsEngine static body so the player can
+    // land on top of them via the downward ground-detection raycast.
+    if (def.effectType === "terrain" || def.effectType === "launch") {
+      const handle = this.physics.addBody(entity, {
+        shape: "box",
+        size: halfHeight,
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      this.physics.setPosition(handle, { x: position.x, y: centerY, z: position.z });
+      this.physicsHandles.set(entity, handle);
+    }
 
     this.world.addComponent(
       entity,
@@ -148,6 +176,13 @@ export class CatCompanionManager {
     // Refund yarn only if the cat hasn't expired on its own
     if (behavior && behavior.state !== "Expired") {
       this.gameState.addYarn(behavior.yarnCost);
+    }
+
+    // Remove the PhysicsEngine body if this cat had one (terrain / launch cats).
+    const physHandle = this.physicsHandles.get(entity);
+    if (physHandle) {
+      this.physics.removeBody(physHandle);
+      this.physicsHandles.delete(entity);
     }
 
     this.companions.delete(entity);
@@ -200,4 +235,40 @@ export class CatCompanionManager {
       cell.type !== TerrainType.Water
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the half-height (Y half-extent) of a cat's mesh so the entity can be
+ * placed with its bottom face sitting on the terrain surface.
+ *
+ * - box:      dims[1] / 2  (height is the second dimension)
+ * - cylinder: (dims[2] ?? size) / 2  (height is the third dimension)
+ * - sphere:   size  (radius = half-height of the sphere)
+ */
+function getCatHalfHeight(def: CatDefinition): number {
+  const { geometry, dims, size = 0.5 } = def.meshConfig;
+  if (dims) {
+    if (geometry === "box") return dims[1] / 2;
+    // cylinder: dims = [radiusTop, radiusBottom, height]
+    return (dims[2] ?? size) / 2;
+  }
+  return size;
+}
+
+/**
+ * Returns the XZ half-extent to use for the ECS Collider (CollisionSystem).
+ * Prefers explicit colliderWidth from behavior.params; falls back to the mesh
+ * footprint or a sensible default.
+ */
+function getXZHalfExtent(def: CatDefinition): number {
+  const params = def.behavior.params ?? {};
+  if (typeof params.colliderWidth === "number") return params.colliderWidth / 2;
+  const { dims, size = 0.5 } = def.meshConfig;
+  // For box/cylinder, use the larger of X/Z dims as the footprint half-extent.
+  if (dims) return Math.max(dims[0], dims[2] ?? dims[0]) / 2;
+  return size;
 }
