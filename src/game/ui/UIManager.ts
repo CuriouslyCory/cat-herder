@@ -4,6 +4,14 @@ import type { CatCatalogEntry } from "../cats/CatCompanionManager";
 import type { GatherState } from "../systems/GatheringSystem";
 import type { InventoryStack } from "../engine/GameState";
 
+/** Minimal info for one summoned companion shown in the active cat bar. */
+export interface ActiveCatInfo {
+  catType: CatType;
+  name: string;
+  /** CatBehavior.state ("Idle" | "Active" | "Expired"). */
+  state: string;
+}
+
 /**
  * HUD frame state passed from the game loop each render tick.
  * All fields are optional — UIManager uses sensible defaults when absent.
@@ -29,6 +37,8 @@ export interface HUDState {
   inventoryFull?: boolean;
   /** True when a cat type is selected but the player cannot afford the yarn cost. */
   insufficientYarn?: boolean;
+  /** Currently summoned companion cats for the active cat bar. */
+  activeCompanions?: ActiveCatInfo[];
 }
 
 /**
@@ -72,6 +82,7 @@ export class UIManager {
       state?.maxInventoryCapacity ?? 10,
       state?.inventoryFull ?? false,
       state?.insufficientYarn ?? false,
+      state?.activeCompanions ?? [],
     );
   }
 

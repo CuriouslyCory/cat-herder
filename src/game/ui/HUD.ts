@@ -1,6 +1,7 @@
 import { CatType } from "../types";
 import type { CatCatalogEntry } from "../cats/CatCompanionManager";
 import type { InventoryStack } from "../engine/GameState";
+import type { ActiveCatInfo } from "./UIManager";
 
 /**
  * HUD — plain DOM health, oxygen, cat selection, and FPS overlay.
@@ -39,6 +40,10 @@ export class HUD {
   private inventoryCapacityBar: HTMLElement | null = null;
   private inventoryFullEl: HTMLElement | null = null;
 
+  // Active cat bar (right side)
+  private activeCatPanel: HTMLElement | null = null;
+  private activeCatListEl: HTMLElement | null = null;
+
   /** Rolling window for FPS calculation (~1 second at 60 fps). */
   private readonly frameTimes: number[] = [];
   private static readonly FPS_WINDOW = 60;
@@ -72,6 +77,7 @@ export class HUD {
     this.buildYarnWarning(container);
     this.buildCatBar(container);
     this.buildInventoryPanel(container);
+    this.buildActiveCatBar(container);
     if (process.env.NODE_ENV === "development") {
       this.buildFps(container);
     }
@@ -89,6 +95,7 @@ export class HUD {
    * @param maxInventoryCapacity Maximum total items allowed.
    * @param inventoryFull        True while "Inventory Full" notification is active.
    * @param insufficientYarn     True when a cat is selected but player can't afford it.
+   * @param activeCompanions     Currently summoned companions for the active cat bar.
    */
   update(
     dt: number,
@@ -102,6 +109,7 @@ export class HUD {
     maxInventoryCapacity = 10,
     inventoryFull = false,
     insufficientYarn = false,
+    activeCompanions: ActiveCatInfo[] = [],
   ): void {
     this.updateFps(dt);
     this.setOxygen(oxygenPercent);
@@ -110,6 +118,7 @@ export class HUD {
     this.setGatherProgress(gatherProgress);
     this.setInventory(inventory, maxInventoryCapacity, inventoryFull);
     this.setYarnWarning(insufficientYarn);
+    this.setActiveCats(activeCompanions);
   }
 
   /** Set the cat catalog used by the selection bar. Call once after the catalog is available. */
@@ -135,6 +144,8 @@ export class HUD {
     this.inventoryCapacityEl = null;
     this.inventoryCapacityBar = null;
     this.inventoryFullEl = null;
+    this.activeCatPanel = null;
+    this.activeCatListEl = null;
     this.fpsEl = null;
     this.frameTimes.length = 0;
   }
@@ -549,6 +560,116 @@ export class HUD {
 
     // "Inventory Full" notification
     this.inventoryFullEl.style.display = inventoryFull ? "block" : "none";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Active cat bar (right side — shows currently summoned companions)
+  // ---------------------------------------------------------------------------
+
+  private buildActiveCatBar(container: HTMLElement): void {
+    // Outer panel: right edge, vertically centered
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:absolute;right:16px;top:50%;transform:translateY(-50%);" +
+      "display:flex;flex-direction:column;align-items:flex-end;gap:4px;" +
+      "pointer-events:none;user-select:none;min-width:100px;";
+
+    // Header label
+    const header = document.createElement("div");
+    header.style.cssText =
+      "font-family:monospace;font-size:10px;color:rgba(255,255,255,0.45);" +
+      "letter-spacing:1px;text-align:right;padding-right:2px;";
+    header.textContent = "ACTIVE CATS";
+    panel.appendChild(header);
+
+    // List of cat rows — populated dynamically
+    const list = document.createElement("div");
+    list.style.cssText =
+      "display:flex;flex-direction:column;gap:3px;align-items:flex-end;";
+    panel.appendChild(list);
+
+    // Dismiss hint — only shown when at least one cat is active
+    const hint = document.createElement("div");
+    hint.style.cssText =
+      "display:none;font-family:monospace;font-size:9px;" +
+      "color:rgba(255,255,255,0.3);text-align:right;padding-right:2px;margin-top:2px;";
+    hint.textContent = "right-click: dismiss";
+    panel.appendChild(hint);
+
+    container.appendChild(panel);
+
+    this.activeCatPanel = panel;
+    this.activeCatListEl = list;
+
+    // Store hint reference on the list element for access in setActiveCats
+    list.dataset["hintId"] = "activeCatHint";
+    panel.dataset["hintRef"] = "true";
+
+    // Keep the hint element accessible via closure
+    (this.activeCatListEl as HTMLElement & { __hint?: HTMLElement }).__hint = hint;
+  }
+
+  private setActiveCats(companions: ActiveCatInfo[]): void {
+    if (!this.activeCatListEl) return;
+
+    const list = this.activeCatListEl;
+    const hint = (list as HTMLElement & { __hint?: HTMLElement }).__hint;
+
+    list.innerHTML = "";
+
+    if (companions.length === 0) {
+      // Show an empty-state placeholder so the panel doesn't collapse to nothing
+      const empty = document.createElement("div");
+      empty.style.cssText =
+        "font-family:monospace;font-size:10px;color:rgba(255,255,255,0.2);" +
+        "text-align:right;padding:3px 7px;";
+      empty.textContent = "—";
+      list.appendChild(empty);
+      if (hint) hint.style.display = "none";
+      return;
+    }
+
+    for (const cat of companions) {
+      const color = HUD.CAT_COLORS[cat.catType] ?? "#888888";
+
+      const row = document.createElement("div");
+      row.style.cssText =
+        `border-left:3px solid ${color};` +
+        "background:rgba(0,0,0,0.55);border-radius:4px;" +
+        "padding:3px 8px 3px 7px;" +
+        "display:flex;align-items:center;gap:6px;";
+
+      // Colored dot
+      const dot = document.createElement("span");
+      dot.style.cssText =
+        `width:7px;height:7px;border-radius:50%;background:${color};` +
+        "flex-shrink:0;";
+
+      // Cat name (truncated to keep the panel narrow)
+      const nameEl = document.createElement("span");
+      nameEl.style.cssText =
+        `font-family:monospace;font-size:11px;color:${color};font-weight:bold;`;
+      nameEl.textContent = cat.name.replace(" Cat", "");
+
+      // State badge — only shown for non-Active states
+      if (cat.state !== "Active") {
+        const badge = document.createElement("span");
+        badge.style.cssText =
+          "font-family:monospace;font-size:9px;color:rgba(255,255,255,0.45);" +
+          "background:rgba(0,0,0,0.4);border-radius:3px;padding:1px 4px;";
+        badge.textContent = cat.state.toLowerCase();
+        row.appendChild(dot);
+        row.appendChild(nameEl);
+        row.appendChild(badge);
+      } else {
+        row.appendChild(dot);
+        row.appendChild(nameEl);
+      }
+
+      list.appendChild(row);
+    }
+
+    if (hint) hint.style.display = "block";
   }
 
   private setCatBar(yarn: number, selectedCatType: CatType | null): void {

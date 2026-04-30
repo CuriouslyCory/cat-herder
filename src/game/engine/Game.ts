@@ -29,11 +29,13 @@ import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import { createResourceNode } from "../ecs/components/ResourceNode";
 import { createYarnPickup } from "../ecs/components/YarnPickup";
-import { ResourceType } from "../types";
+import { CatType, ResourceType } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
 import type { OxygenState } from "../ecs/components/OxygenState";
 import type { PlayerControlled } from "../ecs/components/PlayerControlled";
+import type { CatBehavior } from "../ecs/components/CatBehavior";
+import type { ActiveCatInfo } from "../ui/UIManager";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -567,11 +569,32 @@ export class Game {
   }
 
   /**
+   * Maps active companion entities to lightweight ActiveCatInfo snapshots
+   * for the HUD's active cat bar.
+   */
+  private buildActiveCompanions(): ActiveCatInfo[] {
+    const catalog = this.catCompanionManager.getCatalog();
+    const nameMap = new Map(catalog.map((e) => [e.type, e.name]));
+
+    return this.catCompanionManager.getActiveCompanions().map((entity) => {
+      const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
+      const catType = behavior?.catType ?? CatType.Loaf;
+      return {
+        catType,
+        name: nameMap.get(catType) ?? catType,
+        state: behavior?.state ?? "Active",
+      };
+    });
+  }
+
+  /**
    * Reads oxygen and health state from the player entity each render frame
    * and returns a snapshot for the HUD.
    */
   private buildHUDState(): import("../ui/UIManager").HUDState {
     const entity = this.playerEntity;
+    const activeCompanions = this.buildActiveCompanions();
+
     if (entity === null) {
       return {
         oxygenPercent: null,
@@ -584,6 +607,7 @@ export class Game {
         maxInventoryCapacity: this.gameState.maxInventoryCapacity,
         inventoryFull: this.gatheringSystem.isInventoryFull(),
         insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
+        activeCompanions,
       };
     }
 
@@ -601,6 +625,7 @@ export class Game {
       maxInventoryCapacity: this.gameState.maxInventoryCapacity,
       inventoryFull: this.gatheringSystem.isInventoryFull(),
       insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
+      activeCompanions,
     };
   }
 
