@@ -129,8 +129,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Canvas gets tabIndex=0 so it can receive keyboard events. Ctrl+D stored as synthetic 'CtrlD' key to avoid conflicting with movement 'D'. Arrow-key and Space scrolling prevented via e.preventDefault(). Listeners on canvas (not window) so DOM UI interactions don't bleed into game input. poll() clears pressedThisFrame each frame."
     },
     {
       "id": "US-009",

@@ -95,3 +95,17 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - `world.query("Transform", "Renderable")` returns a cached snapshot — safe to iterate without modifying. Convert to a `Set` for O(1) membership checks when diffing against a local registry.
   - `Transform.rotationY` is a scalar (radians); `SceneManager.updateTransform()` takes a full `Vec3` for rotation — always pass `{ x: 0, y: rotationY, z: 0 }`.
 ---
+
+## 2026-04-29 - US-008
+- Created `src/game/engine/InputManager.ts` — keyboard and mouse input manager
+- Canvas gets `tabIndex = 0` so it can receive keyboard events without a wrapper div
+- WASD + Arrow Keys → 8-directional normalized intent via `getMovementIntent()`
+- `isActionPressed()` = single-frame (flushed by `poll()`); `isActionHeld()` = continuous
+- Ctrl+D stored as synthetic `"CtrlD"` key to prevent conflict with movement `D` key; return-early in onKeyDown ensures plain `KeyD` is NOT added when Ctrl is held
+- Mouse position tracked in canvas-local coords; `getMouseWorldPosition()` delegates to `SceneManager.screenToWorld()`
+- All listeners on canvas (not window) — DOM UI focus naturally isolates game input
+- **Learnings for future iterations:**
+  - Canvas is not keyboard-focusable by default — set `tabIndex = 0` in InputManager constructor so the element can receive keydown/keyup without extra wrappers.
+  - Ctrl+D conflicts with movement `D` require early-return in the keydown handler and a synthetic key (`"CtrlD"`) stored separately from `"KeyD"`.
+  - `pressedThisFrame` must be a Set cleared by `poll()` called at the start of each frame loop, before any system reads input.
+---
