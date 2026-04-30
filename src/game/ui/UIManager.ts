@@ -27,6 +27,8 @@ export interface HUDState {
   maxInventoryCapacity?: number;
   /** True while the "Inventory Full" notification should be shown. */
   inventoryFull?: boolean;
+  /** True when a cat type is selected but the player cannot afford the yarn cost. */
+  insufficientYarn?: boolean;
 }
 
 /**
@@ -69,6 +71,7 @@ export class UIManager {
       state?.inventory ?? [],
       state?.maxInventoryCapacity ?? 10,
       state?.inventoryFull ?? false,
+      state?.insufficientYarn ?? false,
     );
   }
 

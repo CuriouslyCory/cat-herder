@@ -257,6 +257,15 @@ export class CatCompanionManager {
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
   /**
+   * Returns true if the player currently has enough yarn to summon the given cat type.
+   * Used by CatPlacementSystem to tint the ghost preview red on insufficient funds.
+   */
+  canAfford(catType: CatType): boolean {
+    const def = CAT_REGISTRY.get(catType);
+    return def !== undefined && this.gameState.yarn >= def.yarnCost;
+  }
+
+  /**
    * A position is valid for cat placement when it falls within the map bounds
    * and on walkable terrain (not Hidden, not Water).
    * Public so CatPlacementSystem can validate ghost positions without summoning.

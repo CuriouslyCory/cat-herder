@@ -15,6 +15,7 @@ import { CuriositySystem } from "../systems/CuriositySystem";
 import { PounceSystem } from "../systems/PounceSystem";
 import { CatAISystem } from "../systems/CatAISystem";
 import { GatheringSystem } from "../systems/GatheringSystem";
+import { YarnPickupSystem } from "../systems/YarnPickupSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -27,6 +28,7 @@ import { createPlayerControlled } from "../ecs/components/PlayerControlled";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import { createResourceNode } from "../ecs/components/ResourceNode";
+import { createYarnPickup } from "../ecs/components/YarnPickup";
 import { ResourceType } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
@@ -124,6 +126,7 @@ export class Game {
   private readonly curiositySystem: CuriositySystem;
   private readonly pounceSystem: PounceSystem;
   private readonly gatheringSystem: GatheringSystem;
+  private readonly yarnPickupSystem: YarnPickupSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -213,6 +216,12 @@ export class Game {
       () => this.playerEntity,
     );
 
+    // 11e. YarnPickupSystem — auto-collect yarn pickup entities on player proximity
+    this.yarnPickupSystem = new YarnPickupSystem(
+      this.gameState,
+      () => this.playerEntity,
+    );
+
     // 12. CatPlacementSystem — ghost preview, number-key selection, click handling
     this.catPlacementSystem = new CatPlacementSystem(
       this.inputManager,
@@ -241,6 +250,9 @@ export class Game {
 
     // Populate resource nodes for the test map
     this.spawnTestMapResourceNodes();
+
+    // Spawn yarn pickups (+3 each) scattered around the test map
+    this.spawnTestMapYarnPickups();
 
     // Set camera map bounds for focus clamping
     this.cameraController.setMapBounds({
@@ -456,6 +468,42 @@ export class Game {
     }
   }
 
+  /**
+   * Spawns 3 yarn pickup entities on the test map.
+   * Each pickup grants +3 yarn on player contact and is auto-destroyed.
+   *
+   * Positions chosen on flat, accessible ground away from resource nodes.
+   */
+  private spawnTestMapYarnPickups(): void {
+    const YARN_Y = 0.5; // center above floor (half of ~0.4u sphere)
+    const YARN_AMOUNT = 3;
+
+    const pickups: Array<{ x: number; z: number }> = [
+      // Near the map center, easy to find
+      { x: -29 + 14 * 2, z: -29 + 14 * 2 }, // (-1, -1) near spawn
+      // NE area near Sticks nodes
+      { x: -29 + 22 * 2, z: -29 + 14 * 2 }, // (15, -1)
+      // SW area near water zone
+      { x: -29 + 7 * 2, z: -29 + 18 * 2 }, // (-15, 7)
+    ];
+
+    for (const { x, z } of pickups) {
+      const entity = this.world.createEntity();
+
+      this.world.addComponent(entity, createTransform(x, YARN_Y, z));
+      this.world.addComponent(
+        entity,
+        createRenderable({
+          geometry: "sphere",
+          size: 0.3,
+          color: "#ffd700", // golden yellow — distinct from resource nodes
+          castShadow: true,
+        }),
+      );
+      this.world.addComponent(entity, createYarnPickup(YARN_AMOUNT));
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private — game loop
   // ---------------------------------------------------------------------------
@@ -497,6 +545,8 @@ export class Game {
       this.pounceSystem.update(this.world, FIXED_DT);
       // GatheringSystem handles E-key resource gathering, cooldowns, and progress
       this.gatheringSystem.update(this.world, FIXED_DT);
+      // YarnPickupSystem auto-collects yarn pickups on player proximity
+      this.yarnPickupSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
@@ -533,6 +583,7 @@ export class Game {
         inventory: this.gameState.inventory,
         maxInventoryCapacity: this.gameState.maxInventoryCapacity,
         inventoryFull: this.gatheringSystem.isInventoryFull(),
+        insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
       };
     }
 
@@ -549,6 +600,7 @@ export class Game {
       inventory: this.gameState.inventory,
       maxInventoryCapacity: this.gameState.maxInventoryCapacity,
       inventoryFull: this.gatheringSystem.isInventoryFull(),
+      insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
     };
   }
 

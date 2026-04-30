@@ -47,6 +47,8 @@ export class CatPlacementSystem {
   private selectedCatType: CatType | null = null;
   private ghostHandle: SceneHandle | null = null;
   private ghostIsValid = false;
+  /** True when a cat type is selected but the player cannot afford it. */
+  private _insufficientYarn = false;
 
   constructor(
     private readonly inputManager: InputManager,
@@ -63,6 +65,14 @@ export class CatPlacementSystem {
   /** Returns the currently selected cat type, or null if none. */
   getSelectedCatType(): CatType | null {
     return this.selectedCatType;
+  }
+
+  /**
+   * True when a cat type is selected but the player cannot afford the yarn cost.
+   * Used by Game.ts to pass `insufficientYarn` into HUDState for the warning tooltip.
+   */
+  getInsufficientYarn(): boolean {
+    return this._insufficientYarn;
   }
 
   /**
@@ -122,6 +132,7 @@ export class CatPlacementSystem {
   private clearSelection(): void {
     this.clearGhost();
     this.selectedCatType = null;
+    this._insufficientYarn = false;
   }
 
   private clearGhost(): void {
@@ -139,9 +150,16 @@ export class CatPlacementSystem {
     if (this.selectedCatType === null || this.ghostHandle === null) return;
 
     const mousePos = this.inputManager.getMouseWorldPosition();
-    if (!mousePos) return;
+    if (!mousePos) {
+      this._insufficientYarn = false;
+      return;
+    }
 
-    const isValid = this.catCompanionManager.isValidPosition(mousePos);
+    const isAffordable = this.catCompanionManager.canAfford(this.selectedCatType);
+    this._insufficientYarn = !isAffordable;
+
+    // Ghost is valid only when the player can afford it AND the position is walkable.
+    const isValid = isAffordable && this.catCompanionManager.isValidPosition(mousePos);
 
     // Only update color when validity changes to avoid per-frame material writes.
     if (isValid !== this.ghostIsValid) {

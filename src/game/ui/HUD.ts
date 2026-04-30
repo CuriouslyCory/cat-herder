@@ -24,6 +24,7 @@ export class HUD {
   private catBarPanel: HTMLElement | null = null;
   private catSlotEls: HTMLElement[] = [];
   private yarnCountEl: HTMLElement | null = null;
+  private yarnWarningEl: HTMLElement | null = null;
   private catalog: CatCatalogEntry[] = [];
 
   // Gather progress bar
@@ -68,6 +69,7 @@ export class HUD {
     this.buildHearts(container);
     this.buildOxygenGauge(container);
     this.buildGatherBar(container);
+    this.buildYarnWarning(container);
     this.buildCatBar(container);
     this.buildInventoryPanel(container);
     if (process.env.NODE_ENV === "development") {
@@ -86,6 +88,7 @@ export class HUD {
    * @param inventory            Current inventory stacks.
    * @param maxInventoryCapacity Maximum total items allowed.
    * @param inventoryFull        True while "Inventory Full" notification is active.
+   * @param insufficientYarn     True when a cat is selected but player can't afford it.
    */
   update(
     dt: number,
@@ -98,6 +101,7 @@ export class HUD {
     inventory: InventoryStack[] = [],
     maxInventoryCapacity = 10,
     inventoryFull = false,
+    insufficientYarn = false,
   ): void {
     this.updateFps(dt);
     this.setOxygen(oxygenPercent);
@@ -105,6 +109,7 @@ export class HUD {
     this.setCatBar(yarn, selectedCatType);
     this.setGatherProgress(gatherProgress);
     this.setInventory(inventory, maxInventoryCapacity, inventoryFull);
+    this.setYarnWarning(insufficientYarn);
   }
 
   /** Set the cat catalog used by the selection bar. Call once after the catalog is available. */
@@ -121,6 +126,7 @@ export class HUD {
     this.gatherPanel = null;
     this.gatherBar = null;
     this.gatherLabel = null;
+    this.yarnWarningEl = null;
     this.catBarPanel = null;
     this.catSlotEls = [];
     this.yarnCountEl = null;
@@ -283,6 +289,28 @@ export class HUD {
     style.textContent =
       "@keyframes oxygen-pulse{from{opacity:1}to{opacity:0.35}}";
     document.head.appendChild(style);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Yarn warning tooltip
+  // ---------------------------------------------------------------------------
+
+  private buildYarnWarning(container: HTMLElement): void {
+    const el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;bottom:155px;left:50%;transform:translateX(-50%);" +
+      "display:none;font-family:monospace;font-size:12px;" +
+      "color:#fc8181;background:rgba(0,0,0,0.65);border-radius:4px;" +
+      "padding:4px 10px;text-shadow:0 1px 2px rgba(0,0,0,0.8);" +
+      "white-space:nowrap;pointer-events:none;user-select:none;";
+    el.textContent = "🧶 Not enough yarn!";
+    container.appendChild(el);
+    this.yarnWarningEl = el;
+  }
+
+  private setYarnWarning(show: boolean): void {
+    if (!this.yarnWarningEl) return;
+    this.yarnWarningEl.style.display = show ? "block" : "none";
   }
 
   // ---------------------------------------------------------------------------
