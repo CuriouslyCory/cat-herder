@@ -6,6 +6,7 @@ import type { Transform } from "../ecs/components/Transform";
 import type { Velocity } from "../ecs/components/Velocity";
 import type { PlayerControlled } from "../ecs/components/PlayerControlled";
 import type { SwimmingState } from "../ecs/components/SwimmingState";
+import type { SpeedBoost } from "../ecs/components/SpeedBoost";
 import { GameAction } from "../types";
 import { runtimeConfig } from "../config";
 
@@ -104,10 +105,14 @@ export class MovementSystem implements System {
       const intent = this.inputManager.getMovementIntent();
       const cfg = runtimeConfig;
 
+      // Apply speed multiplier from Zoomies trail overlap, if any.
+      const boost = world.getComponent<SpeedBoost>(entity, "SpeedBoost");
+      const speedMultiplier = boost ? boost.multiplier : 1.0;
+
       // Air control reduces the effective target speed while airborne.
       const controlFactor = grounded ? 1.0 : cfg.airControlFactor;
-      const targetX = intent.x * cfg.walkSpeed * controlFactor;
-      const targetZ = intent.z * cfg.walkSpeed * controlFactor;
+      const targetX = intent.x * cfg.walkSpeed * speedMultiplier * controlFactor;
+      const targetZ = intent.z * cfg.walkSpeed * speedMultiplier * controlFactor;
 
       // Acceleration rate (u/s²): walkSpeed / time-to-reach-full-speed
       const accelRate = cfg.walkSpeed / cfg.acceleration;

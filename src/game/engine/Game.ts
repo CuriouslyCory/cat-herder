@@ -10,6 +10,7 @@ import { CollisionSystem } from "../systems/CollisionSystem";
 import { WaterSystem } from "../systems/WaterSystem";
 import { OxygenSystem } from "../systems/OxygenSystem";
 import { CatPlacementSystem } from "../systems/CatPlacementSystem";
+import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -112,6 +113,7 @@ export class Game {
   private readonly waterSystem: WaterSystem;
   private readonly oxygenSystem: OxygenSystem;
   private readonly catPlacementSystem: CatPlacementSystem;
+  private readonly zoomiesSystem: ZoomiesSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -176,7 +178,10 @@ export class Game {
       this.physics,
     );
 
-    // 11. CatPlacementSystem — ghost preview, number-key selection, click handling
+    // 11. ZoomiesSystem — trail timer, auto-dismiss, and speed-boost overlap
+    this.zoomiesSystem = new ZoomiesSystem(this.catCompanionManager);
+
+    // 12. CatPlacementSystem — ghost preview, number-key selection, click handling
     this.catPlacementSystem = new CatPlacementSystem(
       this.inputManager,
       this.sceneManager,
@@ -185,7 +190,7 @@ export class Game {
       this.world,
     );
 
-    // 12. UIManager — DOM panels over the canvas
+    // 13. UIManager — DOM panels over the canvas
     this.uiManager = new UIManager(canvas);
     this.uiManager.setCatCatalog(this.catCompanionManager.getCatalog());
   }
@@ -356,6 +361,8 @@ export class Game {
       this.waterSystem.update(this.world, FIXED_DT);
       // OxygenSystem runs after WaterSystem so OxygenState is already present
       this.oxygenSystem.update(this.world, FIXED_DT);
+      // ZoomiesSystem ticks trail timers and updates SpeedBoost on the player
+      this.zoomiesSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 

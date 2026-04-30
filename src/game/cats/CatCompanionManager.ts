@@ -5,6 +5,7 @@ import type { GameState } from "../engine/GameState";
 import type { MapManager } from "../maps/MapManager";
 import type { PhysicsEngine, BodyHandle } from "../engine/PhysicsEngine";
 import type { Vec3 } from "../types";
+import type { Transform } from "../ecs/components/Transform";
 import { CatType, TerrainType } from "../types";
 import { CAT_REGISTRY } from "./definitions";
 import type { CatDefinition } from "./CatDefinition";
@@ -13,6 +14,7 @@ import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import { createCatBehavior } from "../ecs/components/CatBehavior";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
+import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
 import { runtimeConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,12 @@ export class CatCompanionManager {
    * Populated in summon() for effectType 'terrain' | 'launch'; cleaned up in dismiss().
    */
   private readonly physicsHandles = new Map<Entity, BodyHandle>();
+
+  /**
+   * Trail entities created alongside Zoomies cats.
+   * Keyed by cat entity; destroyed in dismiss() to keep the world clean.
+   */
+  private readonly trailEntities = new Map<Entity, Entity>();
 
   constructor(
     private readonly world: World,
@@ -151,6 +159,13 @@ export class CatCompanionManager {
       createCatBehavior(catType, owner, def.yarnCost),
     );
 
+    // Movement cats (Zoomies) get an elongated trail entity that ZoomiesSystem
+    // uses for the oriented AABB speed-boost overlap check.
+    if (def.effectType === "movement") {
+      const trailEntity = this.createZoomiesTrail(entity, position, def);
+      this.trailEntities.set(entity, trailEntity);
+    }
+
     this.companions.set(entity, catType);
 
     this.eventBus.emit({ type: "cat:summoned", entity, catType, position });
@@ -184,6 +199,13 @@ export class CatCompanionManager {
       this.physics.removeBody(physHandle);
       this.physicsHandles.delete(entity);
     }
+
+    // Destroy the Zoomies trail entity if this was a movement cat.
+    const trailEntity = this.trailEntities.get(entity);
+    if (trailEntity !== undefined && this.world.isAlive(trailEntity)) {
+      this.world.destroyEntity(trailEntity);
+    }
+    this.trailEntities.delete(entity);
 
     this.companions.delete(entity);
     this.world.destroyEntity(entity);
@@ -234,6 +256,86 @@ export class CatCompanionManager {
       cell.type !== TerrainType.Hidden &&
       cell.type !== TerrainType.Water
     );
+  }
+
+  /**
+   * Creates the elongated speed-trail entity for a Zoomies cat.
+   *
+   * The trail is placed starting at the cat's position and extending outward
+   * in the direction from the player to the cat (i.e. the direction the player
+   * was aiming).  If the player position is unavailable or coincides with the
+   * cat position, the trail defaults to facing +Z.
+   *
+   * The trail entity has:
+   *   - Transform at the trail's center
+   *   - Renderable (semi-transparent elongated box, bright yellow)
+   *   - ZoomiesTrail component (for ZoomiesSystem overlap detection)
+   *
+   * No PhysicsEngine body is registered — overlap is checked manually in
+   * ZoomiesSystem using an oriented AABB test.
+   */
+  private createZoomiesTrail(
+    catEntity: Entity,
+    catPos: Vec3,
+    def: CatDefinition,
+  ): Entity {
+    const trailLength =
+      typeof def.behavior.params?.trailLength === "number"
+        ? def.behavior.params.trailLength
+        : 6;
+    const halfLength = trailLength / 2;
+    const halfWidth = 0.75;
+
+    // Direction: from player to cat placement; fall back to +Z if unavailable.
+    let dirX = 0;
+    let dirZ = 1;
+    const player = this.getPlayerEntity();
+    if (player !== null) {
+      const pt = this.world.getComponent<Transform>(player, "Transform");
+      if (pt) {
+        const dx = catPos.x - pt.x;
+        const dz = catPos.z - pt.z;
+        const len = Math.sqrt(dx * dx + dz * dz);
+        if (len > 0.001) {
+          dirX = dx / len;
+          dirZ = dz / len;
+        }
+      }
+    }
+
+    // Trail center: start at catPos, extend halfLength units in trail direction.
+    const trailCenterX = catPos.x + dirX * halfLength;
+    const trailCenterZ = catPos.z + dirZ * halfLength;
+    const trailCenterY = 0.5; // center of 1 u tall trail, resting on floor
+    // Rotate the box so its local Z axis aligns with the trail direction.
+    const rotationY = Math.atan2(dirX, dirZ);
+
+    const trailEntity = this.world.createEntity();
+
+    this.world.addComponent(
+      trailEntity,
+      createTransform(trailCenterX, trailCenterY, trailCenterZ, rotationY),
+    );
+
+    this.world.addComponent(
+      trailEntity,
+      createRenderable({
+        geometry: "box",
+        // dims: [width, height, depth] — depth (local Z) = trail length
+        dims: [halfWidth * 2, 1.0, trailLength],
+        color: "#ffe566",
+        opacity: 0.4,
+        castShadow: false,
+        receiveShadow: false,
+      }),
+    );
+
+    this.world.addComponent(
+      trailEntity,
+      createZoomiesTrail(catEntity, halfLength, halfWidth, dirX, dirZ),
+    );
+
+    return trailEntity;
   }
 }
 
