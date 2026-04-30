@@ -11,6 +11,20 @@
 
 ---
 
+## 2026-04-29 - US-018
+- Implemented UIManager and HUD as plain DOM modules (no React in the engine loop)
+- UIManager creates an `position:absolute;inset:0` overlay div appended to canvas.parentElement; promotes parent to `position:relative` if static
+- HUD renders: 3 heart spans (♥, bottom-left) always visible; FPS counter div (top-right) only when `process.env.NODE_ENV === 'development'`
+- FPS computed via 60-sample rolling average of per-frame dt values, updated every frame
+- Files: src/game/ui/UIManager.ts (rewritten), src/game/ui/HUD.ts (new)
+- pnpm typecheck passes
+- **Learnings for future iterations:**
+  - UIManager overlay uses `inset:0` (shorthand for top/right/bottom/left:0) — requires parent to be a positioning context; we detect and promote it automatically
+  - `process.env.NODE_ENV` is replaced at Next.js build time, so dev-only DOM elements cost nothing in production bundles
+  - HUD dispose() only nulls refs; overlay removal is UIManager's responsibility — keeps concerns separated
+
+---
+
 ## 2026-04-29 - US-001
 - Verified: Three.js installed, GameCanvas.tsx 'use client' component, GameLoader with next/dynamic ssr:false, game.destroy() on unmount, withAuth on /play page, Game.ts stub renders colored box on ground plane
 - Files: src/app/play/_components/GameCanvas.tsx, src/app/play/_components/GameLoader.tsx, src/app/play/page.tsx, src/game/engine/Game.ts

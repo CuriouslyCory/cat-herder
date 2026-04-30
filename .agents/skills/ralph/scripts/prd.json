@@ -304,8 +304,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "UIManager creates an overlay div (position:absolute;inset:0) appended to canvas.parentElement; sets parent to position:relative if static. HUD builds hearts panel (bottom-left, 3 × ♥) and FPS counter (top-right, only when process.env.NODE_ENV==='development'). FPS computed via 60-sample rolling average of dt values. dispose() removes overlay from DOM."
     },
     {
       "id": "US-019",
