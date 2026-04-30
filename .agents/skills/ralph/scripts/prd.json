@@ -112,8 +112,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "RenderSystem maintains a local Map<Entity, SceneHandle> as the source of truth for registered meshes. On each frame: new entities are addMesh()'d and handles stored; existing entities get updateTransform(); stale entities (destroyed or lost a component) are removeMesh()'d using the cached handle — no dependency on world.getComponent() for cleanup. Pure data sync, no game logic."
     },
     {
       "id": "US-008",

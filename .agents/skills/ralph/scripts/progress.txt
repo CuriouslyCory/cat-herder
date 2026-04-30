@@ -83,3 +83,15 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - Use factory functions (`createX()`) for each component — reduces boilerplate at call sites and ensures defaults are centralized.
   - `Partial<Pick<Interface, keys>>` is the cleanest pattern for optional config overrides in factory functions.
 ---
+
+## 2026-04-29 - US-007
+- Created `src/game/systems/RenderSystem.ts` — ECS-to-Three.js bridge
+- Maintains `Map<Entity, SceneHandle>` locally (not relying solely on `Renderable.sceneHandle`) so stale entity cleanup works even after `world.destroyEntity()` removes component access
+- New entities: `sceneManager.addMesh(renderable.meshConfig)` → store handle, write back to `renderable.sceneHandle`
+- Existing entities: `sceneManager.updateTransform(handle, pos, rot, scale)` — `rotationY` mapped to `{ x:0, y:rotationY, z:0 }`
+- Stale entities (not in current query): `sceneManager.removeMesh(handle)` using cached handle; best-effort null-clear on component if still alive
+- **Learnings for future iterations:**
+  - Always keep a local `Map<Entity, SceneHandle>` in systems that manage scene resources. Relying on component access for cleanup fails when the entity is destroyed before cleanup runs.
+  - `world.query("Transform", "Renderable")` returns a cached snapshot — safe to iterate without modifying. Convert to a `Set` for O(1) membership checks when diffing against a local registry.
+  - `Transform.rotationY` is a scalar (radians); `SceneManager.updateTransform()` takes a full `Vec3` for rotation — always pass `{ x: 0, y: rotationY, z: 0 }`.
+---
