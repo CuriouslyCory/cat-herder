@@ -256,8 +256,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented active cat bar (right:16px, vertically centered) with per-companion colored indicator, name, state badge, and right-click dismiss hint. ActiveCatInfo interface added to UIManager.ts; buildActiveCompanions() in Game.ts maps ECS entities via CatBehavior component each render frame. All other HUD elements (hearts, oxygen, inventory, yarn, cat selection, gather progress) were complete from prior stories."
     }
   ]
 }

@@ -182,3 +182,17 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - Yarn pickup entities have only Transform + Renderable + YarnPickup — no physics body, no collider needed (distance check in YarnPickupSystem suffices)
   - HUD yarn warning is a fixed-position floating panel (bottom:155px, above gather bar at 110px) not a slot-specific tooltip — simpler and visible regardless of cat slot position
 ---
+
+## 2026-04-30 - US-114
+- Implemented active cat bar: right-side panel (right:16px, vertically centered) showing summoned companions with colored dot, name, state badge, and "right-click: dismiss" hint
+- Files changed:
+  - src/game/ui/UIManager.ts — ActiveCatInfo interface; activeCompanions field in HUDState; passed to hud.update()
+  - src/game/ui/HUD.ts — buildActiveCatBar() (builds panel + list + hint); setActiveCats() (rebuilds rows per frame); update() extended with activeCompanions param; dispose() cleanup
+  - src/game/engine/Game.ts — import CatType + ActiveCatInfo; buildActiveCompanions() maps getActiveCompanions() entities via CatBehavior; activeCompanions threaded into both buildHUDState() return paths
+- pnpm typecheck, pnpm lint, pnpm build all pass
+- **Learnings for future iterations:**
+  - All other HUD elements (hearts, oxygen, inventory, yarn, cat selection, gather progress) were already complete from US-102/105/111/112/113 — US-114 was primarily additive (active cat bar only)
+  - Active cat bar uses __hint property on the DOM element as a lightweight closure to avoid a separate class field; acceptable for MVP but a dedicated field is cleaner for larger HUD refactors
+  - buildActiveCompanions() calls getCatalog() every frame to build the name lookup Map — acceptable at ≤4 cat types (tiny array); cache the Map if catalog becomes dynamic
+  - Active cat bar empty-state shows "—" placeholder so the panel maintains its vertical position even when no cats are summoned; avoids layout jitter on first summon
+---
