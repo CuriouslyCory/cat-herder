@@ -15,6 +15,7 @@ import { createCollider } from "../ecs/components/Collider";
 import { createCatBehavior } from "../ecs/components/CatBehavior";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
+import { createCuriosityReveal } from "../ecs/components/CuriosityReveal";
 import { runtimeConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +165,17 @@ export class CatCompanionManager {
     if (def.effectType === "movement") {
       const trailEntity = this.createZoomiesTrail(entity, position, def);
       this.trailEntities.set(entity, trailEntity);
+    }
+
+    // Utility cats (CuriosityCat) get a CuriosityReveal component so
+    // CuriositySystem can find the reveal radius and track which terrain
+    // entities this cat instance revealed.
+    if (def.effectType === "utility") {
+      const revealRadius =
+        typeof def.behavior.params?.revealRadius === "number"
+          ? def.behavior.params.revealRadius
+          : 5;
+      this.world.addComponent(entity, createCuriosityReveal(revealRadius));
     }
 
     this.companions.set(entity, catType);

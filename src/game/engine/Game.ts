@@ -11,6 +11,7 @@ import { WaterSystem } from "../systems/WaterSystem";
 import { OxygenSystem } from "../systems/OxygenSystem";
 import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { ZoomiesSystem } from "../systems/ZoomiesSystem";
+import { CuriositySystem } from "../systems/CuriositySystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -114,6 +115,7 @@ export class Game {
   private readonly oxygenSystem: OxygenSystem;
   private readonly catPlacementSystem: CatPlacementSystem;
   private readonly zoomiesSystem: ZoomiesSystem;
+  private readonly curiositySystem: CuriositySystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -180,6 +182,13 @@ export class Game {
 
     // 11. ZoomiesSystem — trail timer, auto-dismiss, and speed-boost overlap
     this.zoomiesSystem = new ZoomiesSystem(this.catCompanionManager);
+
+    // 11b. CuriositySystem — hidden terrain reveal timer and auto-dismiss
+    this.curiositySystem = new CuriositySystem(
+      this.sceneManager,
+      this.catCompanionManager,
+      this.eventBus,
+    );
 
     // 12. CatPlacementSystem — ghost preview, number-key selection, click handling
     this.catPlacementSystem = new CatPlacementSystem(
@@ -363,6 +372,8 @@ export class Game {
       this.oxygenSystem.update(this.world, FIXED_DT);
       // ZoomiesSystem ticks trail timers and updates SpeedBoost on the player
       this.zoomiesSystem.update(this.world, FIXED_DT);
+      // CuriositySystem reveals/hides hidden terrain and auto-dismisses on expiry
+      this.curiositySystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 

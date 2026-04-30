@@ -63,4 +63,5 @@ export type GameEvent =
   | { type: "oxygen:warning"; entity: number }
   | { type: "oxygen:depleted"; entity: number }
   | { type: "cat:summoned"; entity: number; catType: CatType; position: Vec3 }
-  | { type: "cat:dismissed"; entity: number; catType: CatType };
+  | { type: "cat:dismissed"; entity: number; catType: CatType }
+  | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] };

@@ -5,6 +5,7 @@ import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import { createWaterTrigger } from "../ecs/components/WaterTrigger";
+import { createHiddenTerrain } from "../ecs/components/HiddenTerrain";
 import type { MapData, TerrainCell, SpawnPoint } from "./MapData";
 import { TerrainType } from "../types";
 
@@ -200,20 +201,31 @@ export class MapManager {
 
     this.world.addComponent(entity, createTransform(worldX, centerY, worldZ));
 
+    // Hidden terrain starts fully transparent (opacity 0) so it is invisible until
+    // a Curiosity Cat reveals it.  The reveal mechanic switches opacity to 1.
+    const isHidden = cell.type === TerrainType.Hidden;
+
     this.world.addComponent(
       entity,
       createRenderable({
         geometry: "box",
         dims: [width, boxHeight, depth],
         color,
-        receiveShadow: true,
-        castShadow: cell.height > 0,
+        receiveShadow: !isHidden,
+        castShadow: cell.height > 0 && !isHidden,
+        opacity: isHidden ? 0 : 1,
       }),
     );
+
+    // Tag hidden entities so CuriositySystem can find and reveal them.
+    if (isHidden) {
+      this.world.addComponent(entity, createHiddenTerrain());
+    }
 
     // Collision config:
     //   Water → trigger (swim events, no physics push); layer 1 + mask 1 so
     //           CollisionSystem detects overlap with the layer-1 player entity.
+    //   Hidden → collisionMask=0 until revealed (CuriositySystem re-enables it).
     //   Flat floor → collisionMask=0 (CollisionSystem skips; PhysicsEngine raycasts)
     //   Elevated terrain → collisionMask=1 (interacts with player via CollisionSystem)
     const isTrigger = cell.type === TerrainType.Water;
