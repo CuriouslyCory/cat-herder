@@ -236,8 +236,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via: CatCompanionManager.canAfford(); CatPlacementSystem._insufficientYarn flag + getInsufficientYarn() (ghost turns red when yarn < cost); HUD yarn warning tooltip (bottom:155px, hidden by default, shows '🧶 Not enough yarn!' when insufficientYarn=true); YarnPickup component + YarnPickupSystem (proximity auto-collect, 1u radius); 3 golden-sphere yarn pickup entities (+3 each) spawned in Game.spawnTestMapYarnPickups(); insufficientYarn threaded through HUDState → UIManager → HUD."
     },
     {
       "id": "US-114",

@@ -169,3 +169,16 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - Capacity bar color thresholds: green (0-69%), yellow (70-99%), red (100%) — mirrors common game inventory UI convention
   - "Inventory Full!" notification persists 2s via timer in GatheringSystem; timer ticked in update() and checked by isInventoryFull() in the render pass
 ---
+
+## 2026-04-30 - US-113
+- Implemented Yarn Economy & HUD: ghost red on insufficient yarn, yarn warning tooltip, 3 yarn pickup entities
+- Files created: src/game/ecs/components/YarnPickup.ts, src/game/systems/YarnPickupSystem.ts
+- Files modified: src/game/cats/CatCompanionManager.ts (canAfford()), src/game/systems/CatPlacementSystem.ts (_insufficientYarn + getInsufficientYarn()), src/game/ui/UIManager.ts (insufficientYarn in HUDState), src/game/ui/HUD.ts (yarnWarningEl + buildYarnWarning() + setYarnWarning()), src/game/engine/Game.ts (YarnPickupSystem wiring + spawnTestMapYarnPickups() + insufficientYarn in buildHUDState())
+- pnpm typecheck, pnpm lint, pnpm build all pass
+- **Learnings for future iterations:**
+  - canAfford() on CatCompanionManager is the clean pattern for affordability checks — CatPlacementSystem only needs the manager ref, not GameState directly
+  - Ghost affordability check uses the same GHOST_INVALID_COLOR — "can't afford" and "invalid position" share identical red tint, unified in user experience
+  - YarnPickupSystem uses world.query() snapshot ([...pickupEntities]) to avoid mutation-during-iteration since destroyEntity() invalidates the query cache
+  - Yarn pickup entities have only Transform + Renderable + YarnPickup — no physics body, no collider needed (distance check in YarnPickupSystem suffices)
+  - HUD yarn warning is a fixed-position floating panel (bottom:155px, above gather bar at 110px) not a slot-specific tooltip — simpler and visible regardless of cat slot position
+---
