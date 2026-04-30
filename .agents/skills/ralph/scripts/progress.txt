@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- Cat definitions live in src/game/cats/definitions/<CatType>.ts; all exported via CAT_REGISTRY Map<CatType,CatDefinition> in definitions/index.ts — systems should import CAT_REGISTRY, not individual files
+- CatDefinition.behavior.params is Record<string, number|string|boolean> for cat-specific config (no per-cat union types needed in the interface)
 - OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
 - OxygenSystem queries OxygenState+SwimmingState+PlayerControlled; OxygenState is always paired with SwimmingState (no need for null guards when both appear in query)
 - HUD.update(dt, oxygenPercent, health, maxHealth) — UIManager.update(dt, HUDState?) is the call site; Game.buildHUDState() assembles the snapshot each render frame
@@ -36,4 +38,14 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - Health drain uses integer accumulation (healthDrainAccum) to ensure 1 full hp is removed per second without floating-point creep
   - UIManager.update(dt, HUDState?) uses optional second arg; Game.buildHUDState() reads from world each render frame (variable-rate, not fixed)
   - HUD inject-once keyframe trick: `document.getElementById("__oxygen-pulse-style")` guard prevents duplicate <style> tags on HMR reloads
+---
+
+## 2026-04-30 - US-103
+- Implemented data-driven cat definition system: CatDefinition interface, four definition files, and CAT_REGISTRY
+- Files created: src/game/cats/CatDefinition.ts, src/game/cats/definitions/Loaf.ts, src/game/cats/definitions/Zoomies.ts, src/game/cats/definitions/CuriosityCat.ts, src/game/cats/definitions/Pounce.ts, src/game/cats/definitions/index.ts
+- **Learnings for future iterations:**
+  - CatType enum was already defined in types.ts (Loaf, Zoomies, CuriosityCat, Pounce) — no changes needed there
+  - MeshConfig (from SceneManager.ts) reused directly for meshConfig field — matches box/sphere/cylinder/plane geometry kinds
+  - behavior.params is a loose Record so each cat can carry its own numeric config (launchImpulse, trailLength, revealRadius, collider dims) without expanding the interface
+  - Terrain cats (Loaf, Pounce) have no duration; duration cats (Zoomies 8s, Curiosity 20s) set behavior.duration
 ---
