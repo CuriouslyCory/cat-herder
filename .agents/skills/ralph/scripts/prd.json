@@ -98,8 +98,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Five component files under src/game/ecs/components/. Transform (position/rotationY/scale), Velocity (dx/dy/dz), PlayerControlled (isGrounded/coyoteTimer/jumpBufferTimer), Collider (shape/size/isStatic/isTrigger/layer/mask), Renderable (meshConfig + nullable sceneHandle). Each exports a factory function. Renderable imports MeshConfig and SceneHandle from SceneManager (no THREE leak)."
     },
     {
       "id": "US-007",

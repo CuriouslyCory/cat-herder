@@ -71,3 +71,15 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - `World` is a plain class (not a singleton) so multiple worlds can exist in tests. The Game orchestrator owns the single runtime instance.
   - `System.ts` imports `World` as a type-only import to avoid circular references — keep this pattern for all system files.
 ---
+
+## 2026-04-29 - US-006
+- Created `src/game/ecs/components/Transform.ts` — position (x,y,z), rotationY, scaleX/Y/Z + factory
+- Created `src/game/ecs/components/Velocity.ts` — dx/dy/dz + factory
+- Created `src/game/ecs/components/PlayerControlled.ts` — isGrounded, coyoteTimer, jumpBufferTimer + factory
+- Created `src/game/ecs/components/Collider.ts` — shape (circle/box), size, isStatic, isTrigger, collisionLayer, collisionMask + factory with Partial options
+- Created `src/game/ecs/components/Renderable.ts` — meshConfig (MeshConfig), sceneHandle (SceneHandle | null) + factory
+- **Learnings for future iterations:**
+  - Renderable imports `MeshConfig` and `SceneHandle` from `../../engine/SceneManager` — these are plain TS types (no THREE types), so the import is safe and doesn't breach the no-three-outside-SceneManager rule.
+  - Use factory functions (`createX()`) for each component — reduces boilerplate at call sites and ensures defaults are centralized.
+  - `Partial<Pick<Interface, keys>>` is the cleanest pattern for optional config overrides in factory functions.
+---
