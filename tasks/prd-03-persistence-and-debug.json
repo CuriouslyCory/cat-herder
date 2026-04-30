@@ -1,6 +1,6 @@
 {
   "project": "Cat Herder",
-  "branchName": "feat/persistence-and-debug",
+  "branchName": "feat/persistence-and-debug-v2",
   "description": "Phase 3: Full game state persistence (save/load/auto-save) routed through tRPC gameRouter (no browser-direct DB), versioned save format with Zod validation and migrations, and a comprehensive debug menu gated to NODE_ENV=development. Depends on PRD-01 and PRD-02.",
   "userStories": [
     {

@@ -11,6 +11,7 @@
     "db:studio": "drizzle-kit studio",
     "dev": "next dev",
     "preview": "next build && next start",
+        "ralph": "STORIES=$(jq '.userStories | length' .agents/skills/ralph/scripts/prd.json) && .agents/skills/ralph/scripts/ralph.sh $((STORIES + 4))",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },

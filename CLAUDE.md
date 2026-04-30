@@ -23,3 +23,8 @@ You have deep coding knowledge and incredible software engineering principals an
 ### dev-browser
 
 dev-browser was a skill at one point, but is now a cli command. Run `dev-browser --help` to get started.
+
+
+### Suggest skills
+
+If you need tools for testing or debugging, suggest them to the user during planning phases to ensure the agents have the necessary tooling to verify their work during implementation.

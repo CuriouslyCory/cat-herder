@@ -1,6 +1,23 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-011
+- Created `src/game/engine/CameraController.ts` — isometric OrthographicCamera follow controller
+- Reads `cameraAzimuth` and `cameraElevation` from `runtimeConfig` on construction (45°/60°)
+- `follow(target)` sets target entity; `setMode('follow'|'free')` switches modes
+- Follow mode: smooth lerp (convergence ~5u/s), lead offset lerped via `runtimeConfig.cameraLeadLerp` toward player facing direction
+- Scroll-wheel zoom: adjusts orthographic frustum (minZoom=5, maxZoom=25); updates aspect ratio on resize
+- `setMapBounds()` clamps camera focus to map edges; `panBy()` enables free-mode WASD panning from the orchestrator
+- Camera installed into `sceneManager.camera` on construction (replaces default PerspectiveCamera)
+- `dispose()` removes wheel event listener
+- pnpm typecheck passes
+- **Learnings for future iterations:**
+  - CameraController installs itself into SceneManager by setting `sceneManager.camera = this.camera`. SceneManager.resize() handles both Perspective and Ortho cameras; CameraController owns the frustum math on zoom/resize.
+  - Lead distance (runtimeConfig.cameraLeadDistance = 2.5u) is projected via sin/cos of player rotationY — same convention as MovementSystem facing.
+  - Free-mode panning is done externally (Game orchestrator calls `panBy()`) so CameraController never reads input directly — keeps input coupling in one place.
+  - `updateFrustum()` must guard against clientWidth/Height = 0 (canvas before layout) or it creates degenerate frustum.
+---
+
 ## 2026-04-29 - US-010
 - Created `src/game/systems/MovementSystem.ts` — walk + jump with coyote time and jump buffer
 - Queries Transform + Velocity + PlayerControlled; skips entities with no physics body handle

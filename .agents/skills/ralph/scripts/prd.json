@@ -182,8 +182,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "OrthographicCamera at 45° azimuth, 60° elevation sourced from runtimeConfig. follow()/setMode()/update(dt)/dispose() implemented. Smooth follow with configurable damping (5 units/s convergence). Lead offset lerped each frame via runtimeConfig.cameraLeadLerp toward player facing. Scroll-wheel zoom (minZoom=5, maxZoom=25). setMapBounds() clamps focusX/Z. panBy() enables free-mode WASD panning from Game orchestrator. Camera installed into SceneManager.camera on construction."
     },
     {
       "id": "US-012",
