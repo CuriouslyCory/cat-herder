@@ -255,8 +255,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "CharacterCreator.tsx: React overlay with shape picker (box/sphere/cylinder + SVG previews), 8 color swatches + custom color input, 3 size options (0.8/1.0/1.2). Uses api.game.upsertCharacter.useMutation(); calls onComplete(config) on success. GameCanvas.tsx updated: api.game.getCharacter.useQuery() hydrates character state; showCreator=true when not loading and no character; game starts once character is set (passed to Game constructor). Game.ts updated: PlayerCharacterConfig interface added; spawnPlayer() replaces player mesh with correct geometry+color+size; GameOpts accepts optional character."
     },
     {
       "id": "US-016",

@@ -1,6 +1,18 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-015
+- Created `src/app/play/_components/CharacterCreator.tsx` — React overlay with shape picker (box/sphere/cylinder with SVG previews), 8 preset color swatches + custom color input, 3 size buttons (Small=0.8, Medium=1.0, Large=1.2), and a Start Game button wired to `api.game.upsertCharacter.useMutation()`
+- Updated `src/app/play/_components/GameCanvas.tsx` — added `api.game.getCharacter.useQuery()` to check for an existing character on mount; shows `CharacterCreator` when none found; starts game with character config once confirmed
+- Updated `src/game/engine/Game.ts` — added `PlayerCharacterConfig` interface and exported it; updated `GameOpts` to accept optional `character`; constructor uses config to spawn correct mesh; added public `spawnPlayer(config)` method that disposes old mesh and creates new geometry/material
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - `GameCanvas` uses a single `character` state as the source of truth; DB row hydrates it via `useEffect([savedCharacter, isLoading])`, creator sets it via `onComplete`. Avoids double-start races.
+  - DB `shape` field is `string` (Drizzle varchar) — must cast/validate before passing to `PlayerCharacterConfig["shape"]`. Pattern: check `.includes()` on the const array and default to "box" as fallback.
+  - `spawnPlayer()` must dispose old geometry + material before creating new ones to avoid GPU memory leaks. Pattern: `mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose();`
+  - `user` is intentionally omitted from the game-start `useEffect` deps (stable for the mount lifetime) — add eslint-disable comment to suppress the exhaustive-deps warning without suppressing the rule globally.
+---
+
 ## 2026-04-29 - US-014
 - Created `src/server/api/routers/game.ts` with gameRouter: getCharacter, upsertCharacter, getSave, upsertSave, deleteSave, plus getDebugOverrides/upsertDebugOverrides
 - Registered `game: gameRouter` in `src/server/api/root.ts` appRouter
