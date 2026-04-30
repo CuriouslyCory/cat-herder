@@ -39,8 +39,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via OxygenState component (managed by WaterSystem), OxygenSystem (drain/refill/events/health drain), HUD oxygen gauge (top-center, pulsing red at 20%), and health fields added to PlayerControlled."
     },
     {
       "id": "US-103",

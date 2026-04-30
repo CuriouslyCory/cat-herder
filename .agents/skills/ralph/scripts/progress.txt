@@ -1,4 +1,9 @@
 ## Codebase Patterns
+- OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
+- OxygenSystem queries OxygenState+SwimmingState+PlayerControlled; OxygenState is always paired with SwimmingState (no need for null guards when both appear in query)
+- HUD.update(dt, oxygenPercent, health, maxHealth) — UIManager.update(dt, HUDState?) is the call site; Game.buildHUDState() assembles the snapshot each render frame
+- Player health lives in PlayerControlled.health/maxHealth (integer hp); OxygenState.healthDrainAccum accumulates sub-frame losses to avoid float rounding
+- CSS keyframe for oxygen warning pulse is injected once via <style id="__oxygen-pulse-style"> to avoid duplicates
 - Water triggers use collisionLayer=1/mask=1 (player layer) so CollisionSystem fires trigger events; floor tiles use layer=2/mask=0 (PhysicsEngine raycasts only)
 - SwimmingState lifecycle is event-driven (trigger:enter/exit from CollisionSystem); MovementSystem applies swim physics by querying for SwimmingState each frame — no state machine
 - PhysicsEngine.setGravityEnabled(handle, bool) controls per-body gravity; must be called when adding/removing SwimmingState
@@ -20,4 +25,15 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - PhysicsEngine has its own trigger detection (detectTriggerOverlaps) but only for registered physics bodies — terrain has no physics body, so only CollisionSystem fires water triggers
   - transitionBlend in SwimmingState prevents speed pop at water boundary; ramps 0→1 over 0.3s
   - Use `moveToward` for swim acceleration (same helper as land movement)
+---
+
+## 2026-04-30 - US-102
+- Implemented full oxygen system: OxygenState component, OxygenSystem (drain/refill/events/health), WaterSystem extended to add/remove OxygenState, HUD oxygen gauge, UIManager HUDState interface, health fields in PlayerControlled
+- Files changed: OxygenState.ts (new), OxygenSystem.ts (new), WaterSystem.ts (add OxygenState on enter/exit), types.ts (oxygen:warning, oxygen:depleted events), config.ts (percent-based oxygen config + oxygenWarningThreshold + oxygenHealthDrainRate), PlayerControlled.ts (health/maxHealth), HUD.ts (oxygen gauge + reactive hearts), UIManager.ts (HUDState interface), Game.ts (OxygenSystem wiring + buildHUDState())
+- **Learnings for future iterations:**
+  - OxygenSystem runs AFTER WaterSystem in the fixed-step loop so OxygenState already exists when OxygenSystem queries it
+  - Warning event fires once per submersion (hasEmittedWarning gate); depleted event also fires once (hasEmittedDepleted gate) — both reset automatically when WaterSystem removes OxygenState on exit
+  - Health drain uses integer accumulation (healthDrainAccum) to ensure 1 full hp is removed per second without floating-point creep
+  - UIManager.update(dt, HUDState?) uses optional second arg; Game.buildHUDState() reads from world each render frame (variable-rate, not fixed)
+  - HUD inject-once keyframe trick: `document.getElementById("__oxygen-pulse-style")` guard prevents duplicate <style> tags on HMR reloads
 ---
