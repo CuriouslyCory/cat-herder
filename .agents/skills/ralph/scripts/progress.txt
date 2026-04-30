@@ -3,6 +3,11 @@
 - CatDefinition.behavior.params is Record<string, number|string|boolean> for cat-specific config (no per-cat union types needed in the interface)
 - OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
 - OxygenSystem queries OxygenState+SwimmingState+PlayerControlled; OxygenState is always paired with SwimmingState (no need for null guards when both appear in query)
+- SceneManager.addMesh() now supports opacity field; setMeshColor/setMeshOpacity allow runtime material mutation without recreating meshes
+- CatPlacementSystem runs in the variable-rate render pass (not fixed-step loop) so clicks are processed exactly once per render frame
+- GameState is instantiated in Game.ts before CatCompanionManager (dependency order); CatCompanionManager gets a `() => playerEntity` getter to avoid circular refs
+- UIManager.setCatCatalog() must be called after map load (catalog comes from CatCompanionManager.getCatalog() which reads CAT_REGISTRY)
+- HUD.setCatalog() builds cat slot DOM elements lazily — call it once at init, then update via setCatBar() each frame
 - HUD.update(dt, oxygenPercent, health, maxHealth) — UIManager.update(dt, HUDState?) is the call site; Game.buildHUDState() assembles the snapshot each render frame
 - Player health lives in PlayerControlled.health/maxHealth (integer hp); OxygenState.healthDrainAccum accumulates sub-frame losses to avoid float rounding
 - CSS keyframe for oxygen warning pulse is injected once via <style id="__oxygen-pulse-style"> to avoid duplicates
@@ -48,4 +53,22 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - MeshConfig (from SceneManager.ts) reused directly for meshConfig field — matches box/sphere/cylinder/plane geometry kinds
   - behavior.params is a loose Record so each cat can carry its own numeric config (launchImpulse, trailLength, revealRadius, collider dims) without expanding the interface
   - Terrain cats (Loaf, Pounce) have no duration; duration cats (Zoomies 8s, Curiosity 20s) set behavior.duration
+---
+
+## 2026-04-30 - US-105
+- Implemented full cat placement UI: ghost preview, number-key selection, left-click summon, right-click dismiss, cat selection bar with live yarn count
+- Files changed:
+  - src/game/engine/SceneManager.ts — opacity field on MeshConfig; setMeshColor(), setMeshOpacity()
+  - src/game/engine/InputManager.ts — leftClickThisFrame/rightClickThisFrame tracking; getPressedCatSlot(); contextmenu suppression
+  - src/game/cats/CatCompanionManager.ts — isValidPosition() made public
+  - src/game/systems/CatPlacementSystem.ts (new) — ghost lifecycle, selection toggle (1-4), summon on left-click, dismiss on right-click
+  - src/game/ui/HUD.ts — cat selection bar (4 slots with color/cost), setCatalog(), yarn count display
+  - src/game/ui/UIManager.ts — HUDState extended with yarn + selectedCatType; setCatCatalog() pass-through
+  - src/game/engine/Game.ts — GameState, CatCompanionManager, CatPlacementSystem instantiated and wired
+- **Learnings for future iterations:**
+  - Ghost mesh uses spread of cat's meshConfig with overridden color/opacity — no need for separate ghost-specific types
+  - DISMISS_RADIUS_SQ comparison avoids sqrt; 1.5u radius (2.25 squared) is comfortable for clicking active cats
+  - SceneManager.setMeshColor() uses THREE.Color.set() which accepts CSS strings, hex numbers, and named colors
+  - CatPlacementSystem.update() takes only `dt` (not World) since it holds world reference; kept consistent with System-like naming
+  - HUD cat bar colors are hardcoded per CatType enum to match cat definition colors — update both if definition colors change
 ---
