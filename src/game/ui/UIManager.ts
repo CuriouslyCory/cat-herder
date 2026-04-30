@@ -1,17 +1,40 @@
+import { HUD } from "./HUD";
+
 /**
  * UIManager — mounts and manages plain DOM panels over the game canvas.
  *
- * US-017 stub: provides the update()/dispose() interface required by the Game
- * orchestrator. Full HUD and FPS counter implementation is in US-018.
+ * Creates a single overlay div that covers the canvas (requires the canvas's
+ * parent to be a positioning context), then delegates per-panel updates to
+ * each mounted module (HUD, etc.). No React inside the engine.
  */
 export class UIManager {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_canvas: HTMLCanvasElement) {}
+  private readonly overlay: HTMLDivElement;
+  private readonly hud: HUD;
+
+  constructor(canvas: HTMLCanvasElement) {
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:absolute;inset:0;pointer-events:none;overflow:hidden;";
+
+    // The canvas parent must be a positioning context so `inset:0` covers it.
+    const parent = canvas.parentElement ?? document.body;
+    if (getComputedStyle(parent).position === "static") {
+      (parent as HTMLElement).style.position = "relative";
+    }
+    parent.appendChild(overlay);
+
+    this.overlay = overlay;
+    this.hud = new HUD(overlay);
+  }
 
   /** Called once per render frame by the game loop. */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt: number): void {}
+  update(dt: number): void {
+    this.hud.update(dt);
+  }
 
   /** Remove all mounted DOM panels and listeners. */
-  dispose(): void {}
+  dispose(): void {
+    this.hud.dispose();
+    this.overlay.remove();
+  }
 }
