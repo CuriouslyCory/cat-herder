@@ -6,6 +6,7 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
 - The main repo is on `main` (Next.js T3 app). Branch `feat/engine-foundation` is a stale worktree with an old Vite-based game. Working branch is `feat/engine-foundation-v2` from main.
 - Three.js lives under `src/game/engine/`. Game source is cleanly separated from `src/app/`, `src/server/`, `src/trpc/`.
 - Use `pnpm typecheck && pnpm build` as the quality gate (no lint script yet — added in US-019).
+- EventBus internal storage must use `(event: GameEvent) => void` (not a generic type parameter) to satisfy TS strict contravariance. Use `handler as unknown as AnyHandler` at the boundary — double cast through `unknown` avoids TS2352.
 
 ---
 
@@ -29,4 +30,17 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - CONFIG uses `Object.freeze({...BASE_CONFIG})` — frozen at the top level only (sufficient for primitive values). No deep freeze needed since all config values are primitives.
   - runtimeConfig is initialized from BASE_CONFIG (not from CONFIG) so it's a true independent copy and not a reference to the frozen object.
   - GameEvent discriminated union uses a `type` string literal tag — consumers can switch/if on `event.type` without casting.
+---
+
+## 2026-04-29 - US-003
+- Created `src/game/engine/EventBus.ts` — typed pub/sub around the GameEvent discriminated union
+- `on<T>(type, handler): Unsubscribe` — adds handler, returns removal fn
+- `off<T>(type, handler)` — targeted removal (no-op if not registered)
+- `emit(event)` — snapshots bucket before iteration to avoid dispatch reentrancy issues
+- `clear()` — removes all listeners; intended for module teardown (HMR, route change)
+- Internal storage: `Map<string, Set<AnyHandler>>` where `AnyHandler = (event: GameEvent) => void`; boundary cast via `handler as unknown as AnyHandler` to satisfy TS strict contravariance
+- **Learnings for future iterations:**
+  - TS strict contravariance rejects direct cast from `Handler<T>` to `Handler<UnionType>` with TS2352. Solution: double-cast through `unknown` (`handler as unknown as AnyHandler`).
+  - Snapshotting the Set with `[...bucket]` before iterating prevents handlers added during `emit()` from running in the same cycle (safer default).
+  - `clear()` must be called in `destroy()` / teardown to prevent listener leaks across React StrictMode double-mounts and HMR cycles.
 ---

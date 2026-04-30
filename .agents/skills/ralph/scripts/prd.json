@@ -48,8 +48,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "EventBus uses Map<string, Set<AnyHandler>>. Internal storage uses (event: GameEvent) => void with unknown-cast boundary to satisfy TS strict contravariance. clear() enables leak-free teardown across HMR."
     },
     {
       "id": "US-004",
