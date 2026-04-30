@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- CatAISystem runs FIRST in the fixed-step loop and drives Idle→Active→Expired state transitions for all cats from CAT_REGISTRY data; per-cat systems (ZoomiesSystem, CuriositySystem, PounceSystem) react to states but never set them
+- CuriositySystem detects "first Active tick" via `reveal.revealedEntities.length === 0` (not via Idle state); CatAISystem transitions Idle→Active in the same frame so CuriositySystem sees Active and empty list simultaneously
 - ZoomiesTrail overlap is a manual oriented-AABB check (not PhysicsEngine trigger) — project player offset onto trail axis (along) and perpendicular (perp), compare to halfLength/halfWidth
 - SpeedBoost component is added/removed by ZoomiesSystem each fixed tick; MovementSystem reads it to scale walkSpeed before computing targetX/Z
 - Movement cat trail entity has no PhysicsEngine body — only Transform + Renderable + ZoomiesTrail; position/rotation synced by RenderSystem normally
@@ -121,4 +123,18 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - physicsEngine.isBodyGrounded(handle) distinguishes player standing ON the Pounce cat (top surface detected by raycast) vs. walking into its side (blocked by XZ collider but not grounded by it)
   - Launch physics (impulse=3.5 u/s, gravity=-12): player peaks ~0.51u above launch point; Pounce cat top at ~0.5u gives player peak ~1.41u center — height=1 terrain platform is marginally reachable. The "3.5u above resting height" AC is aspirational; real physics gate is ~1u platform max with current gravity config
   - CatBehavior.state is transitioned Idle→Active in PounceSystem on the first frame (same pattern as ZoomiesSystem/CuriositySystem)
+---
+
+## 2026-04-30 - US-110
+- Implemented CatAISystem: generic state machine reading duration from CAT_REGISTRY
+- Created src/game/systems/CatAISystem.ts: queries CatBehavior+Transform; Idle→Active all cats; Active→stateTimer tick for duration cats; stateTimer≥duration→Expired; permanent cats (no duration) stay Active
+- Refactored ZoomiesSystem: removed Idle→Active + stateTimer tick + auto-dismiss logic; now reacts to Expired state set by CatAISystem; `update(world, _dt)` — dt unused
+- Refactored CuriositySystem: removed Idle→Active + stateTimer tick; detects first Active frame via `reveal.revealedEntities.length === 0`; reacts to Expired to hideRevealedTerrain + dismiss
+- Refactored PounceSystem: removed `if (behavior.state === "Idle") behavior.state = "Active"` — replaced with `if (behavior.state !== "Active") continue`
+- Wired CatAISystem into Game.ts fixed-step loop BEFORE ZoomiesSystem/CuriositySystem/PounceSystem
+- pnpm typecheck and pnpm lint both pass
+- **Learnings for future iterations:**
+  - CatAISystem sets Expired; per-cat systems detect Expired and call dismiss() — this avoids CatAISystem needing a CatCompanionManager dependency and keeps cleanup logic in each cat's system
+  - CuriositySystem's "on first activate" signal changed from `state === "Idle"` to `state === "Active" && revealedEntities.length === 0` — works because CatAISystem transitions in the same fixed tick before CuriositySystem runs
+  - Per-cat systems guard with `if (!world.isAlive(catEntity)) continue` after any dismiss call to handle same-frame entity destruction
 ---

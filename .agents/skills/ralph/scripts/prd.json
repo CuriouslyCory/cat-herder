@@ -184,8 +184,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "CatAISystem (src/game/systems/CatAISystem.ts) reads duration from CAT_REGISTRY and drives Idle→Active→Expired transitions. Permanent cats (Loaf, Pounce) have no duration and stay Active. ZoomiesSystem/CuriositySystem/PounceSystem de-coupled from state management — they now react to states set by CatAISystem. CatAISystem runs first in the fixed-step loop before all per-cat systems."
     },
     {
       "id": "US-111",
