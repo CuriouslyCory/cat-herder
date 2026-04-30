@@ -127,8 +127,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via SpeedBoost component, ZoomiesTrail component, ZoomiesSystem (timer/auto-dismiss/overlap check), CatCompanionManager (trail entity creation/cleanup), and MovementSystem (speed multiplier). Trail uses oriented AABB overlap check instead of PhysicsEngine triggers for correct 6u×1.5u rectangle detection."
     },
     {
       "id": "US-108",

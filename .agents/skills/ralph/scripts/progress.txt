@@ -1,4 +1,9 @@
 ## Codebase Patterns
+- ZoomiesTrail overlap is a manual oriented-AABB check (not PhysicsEngine trigger) — project player offset onto trail axis (along) and perpendicular (perp), compare to halfLength/halfWidth
+- SpeedBoost component is added/removed by ZoomiesSystem each fixed tick; MovementSystem reads it to scale walkSpeed before computing targetX/Z
+- Movement cat trail entity has no PhysicsEngine body — only Transform + Renderable + ZoomiesTrail; position/rotation synced by RenderSystem normally
+- CatCompanionManager.trailEntities Map<catEntity, trailEntity>: created in summon() for effectType='movement', destroyed in dismiss() before destroyEntity(catEntity)
+- ZoomiesSystem must be instantiated after CatCompanionManager (dependency); runs at end of fixed-step sub-tick (after OxygenSystem)
 - PhysicsEngine has a flat-floor fallback (y < body.config.size clamps to size) so the player stays on y=0 terrain without registering every tile as a physics body
 - Terrain/launch cats register PhysicsEngine static bodies (isStatic=true, layer=1, mask=1) so the player's downward raycast detects their top surface; dismiss() removes the body
 - getCatHalfHeight(def) / getXZHalfExtent(def) helpers in CatCompanionManager derive correct extents from MeshConfig geometry kind + behavior.params without per-cat switch logic
@@ -91,4 +96,16 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - SceneManager.setMeshColor() uses THREE.Color.set() which accepts CSS strings, hex numbers, and named colors
   - CatPlacementSystem.update() takes only `dt` (not World) since it holds world reference; kept consistent with System-like naming
   - HUD cat bar colors are hardcoded per CatType enum to match cat definition colors — update both if definition colors change
+---
+
+## 2026-04-30 - US-107
+- Implemented Zoomies cat speed trail: SpeedBoost component, ZoomiesTrail component, ZoomiesSystem, CatCompanionManager trail lifecycle, MovementSystem speed scaling
+- Files created: src/game/ecs/components/SpeedBoost.ts, src/game/ecs/components/ZoomiesTrail.ts, src/game/systems/ZoomiesSystem.ts
+- Files modified: src/game/cats/CatCompanionManager.ts (trail creation/cleanup + import), src/game/systems/MovementSystem.ts (SpeedBoost import + multiplier), src/game/engine/Game.ts (ZoomiesSystem wiring)
+- **Learnings for future iterations:**
+  - PhysicsEngine addBody() takes a uniform `size` (single half-extent), not per-axis — unsuitable for the 6u×1.5u trail rectangle; manual oriented AABB in ZoomiesSystem is the right approach
+  - Trail direction: normalize(catPos - playerPos) at summon time; stored in ZoomiesTrail.dirX/dirZ for per-frame projection; box mesh rotated via rotationY = atan2(dirX, dirZ)
+  - ZoomiesSystem.dismiss() auto-sets behavior.state="Expired" before calling catCompanionManager.dismiss() — dismiss() checks this to skip yarn refund (consumed on expiry)
+  - Trail entity destroyed by CatCompanionManager.dismiss(), not by ZoomiesSystem — keeps cleanup centralised in one place
+  - Multiple Zoomies cats: ZoomiesSystem handles multiple trails; player gets SpeedBoost from the last trail they're in (last wins in the loop); all trails same multiplier so order doesn't matter
 ---
