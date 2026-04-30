@@ -219,8 +219,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via: GameState.onInventoryChange() reactive listener + notifyInventory() on addResource(); GatheringSystem._inventoryFullTimer (2s display) + isInventoryFull() getter; HUDState extended with inventory/maxInventoryCapacity/inventoryFull; HUD inventory panel (top-left) with capacity bar, per-stack icon rows (🌿/🪵/💧), color-coded fill bar, and 'Inventory Full!' notification; Game.buildHUDState() passes all three fields."
     },
     {
       "id": "US-113",

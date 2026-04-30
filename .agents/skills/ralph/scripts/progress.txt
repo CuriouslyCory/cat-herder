@@ -153,3 +153,19 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - GameState.addResource() is forward-compatible with US-112's capacity enforcement — hasInventorySpace() is already the gate
   - HUD gather bar hides via display:none (same pattern as oxygen gauge); visible only during an active gather action
 ---
+
+## 2026-04-30 - US-112
+- Implemented Inventory System: reactive GameState listener, Inventory Full notification timer, HUD inventory panel with capacity bar
+- Files changed:
+  - src/game/engine/GameState.ts — added inventoryListeners Set, onInventoryChange() reactive subscriber, notifyInventory() called in addResource()
+  - src/game/systems/GatheringSystem.ts — added _inventoryFullTimer (2s), ticked in update(), set on E+full, exposed via isInventoryFull()
+  - src/game/ui/UIManager.ts — added InventoryStack import, inventory/maxInventoryCapacity/inventoryFull fields to HUDState; passed through in update()
+  - src/game/ui/HUD.ts — added InventoryStack import, RESOURCE_ICONS map (🌿/🪵/💧), buildInventoryPanel() (top-left: capacity label+bar, stack rows, Inventory Full notice), setInventory() updater; update() signature extended with 3 new params
+  - src/game/engine/Game.ts — both buildHUDState() return paths now include inventory, maxInventoryCapacity, inventoryFull
+- pnpm typecheck, pnpm lint, pnpm build all pass
+- **Learnings for future iterations:**
+  - GameState.onInventoryChange() follows the same call-immediately pattern as onYarnChange() — listener fires with current value on subscribe
+  - HUD inventory panel rebuilds stack rows on every frame via innerHTML="" — acceptable for ≤3 stacks in MVP, revisit if stacks exceed 5+
+  - Capacity bar color thresholds: green (0-69%), yellow (70-99%), red (100%) — mirrors common game inventory UI convention
+  - "Inventory Full!" notification persists 2s via timer in GatheringSystem; timer ticked in update() and checked by isInventoryFull() in the render pass
+---
