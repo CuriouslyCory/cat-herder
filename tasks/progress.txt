@@ -49,3 +49,20 @@
   - companions Map preserves insertion order (ES2015 guarantee), so getActiveCompanions()[0] is always the oldest — safe for auto-dismiss
   - Cat entity collider uses layer 1 / mask 1 (same as player) so CollisionSystem detects overlap; per-cat type stories (US-106-109) will refine collider config
 ---
+
+## 2026-04-30 - US-108
+- Implemented Curiosity Cat reveal mechanic: hidden terrain becomes visible when a Curiosity Cat is summoned within 5u
+- Created HiddenTerrain component (src/game/ecs/components/HiddenTerrain.ts): isRevealed flag + revealCount (supports overlapping cats)
+- Created CuriosityReveal component (src/game/ecs/components/CuriosityReveal.ts): revealRadius + revealedEntities[] list
+- Created CuriositySystem (src/game/systems/CuriositySystem.ts): Idle→Active reveals terrain, ticks stateTimer, Expired hides terrain + auto-dismisses
+- Updated MapManager: Hidden-type terrain entities get opacity:0 (fully transparent) + HiddenTerrain tag; receiveShadow/castShadow disabled for hidden tiles
+- Updated CatCompanionManager: effectType='utility' cats get CuriosityReveal component attached at summon time
+- Added hidden:terrain:revealed event to GameEvent discriminated union (types.ts)
+- Wired CuriositySystem into Game.ts (after ZoomiesSystem in the fixed-step loop)
+- pnpm typecheck and pnpm lint both pass
+- **Learnings for future iterations:**
+  - HiddenTerrain revealCount pattern handles multiple overlapping Curiosity cats: terrain stays visible as long as any cat covers it
+  - CuriositySystem needs SceneManager access (injected) to call setMeshOpacity() — this is the only system besides CatPlacementSystem that holds a SceneManager ref
+  - Hidden terrain's Renderable is created normally by MapManager (opacity:0); RenderSystem registers it as a mesh. CuriositySystem then calls setMeshOpacity(handle, 1) using the sceneHandle stored by RenderSystem. This means reveal only works after the first RenderSystem frame — not a problem in practice since the cat is placed by the user.
+  - Collider collisionMask is mutable on the component object; CuriositySystem toggles mask 0↔1 directly without destroying/recreating the entity
+---

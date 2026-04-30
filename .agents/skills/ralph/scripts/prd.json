@@ -146,8 +146,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via HiddenTerrain component (tag + revealCount), CuriosityReveal component (radius + revealedEntities list), CuriositySystem (Idle→Active reveal, timer, Expired hide+dismiss), MapManager (opacity:0 + HiddenTerrain tag for Hidden-type terrain), CatCompanionManager (CuriosityReveal attached for effectType=utility). hidden:terrain:revealed event added to GameEvent."
     },
     {
       "id": "US-109",
