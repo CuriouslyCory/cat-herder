@@ -1,8 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Game, type GameUser, type PlayerCharacterConfig } from "~/game/engine/Game";
+import {
+  Game,
+  type GameTrpcAdapter,
+  type GameUser,
+  type PlayerCharacterConfig,
+} from "~/game/engine/Game";
 import { api } from "~/trpc/react";
 
 import { CharacterCreator } from "./CharacterCreator";
@@ -30,6 +35,26 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   const { data: savedCharacter, isLoading } = api.game.getCharacter.useQuery();
 
+  // ── tRPC adapter ────────────────────────────────────────────────────────────
+  // The Game engine never imports from ~/trpc; GameCanvas builds a thin adapter
+  // that closes over the mutation functions and injects it at construction time.
+
+  const { mutateAsync: upsertSaveMutateAsync } =
+    api.game.upsertSave.useMutation();
+
+  // Keep a stable ref to mutateAsync so the adapter object never needs to change
+  const upsertSaveRef = useRef(upsertSaveMutateAsync);
+  upsertSaveRef.current = upsertSaveMutateAsync;
+
+  // Stable adapter — created once; always delegates to the latest mutateAsync
+  const trpcAdapter = useMemo<GameTrpcAdapter>(
+    () => ({
+      upsertSave: (input) => upsertSaveRef.current(input),
+    }),
+    [], // stable for the lifetime of this component mount
+  );
+
+  // ── DB hydration ────────────────────────────────────────────────────────────
   // When the DB query resolves with an existing character, hydrate local state
   useEffect(() => {
     if (isLoading || !savedCharacter) return;
@@ -43,6 +68,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
     setCharacter({ shape: validShape, colorHex, sizeScale });
   }, [savedCharacter, isLoading]);
 
+  // ── Game lifecycle ──────────────────────────────────────────────────────────
   // Start (or update) the game whenever a character becomes available
   useEffect(() => {
     if (!character) return;
@@ -50,7 +76,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
     const container = containerRef.current;
     if (!container) return;
 
-    // If the game is already running, just update the player mesh
+    // If the game is already running, just update the player mesh in-place
     if (gameRef.current) {
       gameRef.current.spawnPlayer(character);
       return;
@@ -64,7 +90,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
-    const game = new Game(canvas, { user, character });
+    const game = new Game(canvas, { user, character, trpc: trpcAdapter });
     gameRef.current = game;
     void game.start();
 
@@ -75,7 +101,8 @@ export function GameCanvas({ user }: GameCanvasProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [character]);
-  // `user` intentionally omitted: user identity is stable for the lifetime of this mount.
+  // `user` and `trpcAdapter` intentionally omitted: both are stable for the
+  // lifetime of this mount. Including them would trigger an unnecessary restart.
 
   const handleCharacterCreated = useCallback((config: PlayerCharacterConfig) => {
     setCharacter(config);
