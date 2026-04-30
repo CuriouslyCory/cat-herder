@@ -42,6 +42,9 @@ export interface GameConfig {
   cameraLeadDistance: number; // units of camera lead ahead of player
   cameraLeadLerp: number; // lead lerp factor (0-1 per frame @60fps)
 
+  // Cat companions
+  maxActiveCats: number; // max number of simultaneously summoned cats
+
   // Persistence
   autoSaveIntervalMs: number; // milliseconds between auto-saves
 }
@@ -82,6 +85,9 @@ const BASE_CONFIG: GameConfig = {
   cameraElevation: 60,
   cameraLeadDistance: 2.5,
   cameraLeadLerp: 0.08,
+
+  // Cat companions
+  maxActiveCats: 3,
 
   // Persistence
   autoSaveIntervalMs: 30_000,
