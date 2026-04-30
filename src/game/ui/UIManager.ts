@@ -1,6 +1,7 @@
 import { HUD } from "./HUD";
 import type { CatType } from "../types";
 import type { CatCatalogEntry } from "../cats/CatCompanionManager";
+import type { GatherState } from "../systems/GatheringSystem";
 
 /**
  * HUD frame state passed from the game loop each render tick.
@@ -17,6 +18,8 @@ export interface HUDState {
   yarn?: number;
   /** Currently selected cat type for placement highlighting, or null. */
   selectedCatType?: CatType | null;
+  /** Active gather progress and label, or null when not gathering. */
+  gatherState?: GatherState | null;
 }
 
 /**
@@ -55,6 +58,7 @@ export class UIManager {
       state?.maxHealth ?? 5,
       state?.yarn ?? 0,
       state?.selectedCatType ?? null,
+      state?.gatherState ?? null,
     );
   }
 

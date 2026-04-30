@@ -1,18 +1,27 @@
 // ---------------------------------------------------------------------------
 // GameState — mutable player state shared across systems and the HUD.
 //
-// Intentionally thin for Phase 2: tracks yarn and provides reactive
-// onChange() subscriptions so the HUD can update without polling.
-//
-// Future stories (US-112, US-113) will extend this with inventory and
-// additional player state fields.
+// Tracks yarn and inventory; provides reactive onChange() subscriptions so
+// the HUD can update without polling.
 // ---------------------------------------------------------------------------
 
+import type { ResourceType } from "../types";
+
 type Listener<T> = (value: T) => void;
+
+export interface InventoryStack {
+  resourceType: ResourceType;
+  quantity: number;
+}
 
 export class GameState {
   private _yarn: number;
   private readonly yarnListeners = new Set<Listener<number>>();
+
+  /** Resource stacks — same-type resources share one stack. */
+  readonly inventory: InventoryStack[] = [];
+  /** Maximum total items across all stacks (enforced by US-112). */
+  maxInventoryCapacity = 10;
 
   constructor(initialYarn = 10) {
     this._yarn = initialYarn;
@@ -50,6 +59,32 @@ export class GameState {
     this.yarnListeners.add(listener);
     listener(this._yarn); // emit current value immediately
     return () => this.yarnListeners.delete(listener);
+  }
+
+  // ── Inventory ────────────────────────────────────────────────────────────────
+
+  /** Total items held across all stacks. */
+  get inventoryTotal(): number {
+    return this.inventory.reduce((sum, s) => sum + s.quantity, 0);
+  }
+
+  /** True if adding `amount` items would not exceed maxInventoryCapacity. */
+  hasInventorySpace(amount = 1): boolean {
+    return this.inventoryTotal + amount <= this.maxInventoryCapacity;
+  }
+
+  /**
+   * Add `amount` units of the given resource type to inventory.
+   * Stacks with the same type accumulate. Does NOT enforce capacity — callers
+   * should check hasInventorySpace() before calling.
+   */
+  addResource(resourceType: ResourceType, amount = 1): void {
+    const stack = this.inventory.find((s) => s.resourceType === resourceType);
+    if (stack) {
+      stack.quantity += amount;
+    } else {
+      this.inventory.push({ resourceType, quantity: amount });
+    }
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────

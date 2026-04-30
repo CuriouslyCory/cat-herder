@@ -14,6 +14,7 @@ import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CuriositySystem } from "../systems/CuriositySystem";
 import { PounceSystem } from "../systems/PounceSystem";
 import { CatAISystem } from "../systems/CatAISystem";
+import { GatheringSystem } from "../systems/GatheringSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -25,6 +26,8 @@ import { createVelocity } from "../ecs/components/Velocity";
 import { createPlayerControlled } from "../ecs/components/PlayerControlled";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
+import { createResourceNode } from "../ecs/components/ResourceNode";
+import { ResourceType } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
 import type { OxygenState } from "../ecs/components/OxygenState";
@@ -120,6 +123,7 @@ export class Game {
   private readonly zoomiesSystem: ZoomiesSystem;
   private readonly curiositySystem: CuriositySystem;
   private readonly pounceSystem: PounceSystem;
+  private readonly gatheringSystem: GatheringSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -200,6 +204,15 @@ export class Game {
     // 11c. PounceSystem — upward launch trigger for Pounce cats
     this.pounceSystem = new PounceSystem(this.physics);
 
+    // 11d. GatheringSystem — E-key resource gathering from ResourceNode entities
+    this.gatheringSystem = new GatheringSystem(
+      this.inputManager,
+      this.sceneManager,
+      this.gameState,
+      this.eventBus,
+      () => this.playerEntity,
+    );
+
     // 12. CatPlacementSystem — ghost preview, number-key selection, click handling
     this.catPlacementSystem = new CatPlacementSystem(
       this.inputManager,
@@ -225,6 +238,9 @@ export class Game {
   async start(): Promise<void> {
     // Load map (creates terrain entities in the ECS world)
     this.mapManager.loadMap(TestMap);
+
+    // Populate resource nodes for the test map
+    this.spawnTestMapResourceNodes();
 
     // Set camera map bounds for focus clamping
     this.cameraController.setMapBounds({
@@ -350,6 +366,97 @@ export class Game {
   }
 
   // ---------------------------------------------------------------------------
+  // Private — map population
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates resource node entities for the TestMap.
+   *
+   * Cell-center formula:  x = -29 + col*2,  z = -29 + row*2
+   * (TestMap: 30×30 grid, cellSize=2, half-offset of map 30u)
+   *
+   * Node counts:
+   *   Grass  — 9  nodes, scattered on flat ground
+   *   Sticks — 4  nodes, NE "forest" area
+   *   Water  — 2  nodes, near the SW water zone
+   */
+  private spawnTestMapResourceNodes(): void {
+    // gatherTime / yieldAmount / respawnTime per resource type
+    const GRASS_CONFIG  = { gatherTime: 1.5, yield: 1, respawn: 30 } as const;
+    const STICKS_CONFIG = { gatherTime: 1.5, yield: 1, respawn: 45 } as const;
+    const WATER_CONFIG  = { gatherTime: 2.0, yield: 1, respawn: 60 } as const;
+
+    // Node height: base node center is at y=0.5 (half of 1u sphere diameter)
+    const NODE_Y = 0.5;
+
+    const nodes: Array<{
+      x: number;
+      z: number;
+      type: ResourceType;
+      color: string;
+    }> = [
+      // ── Grass nodes (9) — scattered across flat ground ────────────────────
+      { x: -29 + 15 * 2, z: -29 + 5 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (1, -19)
+      { x: -29 + 18 * 2, z: -29 + 8 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (7, -13)
+      { x: -29 + 5  * 2, z: -29 + 12 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-19, -5)
+      { x: -29 + 12 * 2, z: -29 + 15 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-5, 1)
+      { x: -29 + 15 * 2, z: -29 + 18 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 7)
+      { x: -29 + 20 * 2, z: -29 + 20 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (11, 11)
+      { x: -29 + 15 * 2, z: -29 + 22 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 15)
+      { x: -29 + 10 * 2, z: -29 + 25 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-9, 21)
+      { x: -29 + 24 * 2, z: -29 + 10 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (19, -9)
+
+      // ── Sticks nodes (4) — NE grass area before stone platform ───────────
+      { x: -29 + 21 * 2, z: -29 + 8 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (13, -13)
+      { x: -29 + 23 * 2, z: -29 + 10 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (17, -9)
+      { x: -29 + 20 * 2, z: -29 + 12 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (11, -5)
+      { x: -29 + 18 * 2, z: -29 + 9 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (7, -11)
+
+      // ── Water-source nodes (2) — near the SW water zone ──────────────────
+      { x: -29 + 5 * 2, z: -29 + 11 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-19, -7)
+      { x: -29 + 9 * 2, z: -29 + 10 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-11, -9)
+    ];
+
+    for (const { x, z, type, color } of nodes) {
+      const entity = this.world.createEntity();
+
+      this.world.addComponent(entity, createTransform(x, NODE_Y, z));
+      this.world.addComponent(
+        entity,
+        createRenderable({
+          geometry: type === ResourceType.Sticks ? "cylinder" : "sphere",
+          size: 0.4,
+          color,
+          castShadow: true,
+        }),
+      );
+      // Trigger collider — same layer as player so CollisionSystem can detect
+      // proximity (not used for trigger events here; GatheringSystem uses distance)
+      this.world.addComponent(
+        entity,
+        createCollider("circle", 0.5, {
+          isStatic: true,
+          isTrigger: true,
+          collisionLayer: 1,
+          collisionMask: 0, // no collision response needed — just a marker
+        }),
+      );
+
+      const cfg =
+        type === ResourceType.Grass
+          ? GRASS_CONFIG
+          : type === ResourceType.Sticks
+          ? STICKS_CONFIG
+          : WATER_CONFIG;
+
+      this.world.addComponent(
+        entity,
+        createResourceNode(type, cfg.gatherTime, cfg.yield, cfg.respawn),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Private — game loop
   // ---------------------------------------------------------------------------
 
@@ -388,6 +495,8 @@ export class Game {
       this.curiositySystem.update(this.world, FIXED_DT);
       // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
       this.pounceSystem.update(this.world, FIXED_DT);
+      // GatheringSystem handles E-key resource gathering, cooldowns, and progress
+      this.gatheringSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
@@ -420,6 +529,7 @@ export class Game {
         maxHealth: 5,
         yarn: this.gameState.yarn,
         selectedCatType: this.catPlacementSystem.getSelectedCatType(),
+        gatherState: null,
       };
     }
 
@@ -432,6 +542,7 @@ export class Game {
       maxHealth: player?.maxHealth ?? 5,
       yarn: this.gameState.yarn,
       selectedCatType: this.catPlacementSystem.getSelectedCatType(),
+      gatherState: this.gatheringSystem.getGatherState(),
     };
   }
 

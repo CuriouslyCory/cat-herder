@@ -26,6 +26,12 @@ export enum TerrainType {
   Hidden = "Hidden",
 }
 
+export enum ResourceType {
+  Grass = "Grass",
+  Sticks = "Sticks",
+  Water = "Water",
+}
+
 // ---------------------------------------------------------------------------
 // Vector types (Three.js-compatible, no three import required)
 // ---------------------------------------------------------------------------
@@ -64,4 +70,5 @@ export type GameEvent =
   | { type: "oxygen:depleted"; entity: number }
   | { type: "cat:summoned"; entity: number; catType: CatType; position: Vec3 }
   | { type: "cat:dismissed"; entity: number; catType: CatType }
-  | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] };
+  | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] }
+  | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number };

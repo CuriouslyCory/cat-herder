@@ -25,6 +25,11 @@ export class HUD {
   private yarnCountEl: HTMLElement | null = null;
   private catalog: CatCatalogEntry[] = [];
 
+  // Gather progress bar
+  private gatherPanel: HTMLElement | null = null;
+  private gatherBar: HTMLElement | null = null;
+  private gatherLabel: HTMLElement | null = null;
+
   /** Rolling window for FPS calculation (~1 second at 60 fps). */
   private readonly frameTimes: number[] = [];
   private static readonly FPS_WINDOW = 60;
@@ -47,6 +52,7 @@ export class HUD {
   constructor(container: HTMLElement) {
     this.buildHearts(container);
     this.buildOxygenGauge(container);
+    this.buildGatherBar(container);
     this.buildCatBar(container);
     if (process.env.NODE_ENV === "development") {
       this.buildFps(container);
@@ -60,6 +66,7 @@ export class HUD {
    * @param maxHealth       Maximum player health.
    * @param yarn            Current yarn count.
    * @param selectedCatType Currently selected cat type for placement, or null.
+   * @param gatherProgress  Gather progress [0-1] + label, or null when idle.
    */
   update(
     dt: number,
@@ -68,11 +75,13 @@ export class HUD {
     maxHealth = 5,
     yarn = 0,
     selectedCatType: CatType | null = null,
+    gatherProgress: { progress: number; label: string } | null = null,
   ): void {
     this.updateFps(dt);
     this.setOxygen(oxygenPercent);
     this.setHealth(health, maxHealth);
     this.setCatBar(yarn, selectedCatType);
+    this.setGatherProgress(gatherProgress);
   }
 
   /** Set the cat catalog used by the selection bar. Call once after the catalog is available. */
@@ -86,6 +95,9 @@ export class HUD {
     this.oxygenPanel = null;
     this.oxygenBar = null;
     this.oxygenLabel = null;
+    this.gatherPanel = null;
+    this.gatherBar = null;
+    this.gatherLabel = null;
     this.catBarPanel = null;
     this.catSlotEls = [];
     this.yarnCountEl = null;
@@ -311,6 +323,55 @@ export class HUD {
     }
 
     this.catBarPanel.appendChild(this.yarnCountEl);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gather progress bar
+  // ---------------------------------------------------------------------------
+
+  private buildGatherBar(container: HTMLElement): void {
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:absolute;bottom:110px;left:50%;transform:translateX(-50%);" +
+      "display:none;flex-direction:column;align-items:center;gap:4px;" +
+      "pointer-events:none;user-select:none;";
+
+    const label = document.createElement("div");
+    label.style.cssText =
+      "font-family:monospace;font-size:11px;color:rgba(255,255,255,0.9);" +
+      "text-shadow:0 1px 2px rgba(0,0,0,0.8);letter-spacing:1px;";
+
+    const track = document.createElement("div");
+    track.style.cssText =
+      "width:140px;height:10px;background:rgba(0,0,0,0.45);border-radius:5px;overflow:hidden;";
+
+    const fill = document.createElement("div");
+    fill.style.cssText =
+      "height:100%;width:0%;background:#a3e635;border-radius:5px;transition:width 0.05s linear;";
+
+    track.appendChild(fill);
+    panel.appendChild(label);
+    panel.appendChild(track);
+    container.appendChild(panel);
+
+    this.gatherPanel = panel;
+    this.gatherBar = fill;
+    this.gatherLabel = label;
+  }
+
+  private setGatherProgress(
+    state: { progress: number; label: string } | null,
+  ): void {
+    if (!this.gatherPanel || !this.gatherBar || !this.gatherLabel) return;
+
+    if (state === null) {
+      this.gatherPanel.style.display = "none";
+      return;
+    }
+
+    this.gatherPanel.style.display = "flex";
+    this.gatherLabel.textContent = state.label;
+    this.gatherBar.style.width = `${Math.max(0, Math.min(100, state.progress * 100))}%`;
   }
 
   private setCatBar(yarn: number, selectedCatType: CatType | null): void {
