@@ -1,4 +1,10 @@
 ## Codebase Patterns
+- PhysicsEngine has a flat-floor fallback (y < body.config.size clamps to size) so the player stays on y=0 terrain without registering every tile as a physics body
+- Terrain/launch cats register PhysicsEngine static bodies (isStatic=true, layer=1, mask=1) so the player's downward raycast detects their top surface; dismiss() removes the body
+- getCatHalfHeight(def) / getXZHalfExtent(def) helpers in CatCompanionManager derive correct extents from MeshConfig geometry kind + behavior.params without per-cat switch logic
+- Cat entity center Y = surfaceY + halfHeight (so mesh bottom rests on terrain, not half-underground); PhysicsEngine body position matches
+- Only the player has a PhysicsEngine body by default; terrain tiles (flat floor) rely on the y≥0 clamp; elevated terrain needs registered physics bodies (added for cats in US-106)
+
 - Cat definitions live in src/game/cats/definitions/<CatType>.ts; all exported via CAT_REGISTRY Map<CatType,CatDefinition> in definitions/index.ts — systems should import CAT_REGISTRY, not individual files
 - CatDefinition.behavior.params is Record<string, number|string|boolean> for cat-specific config (no per-cat union types needed in the interface)
 - OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
@@ -53,6 +59,20 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - MeshConfig (from SceneManager.ts) reused directly for meshConfig field — matches box/sphere/cylinder/plane geometry kinds
   - behavior.params is a loose Record so each cat can carry its own numeric config (launchImpulse, trailLength, revealRadius, collider dims) without expanding the interface
   - Terrain cats (Loaf, Pounce) have no duration; duration cats (Zoomies 8s, Curiosity 20s) set behavior.duration
+---
+
+## 2026-04-30 - US-106
+- Implemented Loaf cat as a walkable static platform using PhysicsEngine body registration
+- Files changed:
+  - src/game/engine/PhysicsEngine.ts — flat-floor fallback in integrateBody (y<size clamp prevents falling through base terrain)
+  - src/game/cats/CatCompanionManager.ts — PhysicsEngine dependency added; physicsHandles Map<Entity,BodyHandle>; summon() registers static physics body for terrain/launch cats; dismiss() removes body; cat Y placement fixed to surfaceY+halfHeight; getCatHalfHeight()/getXZHalfExtent() module helpers
+  - src/game/engine/Game.ts — passes this.physics to CatCompanionManager constructor
+- **Learnings for future iterations:**
+  - PhysicsEngine.raycastDownward only sees bodies registered via addBody() — terrain tiles were never registered (only the player was). Flat-floor fallback at y=0 is the pragmatic fix for base terrain; explicit physics bodies needed for elevated platforms
+  - Cat entity Y must be surfaceY + halfHeight (center of mesh), not surfaceY; otherwise box cats are 50% underground visually and physics body top is also wrong
+  - Physics body size for a box cat = halfHeight (Y half-extent); this is used for both the downward raycast top-surface detection and the XZ horizontal collision. Using height/2 makes XZ slightly wider than actual (0.75 vs 0.6 for Loaf) but collision resolution is still correct
+  - getCatHalfHeight(): box→dims[1]/2; cylinder→(dims[2]??size)/2; sphere→size. getXZHalfExtent(): prefers params.colliderWidth/2, falls back to max(dims[0],dims[2]??dims[0])/2
+  - Note: jump config (jumpImpulse=3.5) gives only ~0.51u apex, not the intended 1.2u. A Loaf at 1.5u height is unreachable with current config. jumpImpulse needs tuning to ~6u/s for 1.5u apex (separate config fix)
 ---
 
 ## 2026-04-30 - US-105

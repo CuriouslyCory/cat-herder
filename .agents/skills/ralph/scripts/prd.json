@@ -109,8 +109,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via: PhysicsEngine flat-floor fallback (y≥0), CatCompanionManager PhysicsEngine static body registration for terrain/launch cats, correct Y placement (surfaceY + halfHeight), physics body cleanup on dismiss. getCatHalfHeight()/getXZHalfExtent() helpers derive extents from MeshConfig without per-cat logic."
     },
     {
       "id": "US-107",
