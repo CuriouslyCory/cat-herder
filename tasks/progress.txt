@@ -34,3 +34,18 @@
   - GameLoader.tsx is the 'use client' wrapper required by Next.js 16+ for next/dynamic; play/page.tsx is a server component that calls withAuth
   - GameCanvas creates the canvas element imperatively (not via JSX) to control exact sizing before Three.js init
 ---
+
+## 2026-04-30 - US-104
+- Implemented CatCompanionManager with summon(), dismiss(), getCatalog(), getActiveCompanions()
+- Created GameState (src/game/engine/GameState.ts): reactive yarn tracking via onYarnChange(); deductYarn() returns bool for validation; starts at 10 yarn
+- Created CatBehavior ECS component (src/game/ecs/components/CatBehavior.ts): catType, state (Idle|Active|Cooldown|Expired), stateTimer, ownerId, yarnCost
+- Created CatCompanionManager (src/game/cats/CatCompanionManager.ts): validates yarn, position (via MapManager.getTerrainAt), auto-dismisses oldest on limit breach; yarn refunded only when state !== 'Expired'
+- Added cat:summoned and cat:dismissed events to GameEvent discriminated union (types.ts)
+- Added maxActiveCats: 3 to GameConfig and BASE_CONFIG (config.ts)
+- pnpm typecheck and pnpm lint both pass
+- **Learnings for future iterations:**
+  - CatCompanionManager takes MapManager by reference for terrain validation — Game.ts will need to wire it up when integrating (US-105+)
+  - GameState is a standalone class (not a singleton); it must be instantiated once in Game.ts and passed to CatCompanionManager
+  - companions Map preserves insertion order (ES2015 guarantee), so getActiveCompanions()[0] is always the oldest — safe for auto-dismiss
+  - Cat entity collider uses layer 1 / mask 1 (same as player) so CollisionSystem detects overlap; per-cat type stories (US-106-109) will refine collider config
+---

@@ -73,8 +73,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via GameState (yarn tracking), CatBehavior ECS component, and CatCompanionManager (summon/dismiss/getCatalog/getActiveCompanions). cat:summoned and cat:dismissed events added to GameEvent. maxActiveCats added to GameConfig/runtimeConfig."
     },
     {
       "id": "US-105",
