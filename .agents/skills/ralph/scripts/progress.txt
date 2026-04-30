@@ -1,6 +1,28 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-017
+- Rewrote `src/game/engine/Game.ts` — full orchestrator replacing the US-001 Three.js stub
+- Added `GameTrpcAdapter` interface (upsertSave only for MVP auto-save); engine never imports ~/trpc
+- `GameOpts` updated to include `trpc: GameTrpcAdapter` field
+- Module init order: EventBus → SceneManager → InputManager → PhysicsEngine → World → Systems (MovementSystem, CollisionSystem, RenderSystem) → CameraController → MapManager → UIManager
+- Fixed-timestep loop: `FIXED_DT = 1/60`, `MAX_ACCUMULATOR = 0.1s`; accumulator pattern prevents spiral-of-death
+- Frame order: `poll()` → MovementSystem → PhysicsEngine.step() → CollisionSystem → CameraController.update() → RenderSystem → UIManager.update() → SceneManager.render()
+- `spawnPlayer(config?)`: first call uses map spawn point; subsequent calls keep current position for cosmetic updates
+- `triggerAutoSave()`: saves player position to tRPC every `CONFIG.autoSaveIntervalMs` ms
+- `destroy()`: cancels rAF, disposes SceneManager/InputManager/CameraController/UIManager, clears EventBus, unloads map
+- Created `src/game/ui/UIManager.ts` — minimal stub with `update(dt)` / `dispose()` interface (US-018 implements full HUD)
+- Updated `src/app/play/_components/GameCanvas.tsx` — `api.game.upsertSave.useMutation()` wrapped in stable adapter via `useRef`; adapter injected into GameOpts as `trpc`
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - `useMemo(() => ({ upsertSave: (input) => upsertSaveRef.current(input) }), [])` — stable adapter object that always calls the latest `mutateAsync` via ref; avoids game restart on mutation status changes.
+  - Fixed-timestep accumulator: always `accumulator += realDt; while (accumulator >= FIXED_DT) { tick; accumulator -= FIXED_DT; }`. Never `accumulator = 0` inside the loop — that wastes sub-step time.
+  - `lastTime = null` on pause/resume so the first frame after resume measures 0 dt, not the full pause duration.
+  - `requestAnimationFrame` returns a non-zero id; always cancel with the id from the *previous* call — the pattern `this.rafId = rAF(() => { this.rafId = rAF(...) })` has a race. Correct: set rafId immediately at top of loop before doing work.
+  - `CONFIG.autoSaveIntervalMs` is in milliseconds; the game loop delta is in seconds — multiply `realDt * 1000` before accumulating into `saveTimer`.
+  - UIManager stub avoids blocking US-017 on US-018 being complete. Pattern: create the interface file with empty implementations first, flesh out in the next story.
+---
+
 ## 2026-04-29 - US-016
 - Created `src/game/maps/MapData.ts` — TerrainCell (type/height/navigable), SpawnPoint (x/z/role), MapData (name/size/terrain[][]/cellSize/spawnPoints)
 - Created `src/game/maps/MapManager.ts` — greedy-rectangle zone grouping (right-then-down expansion); one ECS entity per maximal rectangle; flat terrain = 0.2u slab below y=0; elevated terrain = box from y=0 to height; 4 boundary wall entities; collision layer 2 (floor mask=0; elevated mask=1); water as trigger

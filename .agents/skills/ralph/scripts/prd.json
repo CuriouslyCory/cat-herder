@@ -290,8 +290,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Game.ts fully rewritten: GameTrpcAdapter interface (upsertSave only for MVP auto-save); GameOpts adds trpc field; all modules init in order (EventBus→SceneManager→InputManager→PhysicsEngine→World→Systems→CameraController→MapManager→UIManager); fixed-timestep accumulator at FIXED_DT=1/60s with MAX_ACCUMULATOR=0.1s cap; frame order: poll→MovementSystem→PhysicsEngine.step→CollisionSystem→CameraController.update→RenderSystem→UIManager.update→SceneManager.render; spawnPlayer() creates ECS entity (Transform+Velocity+PlayerControlled+Renderable+Collider) + PhysicsEngine body; first call uses map spawn point, subsequent calls keep current position; triggerAutoSave() saves player position every CONFIG.autoSaveIntervalMs ms; destroy() cancels rAF, disposes all modules, clears EventBus. UIManager.ts stub created (US-018 fills it). GameCanvas.tsx updated: api.game.upsertSave.useMutation() wrapped in stable trpcAdapter via ref pattern; adapter injected into GameOpts."
     },
     {
       "id": "US-018",
