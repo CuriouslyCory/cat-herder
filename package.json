@@ -29,6 +29,7 @@
     "react-dom": "^19.2.5",
     "server-only": "^0.0.1",
     "superjson": "^2.2.6",
+    "three": "^0.184.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.0",
     "drizzle-kit": "^0.31.10",
     "postcss": "^8.5.12",
     "tailwindcss": "^4.2.4",
