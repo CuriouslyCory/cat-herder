@@ -17,6 +17,7 @@ export interface InventoryStack {
 export class GameState {
   private _yarn: number;
   private readonly yarnListeners = new Set<Listener<number>>();
+  private readonly inventoryListeners = new Set<Listener<readonly InventoryStack[]>>();
 
   /** Resource stacks — same-type resources share one stack. */
   readonly inventory: InventoryStack[] = [];
@@ -85,6 +86,18 @@ export class GameState {
     } else {
       this.inventory.push({ resourceType, quantity: amount });
     }
+    this.notifyInventory();
+  }
+
+  /**
+   * Subscribe to inventory changes.
+   * The listener is called immediately with the current inventory, then on every change.
+   * Returns an unsubscribe function.
+   */
+  onInventoryChange(listener: Listener<readonly InventoryStack[]>): () => void {
+    this.inventoryListeners.add(listener);
+    listener(this.inventory);
+    return () => this.inventoryListeners.delete(listener);
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -92,6 +105,12 @@ export class GameState {
   private notifyYarn(): void {
     for (const listener of this.yarnListeners) {
       listener(this._yarn);
+    }
+  }
+
+  private notifyInventory(): void {
+    for (const listener of this.inventoryListeners) {
+      listener(this.inventory);
     }
   }
 }

@@ -530,6 +530,9 @@ export class Game {
         yarn: this.gameState.yarn,
         selectedCatType: this.catPlacementSystem.getSelectedCatType(),
         gatherState: null,
+        inventory: this.gameState.inventory,
+        maxInventoryCapacity: this.gameState.maxInventoryCapacity,
+        inventoryFull: this.gatheringSystem.isInventoryFull(),
       };
     }
 
@@ -543,6 +546,9 @@ export class Game {
       yarn: this.gameState.yarn,
       selectedCatType: this.catPlacementSystem.getSelectedCatType(),
       gatherState: this.gatheringSystem.getGatherState(),
+      inventory: this.gameState.inventory,
+      maxInventoryCapacity: this.gameState.maxInventoryCapacity,
+      inventoryFull: this.gatheringSystem.isInventoryFull(),
     };
   }
 

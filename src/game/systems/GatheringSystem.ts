@@ -33,11 +33,16 @@ export interface GatherState {
   label: string;
 }
 
+/** Duration (seconds) the "Inventory Full" notification remains visible. */
+const INVENTORY_FULL_DISPLAY_TIME = 2.0;
+
 export class GatheringSystem {
   private activeNodeEntity: Entity | null = null;
   private gatherTimer = 0;
   /** Cached gather state for HUD consumption (variable-rate render reads this). */
   private _gatherState: GatherState | null = null;
+  /** Countdown timer for the "Inventory Full" HUD notification. */
+  private _inventoryFullTimer = 0;
 
   constructor(
     private readonly inputManager: InputManager,
@@ -53,6 +58,11 @@ export class GatheringSystem {
 
     const playerTransform = world.getComponent<Transform>(playerEntity, "Transform");
     if (!playerTransform) return;
+
+    // ── 0. Tick inventory-full notification timer ─────────────────────────────
+    if (this._inventoryFullTimer > 0) {
+      this._inventoryFullTimer = Math.max(0, this._inventoryFullTimer - dt);
+    }
 
     // ── 1. Tick cooldowns ─────────────────────────────────────────────────────
     for (const entity of world.query("ResourceNode")) {
@@ -152,7 +162,7 @@ export class GatheringSystem {
     // ── 4. Start gathering on E press ─────────────────────────────────────────
     if (ePressed && nearestEntity !== null) {
       if (!this.gameState.hasInventorySpace()) {
-        // Inventory full — no-op; US-112 will add the 'Inventory Full' feedback
+        this._inventoryFullTimer = INVENTORY_FULL_DISPLAY_TIME;
         return;
       }
 
@@ -173,5 +183,10 @@ export class GatheringSystem {
    */
   getGatherState(): GatherState | null {
     return this._gatherState;
+  }
+
+  /** True while the "Inventory Full" notification should be visible. */
+  isInventoryFull(): boolean {
+    return this._inventoryFullTimer > 0;
   }
 }

@@ -1,5 +1,6 @@
 import { CatType } from "../types";
 import type { CatCatalogEntry } from "../cats/CatCompanionManager";
+import type { InventoryStack } from "../engine/GameState";
 
 /**
  * HUD — plain DOM health, oxygen, cat selection, and FPS overlay.
@@ -30,6 +31,13 @@ export class HUD {
   private gatherBar: HTMLElement | null = null;
   private gatherLabel: HTMLElement | null = null;
 
+  // Inventory panel
+  private inventoryPanel: HTMLElement | null = null;
+  private inventoryStacksEl: HTMLElement | null = null;
+  private inventoryCapacityEl: HTMLElement | null = null;
+  private inventoryCapacityBar: HTMLElement | null = null;
+  private inventoryFullEl: HTMLElement | null = null;
+
   /** Rolling window for FPS calculation (~1 second at 60 fps). */
   private readonly frameTimes: number[] = [];
   private static readonly FPS_WINDOW = 60;
@@ -40,6 +48,13 @@ export class HUD {
 
   /** Tracks whether the warning pulse CSS animation is active. */
   private warningActive = false;
+
+  /** Resource type display config: icon and color. */
+  private static readonly RESOURCE_ICONS: Readonly<Record<string, string>> = {
+    Grass: "🌿",
+    Sticks: "🪵",
+    Water: "💧",
+  };
 
   /** Colors matched to the cat definitions (warm → cool spectrum). */
   private static readonly CAT_COLORS: Readonly<Record<CatType, string>> = {
@@ -54,6 +69,7 @@ export class HUD {
     this.buildOxygenGauge(container);
     this.buildGatherBar(container);
     this.buildCatBar(container);
+    this.buildInventoryPanel(container);
     if (process.env.NODE_ENV === "development") {
       this.buildFps(container);
     }
@@ -61,12 +77,15 @@ export class HUD {
 
   /**
    * Called once per render frame by UIManager.
-   * @param oxygenPercent   Current oxygen 0-100, or null when not submerged.
-   * @param health          Current player health (integer hp).
-   * @param maxHealth       Maximum player health.
-   * @param yarn            Current yarn count.
-   * @param selectedCatType Currently selected cat type for placement, or null.
-   * @param gatherProgress  Gather progress [0-1] + label, or null when idle.
+   * @param oxygenPercent        Current oxygen 0-100, or null when not submerged.
+   * @param health               Current player health (integer hp).
+   * @param maxHealth            Maximum player health.
+   * @param yarn                 Current yarn count.
+   * @param selectedCatType      Currently selected cat type for placement, or null.
+   * @param gatherProgress       Gather progress [0-1] + label, or null when idle.
+   * @param inventory            Current inventory stacks.
+   * @param maxInventoryCapacity Maximum total items allowed.
+   * @param inventoryFull        True while "Inventory Full" notification is active.
    */
   update(
     dt: number,
@@ -76,12 +95,16 @@ export class HUD {
     yarn = 0,
     selectedCatType: CatType | null = null,
     gatherProgress: { progress: number; label: string } | null = null,
+    inventory: InventoryStack[] = [],
+    maxInventoryCapacity = 10,
+    inventoryFull = false,
   ): void {
     this.updateFps(dt);
     this.setOxygen(oxygenPercent);
     this.setHealth(health, maxHealth);
     this.setCatBar(yarn, selectedCatType);
     this.setGatherProgress(gatherProgress);
+    this.setInventory(inventory, maxInventoryCapacity, inventoryFull);
   }
 
   /** Set the cat catalog used by the selection bar. Call once after the catalog is available. */
@@ -101,6 +124,11 @@ export class HUD {
     this.catBarPanel = null;
     this.catSlotEls = [];
     this.yarnCountEl = null;
+    this.inventoryPanel = null;
+    this.inventoryStacksEl = null;
+    this.inventoryCapacityEl = null;
+    this.inventoryCapacityBar = null;
+    this.inventoryFullEl = null;
     this.fpsEl = null;
     this.frameTimes.length = 0;
   }
@@ -372,6 +400,127 @@ export class HUD {
     this.gatherPanel.style.display = "flex";
     this.gatherLabel.textContent = state.label;
     this.gatherBar.style.width = `${Math.max(0, Math.min(100, state.progress * 100))}%`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inventory panel
+  // ---------------------------------------------------------------------------
+
+  private buildInventoryPanel(container: HTMLElement): void {
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:absolute;top:16px;left:16px;" +
+      "display:flex;flex-direction:column;gap:4px;" +
+      "pointer-events:none;user-select:none;" +
+      "min-width:110px;";
+
+    // Header: "INV" label + capacity bar
+    const header = document.createElement("div");
+    header.style.cssText =
+      "display:flex;flex-direction:column;gap:3px;" +
+      "background:rgba(0,0,0,0.5);border-radius:5px;padding:4px 7px;";
+
+    const capacityLabel = document.createElement("div");
+    capacityLabel.style.cssText =
+      "font-family:monospace;font-size:10px;color:rgba(255,255,255,0.7);" +
+      "letter-spacing:1px;";
+    capacityLabel.textContent = "INV 0/10";
+
+    const capacityTrack = document.createElement("div");
+    capacityTrack.style.cssText =
+      "width:96px;height:5px;background:rgba(255,255,255,0.15);border-radius:3px;overflow:hidden;";
+
+    const capacityFill = document.createElement("div");
+    capacityFill.style.cssText =
+      "height:100%;width:0%;background:#a3e635;border-radius:3px;transition:width 0.15s linear;";
+
+    capacityTrack.appendChild(capacityFill);
+    header.appendChild(capacityLabel);
+    header.appendChild(capacityTrack);
+    panel.appendChild(header);
+
+    // Stacks list
+    const stacksList = document.createElement("div");
+    stacksList.style.cssText =
+      "display:flex;flex-direction:column;gap:2px;";
+    panel.appendChild(stacksList);
+
+    // Inventory Full notification
+    const fullEl = document.createElement("div");
+    fullEl.style.cssText =
+      "display:none;font-family:monospace;font-size:11px;" +
+      "color:#fc8181;background:rgba(0,0,0,0.65);border-radius:4px;" +
+      "padding:3px 7px;text-shadow:0 1px 2px rgba(0,0,0,0.8);white-space:nowrap;";
+    fullEl.textContent = "Inventory Full!";
+    panel.appendChild(fullEl);
+
+    container.appendChild(panel);
+
+    this.inventoryPanel = panel;
+    this.inventoryStacksEl = stacksList;
+    this.inventoryCapacityEl = capacityLabel;
+    this.inventoryCapacityBar = capacityFill;
+    this.inventoryFullEl = fullEl;
+  }
+
+  private setInventory(
+    inventory: InventoryStack[],
+    maxCapacity: number,
+    inventoryFull: boolean,
+  ): void {
+    if (
+      !this.inventoryPanel ||
+      !this.inventoryStacksEl ||
+      !this.inventoryCapacityEl ||
+      !this.inventoryCapacityBar ||
+      !this.inventoryFullEl
+    ) return;
+
+    const total = inventory.reduce((sum, s) => sum + s.quantity, 0);
+    const pct = maxCapacity > 0 ? (total / maxCapacity) * 100 : 0;
+
+    this.inventoryCapacityEl.textContent = `INV ${total}/${maxCapacity}`;
+    this.inventoryCapacityBar.style.width = `${Math.min(100, pct)}%`;
+
+    // Color the capacity bar: green → yellow → red as it fills
+    const barColor =
+      pct >= 100 ? "#fc8181" : pct >= 70 ? "#f6e05e" : "#a3e635";
+    this.inventoryCapacityBar.style.background = barColor;
+
+    // Rebuild stack rows (only when content changes would be expensive; DOM diff
+    // kept simple — inventory rarely has >3 entries in MVP)
+    this.inventoryStacksEl.innerHTML = "";
+    for (const stack of inventory) {
+      const icon =
+        HUD.RESOURCE_ICONS[stack.resourceType] ?? "?";
+
+      const row = document.createElement("div");
+      row.style.cssText =
+        "display:flex;align-items:center;gap:5px;" +
+        "background:rgba(0,0,0,0.5);border-radius:4px;padding:2px 7px;";
+
+      const iconEl = document.createElement("span");
+      iconEl.textContent = icon;
+      iconEl.style.fontSize = "13px";
+
+      const nameEl = document.createElement("span");
+      nameEl.style.cssText =
+        "font-family:monospace;font-size:11px;color:rgba(255,255,255,0.85);flex:1;";
+      nameEl.textContent = stack.resourceType;
+
+      const qtyEl = document.createElement("span");
+      qtyEl.style.cssText =
+        "font-family:monospace;font-size:11px;color:#a3e635;font-weight:bold;";
+      qtyEl.textContent = `×${stack.quantity}`;
+
+      row.appendChild(iconEl);
+      row.appendChild(nameEl);
+      row.appendChild(qtyEl);
+      this.inventoryStacksEl.appendChild(row);
+    }
+
+    // "Inventory Full" notification
+    this.inventoryFullEl.style.display = inventoryFull ? "block" : "none";
   }
 
   private setCatBar(yarn: number, selectedCatType: CatType | null): void {

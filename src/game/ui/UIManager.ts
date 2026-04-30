@@ -2,6 +2,7 @@ import { HUD } from "./HUD";
 import type { CatType } from "../types";
 import type { CatCatalogEntry } from "../cats/CatCompanionManager";
 import type { GatherState } from "../systems/GatheringSystem";
+import type { InventoryStack } from "../engine/GameState";
 
 /**
  * HUD frame state passed from the game loop each render tick.
@@ -20,6 +21,12 @@ export interface HUDState {
   selectedCatType?: CatType | null;
   /** Active gather progress and label, or null when not gathering. */
   gatherState?: GatherState | null;
+  /** Current inventory stacks for the inventory panel. */
+  inventory?: InventoryStack[];
+  /** Maximum inventory capacity. */
+  maxInventoryCapacity?: number;
+  /** True while the "Inventory Full" notification should be shown. */
+  inventoryFull?: boolean;
 }
 
 /**
@@ -59,6 +66,9 @@ export class UIManager {
       state?.yarn ?? 0,
       state?.selectedCatType ?? null,
       state?.gatherState ?? null,
+      state?.inventory ?? [],
+      state?.maxInventoryCapacity ?? 10,
+      state?.inventoryFull ?? false,
     );
   }
 
