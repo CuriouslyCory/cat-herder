@@ -1,0 +1,22 @@
+## Codebase Patterns
+- Three.js is installed as a dep (not devDep); @types/three is devDep
+- next/dynamic with ssr:false must be used in a 'use client' component (GameLoader.tsx) — Next.js 16+ requires this
+- Game modules live under src/game/; never import from src/app/ or src/server/ from within src/game/
+- WorkOS auth: withAuth({ ensureSignedIn: true }) in server components; pass only {id, firstName, email} to client
+- Config: CONFIG is frozen (Object.freeze), runtimeConfig is mutable deep copy for debug menu
+- ECS Entity is a numeric type alias (not a class); query() results are cached and invalidated on add/remove
+- SceneManager is the only module that may import directly from 'three' (besides CameraController)
+- PhysicsEngine uses downward raycasts for ground detection with 0.05u snap tolerance
+- MovementSystem reads from runtimeConfig (not CONFIG) so debug tweaks apply at runtime
+
+---
+
+## 2026-04-29 - US-001
+- Verified: Three.js installed, GameCanvas.tsx 'use client' component, GameLoader with next/dynamic ssr:false, game.destroy() on unmount, withAuth on /play page, Game.ts stub renders colored box on ground plane
+- Files: src/app/play/_components/GameCanvas.tsx, src/app/play/_components/GameLoader.tsx, src/app/play/page.tsx, src/game/engine/Game.ts
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - The Game.ts is currently a US-001 stub (directly uses THREE) — US-017 will replace it with the full orchestrator wiring ECS/systems
+  - GameLoader.tsx is the 'use client' wrapper required by Next.js 16+ for next/dynamic; play/page.tsx is a server component that calls withAuth
+  - GameCanvas creates the canvas element imperatively (not via JSX) to control exact sizing before Three.js init
+---
