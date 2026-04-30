@@ -1,6 +1,18 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-014
+- Created `src/server/api/routers/game.ts` with gameRouter: getCharacter, upsertCharacter, getSave, upsertSave, deleteSave, plus getDebugOverrides/upsertDebugOverrides
+- Registered `game: gameRouter` in `src/server/api/root.ts` appRouter
+- All procedures use `protectedProcedure` and scope every query to `ctx.user.id`
+- Drizzle upsert pattern: `.insert().values().onConflictDoUpdate({ target, set })`
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - Zod v4 (used in this project) requires `z.record(z.string(), z.unknown())` — not `z.record(z.unknown())` which only takes 1 arg in v3 but 2 in v4.
+  - `protectedProcedure` in this codebase narrows `ctx.user` to non-null — safe to access `ctx.user.id` directly after the middleware runs.
+  - Drizzle relational query `findFirst({ where: eq(table.col, val) })` works fine with imported `eq` from `drizzle-orm`.
+---
+
 ## 2026-04-29 - US-013
 - Added three tables to `src/server/db/schema.ts` using the existing `createTable` factory
 - `characters`: userId (varchar 256 PK), shape (varchar 32), colorHex (varchar 7), sizeScale (real), createdAt, updatedAt

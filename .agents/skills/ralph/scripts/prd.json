@@ -236,8 +236,8 @@
         "pnpm typecheck passes; manual round-trip from /play confirms read/write"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "gameRouter with getCharacter, upsertCharacter (Zod: shape enum, colorHex hex regex, sizeScale 0.5-2.0), getSave, upsertSave (saveData: z.record(z.string(), z.unknown()) for Zod v4), deleteSave, plus getDebugOverrides/upsertDebugOverrides for PRD-03. All protectedProcedure, all scoped to ctx.user.id. Drizzle upsert via onConflictDoUpdate. Registered as appRouter.game."
     },
     {
       "id": "US-015",
