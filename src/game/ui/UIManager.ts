@@ -1,4 +1,6 @@
 import { HUD } from "./HUD";
+import type { CatType } from "../types";
+import type { CatCatalogEntry } from "../cats/CatCompanionManager";
 
 /**
  * HUD frame state passed from the game loop each render tick.
@@ -11,6 +13,10 @@ export interface HUDState {
   health: number;
   /** Player max health (integer hp). */
   maxHealth: number;
+  /** Current yarn count for the yarn display in the cat selection bar. */
+  yarn?: number;
+  /** Currently selected cat type for placement highlighting, or null. */
+  selectedCatType?: CatType | null;
 }
 
 /**
@@ -47,7 +53,14 @@ export class UIManager {
       state?.oxygenPercent ?? null,
       state?.health ?? 5,
       state?.maxHealth ?? 5,
+      state?.yarn ?? 0,
+      state?.selectedCatType ?? null,
     );
+  }
+
+  /** Pass the cat catalog to the HUD so it can render the selection bar. */
+  setCatCatalog(catalog: CatCatalogEntry[]): void {
+    this.hud.setCatalog(catalog);
   }
 
   /** Remove all mounted DOM panels and listeners. */

@@ -17,6 +17,8 @@ export interface MeshConfig {
   color?: string | number;
   castShadow?: boolean;
   receiveShadow?: boolean;
+  /** Opacity [0-1]. Values below 1 enable transparency. Default: 1. */
+  opacity?: number;
 }
 
 /**
@@ -84,8 +86,11 @@ export class SceneManager {
 
   addMesh(config: MeshConfig): SceneHandle {
     const geometry = buildGeometry(config);
+    const opacity = config.opacity ?? 1;
     const material = new THREE.MeshStandardMaterial({
       color: config.color ?? 0xffffff,
+      transparent: opacity < 1,
+      opacity,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = config.castShadow ?? false;
@@ -96,6 +101,22 @@ export class SceneManager {
     const handle: SceneHandle = Symbol("SceneHandle");
     this.meshes.set(handle, mesh);
     return handle;
+  }
+
+  /** Update the color of an existing mesh's material. */
+  setMeshColor(handle: SceneHandle, color: string | number): void {
+    const mesh = this.meshes.get(handle);
+    if (!mesh) return;
+    (mesh.material as THREE.MeshStandardMaterial).color.set(color as string);
+  }
+
+  /** Update the opacity of an existing mesh's material. */
+  setMeshOpacity(handle: SceneHandle, opacity: number): void {
+    const mesh = this.meshes.get(handle);
+    if (!mesh) return;
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    mat.transparent = opacity < 1;
+    mat.opacity = opacity;
   }
 
   removeMesh(handle: SceneHandle): void {

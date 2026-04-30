@@ -2,14 +2,17 @@ import { EventBus } from "./EventBus";
 import { SceneManager } from "./SceneManager";
 import { InputManager } from "./InputManager";
 import { PhysicsEngine } from "./PhysicsEngine";
+import { GameState } from "./GameState";
 import { World } from "../ecs/World";
 import { RenderSystem } from "../systems/RenderSystem";
 import { MovementSystem } from "../systems/MovementSystem";
 import { CollisionSystem } from "../systems/CollisionSystem";
 import { WaterSystem } from "../systems/WaterSystem";
 import { OxygenSystem } from "../systems/OxygenSystem";
+import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
+import { CatCompanionManager } from "../cats/CatCompanionManager";
 import { UIManager } from "../ui/UIManager";
 import { TestMap } from "../maps/TestMap";
 import { CONFIG, runtimeConfig } from "../config";
@@ -96,9 +99,11 @@ export class Game {
   private readonly sceneManager: SceneManager;
   private readonly inputManager: InputManager;
   private readonly physics: PhysicsEngine;
+  private readonly gameState: GameState;
   private readonly world: World;
   private readonly cameraController: CameraController;
   private readonly mapManager: MapManager;
+  private readonly catCompanionManager: CatCompanionManager;
   private readonly uiManager: UIManager;
 
   // ── Systems (called in frame order) ─────────────────────────────────────────
@@ -106,6 +111,7 @@ export class Game {
   private readonly collisionSystem: CollisionSystem;
   private readonly waterSystem: WaterSystem;
   private readonly oxygenSystem: OxygenSystem;
+  private readonly catPlacementSystem: CatPlacementSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -135,10 +141,13 @@ export class Game {
     // 4. PhysicsEngine — self-contained math layer; emits trigger events via eventBus
     this.physics = new PhysicsEngine(this.eventBus);
 
-    // 5. World — ECS entity/component registry
+    // 5. GameState — mutable player state (yarn, inventory) shared across systems
+    this.gameState = new GameState();
+
+    // 6. World — ECS entity/component registry
     this.world = new World();
 
-    // 6. Systems — instantiated with their dependencies; update() called each frame
+    // 7. Systems — instantiated with their dependencies; update() called each frame
     this.movementSystem = new MovementSystem(this.inputManager, this.physics);
     this.collisionSystem = new CollisionSystem(this.eventBus);
     // WaterSystem subscribes to trigger events emitted by CollisionSystem
@@ -147,18 +156,37 @@ export class Game {
     this.oxygenSystem = new OxygenSystem(this.eventBus);
     this.renderSystem = new RenderSystem(this.sceneManager);
 
-    // 7. CameraController — installs OrthographicCamera into SceneManager
+    // 8. CameraController — installs OrthographicCamera into SceneManager
     this.cameraController = new CameraController(
       canvas,
       this.sceneManager,
       this.world,
     );
 
-    // 8. MapManager — builds terrain entities in the ECS world
+    // 9. MapManager — builds terrain entities in the ECS world
     this.mapManager = new MapManager(this.world, this.eventBus);
 
-    // 9. UIManager — DOM panels over the canvas (stub; full impl in US-018)
+    // 10. CatCompanionManager — companion lifecycle (summon/dismiss/catalog)
+    this.catCompanionManager = new CatCompanionManager(
+      this.world,
+      this.eventBus,
+      this.mapManager,
+      this.gameState,
+      () => this.playerEntity,
+    );
+
+    // 11. CatPlacementSystem — ghost preview, number-key selection, click handling
+    this.catPlacementSystem = new CatPlacementSystem(
+      this.inputManager,
+      this.sceneManager,
+      this.catCompanionManager,
+      this.mapManager,
+      this.world,
+    );
+
+    // 12. UIManager — DOM panels over the canvas
     this.uiManager = new UIManager(canvas);
+    this.uiManager.setCatCatalog(this.catCompanionManager.getCatalog());
   }
 
   // ---------------------------------------------------------------------------
@@ -210,6 +238,7 @@ export class Game {
     this.cameraController.dispose();
     this.inputManager.dispose();
     this.waterSystem.dispose();
+    this.catPlacementSystem.dispose();
     this.uiManager.dispose();
     this.sceneManager.dispose();
     this.eventBus.clear();
@@ -331,6 +360,8 @@ export class Game {
 
     // ── Variable-rate render pass ──────────────────────────────────────────────
     this.cameraController.update(realDt);
+    // CatPlacementSystem: processes clicks + updates ghost (once per render frame)
+    this.catPlacementSystem.update(realDt);
     this.renderSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
     this.sceneManager.render();
@@ -350,7 +381,13 @@ export class Game {
   private buildHUDState(): import("../ui/UIManager").HUDState {
     const entity = this.playerEntity;
     if (entity === null) {
-      return { oxygenPercent: null, health: 5, maxHealth: 5 };
+      return {
+        oxygenPercent: null,
+        health: 5,
+        maxHealth: 5,
+        yarn: this.gameState.yarn,
+        selectedCatType: this.catPlacementSystem.getSelectedCatType(),
+      };
     }
 
     const player = this.world.getComponent<PlayerControlled>(entity, "PlayerControlled");
@@ -360,6 +397,8 @@ export class Game {
       oxygenPercent: oxygen ? oxygen.oxygenPercent : null,
       health: player?.health ?? 5,
       maxHealth: player?.maxHealth ?? 5,
+      yarn: this.gameState.yarn,
+      selectedCatType: this.catPlacementSystem.getSelectedCatType(),
     };
   }
 

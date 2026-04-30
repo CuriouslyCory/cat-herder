@@ -28,10 +28,16 @@ export class InputManager {
   private mouseX = 0;
   private mouseY = 0;
 
+  /** Mouse button clicks registered since the last poll(). */
+  private leftClickThisFrame = false;
+  private rightClickThisFrame = false;
+
   // Bound handlers — kept as fields so removeEventListener works correctly.
   private readonly onKeyDown: (e: KeyboardEvent) => void;
   private readonly onKeyUp: (e: KeyboardEvent) => void;
   private readonly onMouseMove: (e: MouseEvent) => void;
+  private readonly onMouseDown: (e: MouseEvent) => void;
+  private readonly onContextMenu: (e: MouseEvent) => void;
 
   /**
    * Maps each GameAction to the key code(s) that trigger it.
@@ -92,9 +98,21 @@ export class InputManager {
       this.mouseY = e.clientY - rect.top;
     };
 
+    this.onMouseDown = (e: MouseEvent) => {
+      if (e.button === 0) this.leftClickThisFrame = true;
+      if (e.button === 2) this.rightClickThisFrame = true;
+    };
+
+    // Suppress the browser context menu so right-click can be used for dismissal.
+    this.onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
     canvas.addEventListener("keydown", this.onKeyDown);
     canvas.addEventListener("keyup", this.onKeyUp);
     canvas.addEventListener("mousemove", this.onMouseMove);
+    canvas.addEventListener("mousedown", this.onMouseDown);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
   // ---------------------------------------------------------------------------
@@ -107,6 +125,8 @@ export class InputManager {
    */
   poll(): void {
     this.pressedThisFrame.clear();
+    this.leftClickThisFrame = false;
+    this.rightClickThisFrame = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -166,6 +186,28 @@ export class InputManager {
     return this.sceneManager.screenToWorld(this.mouseX, this.mouseY);
   }
 
+  /** True if the left mouse button was clicked since the last poll(). */
+  wasLeftClickThisFrame(): boolean {
+    return this.leftClickThisFrame;
+  }
+
+  /** True if the right mouse button was clicked since the last poll(). */
+  wasRightClickThisFrame(): boolean {
+    return this.rightClickThisFrame;
+  }
+
+  /**
+   * Returns 1–4 if Digit1–Digit4 was pressed this frame, null otherwise.
+   * Used by CatPlacementSystem to map number keys to cat slots.
+   */
+  getPressedCatSlot(): 1 | 2 | 3 | 4 | null {
+    if (this.pressedThisFrame.has("Digit1")) return 1;
+    if (this.pressedThisFrame.has("Digit2")) return 2;
+    if (this.pressedThisFrame.has("Digit3")) return 3;
+    if (this.pressedThisFrame.has("Digit4")) return 4;
+    return null;
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -175,5 +217,7 @@ export class InputManager {
     this.canvas.removeEventListener("keydown", this.onKeyDown);
     this.canvas.removeEventListener("keyup", this.onKeyUp);
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
+    this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
   }
 }

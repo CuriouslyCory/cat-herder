@@ -1,12 +1,16 @@
+import { CatType } from "../types";
+import type { CatCatalogEntry } from "../cats/CatCompanionManager";
+
 /**
- * HUD — plain DOM health, oxygen, and FPS overlay.
+ * HUD — plain DOM health, oxygen, cat selection, and FPS overlay.
  *
  * Renders into a container supplied by UIManager. No React — keeps
  * the game loop framework-agnostic.
  *
- * Hearts panel:  bottom-left, always visible. Updates reactively via setHealth().
- * Oxygen gauge:  top-center, visible only while submerged. Updated via setOxygen().
- * FPS counter:   top-right, only in development builds.
+ * Hearts panel:      bottom-left, always visible.
+ * Oxygen gauge:      top-center, visible only while submerged.
+ * Cat selection bar: bottom-center, always visible once catalog is set.
+ * FPS counter:       top-right, only in development builds.
  */
 export class HUD {
   private heartsEl: HTMLElement | null = null;
@@ -14,6 +18,12 @@ export class HUD {
   private oxygenBar: HTMLElement | null = null;
   private oxygenLabel: HTMLElement | null = null;
   private fpsEl: HTMLElement | null = null;
+
+  // Cat selection bar
+  private catBarPanel: HTMLElement | null = null;
+  private catSlotEls: HTMLElement[] = [];
+  private yarnCountEl: HTMLElement | null = null;
+  private catalog: CatCatalogEntry[] = [];
 
   /** Rolling window for FPS calculation (~1 second at 60 fps). */
   private readonly frameTimes: number[] = [];
@@ -26,9 +36,18 @@ export class HUD {
   /** Tracks whether the warning pulse CSS animation is active. */
   private warningActive = false;
 
+  /** Colors matched to the cat definitions (warm → cool spectrum). */
+  private static readonly CAT_COLORS: Readonly<Record<CatType, string>> = {
+    [CatType.Loaf]: "#e07a30",
+    [CatType.Zoomies]: "#30c870",
+    [CatType.CuriosityCat]: "#9a55e0",
+    [CatType.Pounce]: "#e03090",
+  };
+
   constructor(container: HTMLElement) {
     this.buildHearts(container);
     this.buildOxygenGauge(container);
+    this.buildCatBar(container);
     if (process.env.NODE_ENV === "development") {
       this.buildFps(container);
     }
@@ -36,19 +55,30 @@ export class HUD {
 
   /**
    * Called once per render frame by UIManager.
-   * @param oxygenPercent  Current oxygen 0-100, or null when not submerged.
-   * @param health         Current player health (integer hp).
-   * @param maxHealth      Maximum player health.
+   * @param oxygenPercent   Current oxygen 0-100, or null when not submerged.
+   * @param health          Current player health (integer hp).
+   * @param maxHealth       Maximum player health.
+   * @param yarn            Current yarn count.
+   * @param selectedCatType Currently selected cat type for placement, or null.
    */
   update(
     dt: number,
     oxygenPercent: number | null = null,
     health = 5,
     maxHealth = 5,
+    yarn = 0,
+    selectedCatType: CatType | null = null,
   ): void {
     this.updateFps(dt);
     this.setOxygen(oxygenPercent);
     this.setHealth(health, maxHealth);
+    this.setCatBar(yarn, selectedCatType);
+  }
+
+  /** Set the cat catalog used by the selection bar. Call once after the catalog is available. */
+  setCatalog(catalog: CatCatalogEntry[]): void {
+    this.catalog = catalog;
+    this.renderCatSlots();
   }
 
   dispose(): void {
@@ -56,6 +86,9 @@ export class HUD {
     this.oxygenPanel = null;
     this.oxygenBar = null;
     this.oxygenLabel = null;
+    this.catBarPanel = null;
+    this.catSlotEls = [];
+    this.yarnCountEl = null;
     this.fpsEl = null;
     this.frameTimes.length = 0;
   }
@@ -210,5 +243,96 @@ export class HUD {
     style.textContent =
       "@keyframes oxygen-pulse{from{opacity:1}to{opacity:0.35}}";
     document.head.appendChild(style);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cat selection bar
+  // ---------------------------------------------------------------------------
+
+  private buildCatBar(container: HTMLElement): void {
+    const panel = document.createElement("div");
+    panel.style.cssText =
+      "position:absolute;bottom:56px;left:50%;transform:translateX(-50%);" +
+      "display:flex;align-items:center;gap:8px;" +
+      "pointer-events:none;user-select:none;";
+
+    // Yarn count — shown to the right of the slots
+    const yarnEl = document.createElement("div");
+    yarnEl.style.cssText =
+      "font-family:monospace;font-size:13px;color:rgba(255,255,255,0.9);" +
+      "background:rgba(0,0,0,0.5);border-radius:4px;padding:4px 8px;" +
+      "text-shadow:0 1px 2px rgba(0,0,0,0.8);white-space:nowrap;";
+    yarnEl.textContent = "🧶 0";
+
+    container.appendChild(panel);
+
+    this.catBarPanel = panel;
+    this.yarnCountEl = yarnEl;
+    // Slots are built lazily in renderCatSlots() once catalog is available.
+  }
+
+  private renderCatSlots(): void {
+    if (!this.catBarPanel || !this.yarnCountEl) return;
+
+    this.catBarPanel.innerHTML = "";
+    this.catSlotEls = [];
+
+    for (let i = 0; i < this.catalog.length; i++) {
+      const entry = this.catalog[i]!;
+      const color = HUD.CAT_COLORS[entry.type] ?? "#888888";
+
+      const slot = document.createElement("div");
+      slot.style.cssText =
+        `border:2px solid ${color};border-radius:6px;` +
+        "background:rgba(0,0,0,0.5);padding:4px 8px;" +
+        "display:flex;flex-direction:column;align-items:center;gap:2px;" +
+        "min-width:60px;";
+
+      const keyLabel = document.createElement("div");
+      keyLabel.textContent = `[${i + 1}]`;
+      keyLabel.style.cssText =
+        "font-family:monospace;font-size:10px;color:rgba(255,255,255,0.5);";
+
+      const nameLabel = document.createElement("div");
+      nameLabel.textContent = entry.name.replace(" Cat", "");
+      nameLabel.style.cssText =
+        `font-family:monospace;font-size:11px;color:${color};font-weight:bold;`;
+
+      const costLabel = document.createElement("div");
+      costLabel.textContent = `🧶${entry.yarnCost}`;
+      costLabel.style.cssText =
+        "font-family:monospace;font-size:11px;color:rgba(255,255,255,0.8);";
+
+      slot.appendChild(keyLabel);
+      slot.appendChild(nameLabel);
+      slot.appendChild(costLabel);
+      this.catBarPanel.appendChild(slot);
+      this.catSlotEls.push(slot);
+    }
+
+    this.catBarPanel.appendChild(this.yarnCountEl);
+  }
+
+  private setCatBar(yarn: number, selectedCatType: CatType | null): void {
+    if (this.yarnCountEl) {
+      this.yarnCountEl.textContent = `🧶 ${yarn}`;
+    }
+
+    for (let i = 0; i < this.catSlotEls.length; i++) {
+      const slot = this.catSlotEls[i];
+      const entry = this.catalog[i];
+      if (!slot || !entry) continue;
+
+      const isSelected = entry.type === selectedCatType;
+      const color = HUD.CAT_COLORS[entry.type] ?? "#888888";
+
+      slot.style.borderColor = isSelected ? "#ffffff" : color;
+      slot.style.background = isSelected
+        ? `${color}55`
+        : "rgba(0,0,0,0.5)";
+      slot.style.boxShadow = isSelected
+        ? `0 0 8px ${color}88`
+        : "none";
+    }
   }
 }

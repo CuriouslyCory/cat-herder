@@ -185,13 +185,14 @@ export class CatCompanionManager {
     return [...this.companions.keys()];
   }
 
-  // ── Private helpers ─────────────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────────────
 
   /**
    * A position is valid for cat placement when it falls within the map bounds
    * and on walkable terrain (not Hidden, not Water).
+   * Public so CatPlacementSystem can validate ghost positions without summoning.
    */
-  private isValidPosition(position: Vec3): boolean {
+  isValidPosition(position: Vec3): boolean {
     const cell = this.mapManager.getTerrainAt(position.x, position.z);
     return (
       cell !== null &&
