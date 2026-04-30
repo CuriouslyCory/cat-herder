@@ -12,6 +12,7 @@ import { OxygenSystem } from "../systems/OxygenSystem";
 import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CuriositySystem } from "../systems/CuriositySystem";
+import { PounceSystem } from "../systems/PounceSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -116,6 +117,7 @@ export class Game {
   private readonly catPlacementSystem: CatPlacementSystem;
   private readonly zoomiesSystem: ZoomiesSystem;
   private readonly curiositySystem: CuriositySystem;
+  private readonly pounceSystem: PounceSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -189,6 +191,9 @@ export class Game {
       this.catCompanionManager,
       this.eventBus,
     );
+
+    // 11c. PounceSystem — upward launch trigger for Pounce cats
+    this.pounceSystem = new PounceSystem(this.physics);
 
     // 12. CatPlacementSystem — ghost preview, number-key selection, click handling
     this.catPlacementSystem = new CatPlacementSystem(
@@ -374,6 +379,8 @@ export class Game {
       this.zoomiesSystem.update(this.world, FIXED_DT);
       // CuriositySystem reveals/hides hidden terrain and auto-dismisses on expiry
       this.curiositySystem.update(this.world, FIXED_DT);
+      // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
+      this.pounceSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
