@@ -1,0 +1,85 @@
+## Codebase Patterns
+- ESLint flat config (eslint.config.js) must scope typed rules to `files: ["src/**/*.ts"]` — the config file itself isn't in tsconfig and will error if type-checked
+- The project uses `typescript-eslint` (unified package v8+) not the older `@typescript-eslint/eslint-plugin` + `@typescript-eslint/parser` split packages
+- pnpm is the package manager; pnpm lint, pnpm typecheck, pnpm build are the quality gates
+- `_`-prefixed parameters are allowed by ESLint (configured via argsIgnorePattern) but TypeScript's noUnusedLocals does NOT honor `_` prefix for class fields — keep unused fields out
+- Array access without noUncheckedIndexedAccess returns T not T|undefined — `!` non-null assertions on `arr[i]` will be flagged as unnecessary
+- Use `type` imports (`import type`) for all type-only imports to satisfy isolatedModules
+- `async` functions that have no await expressions will be flagged by `require-await` — make them sync when no await is needed
+- React JSX files must be `.tsx`; plain `.ts` files cannot contain JSX syntax
+- The `import.meta.env` Vite types require `/// <reference types="vite/client" />` in files that use them (or a global vite-env.d.ts)
+- main entry is `src/main.tsx` (not main.ts); index.html must reference the correct extension
+---
+
+# Ralph Progress Log
+Started: Tue Apr 14 05:19:41 PM MST 2026
+---
+
+## 2026-04-14 - US-020
+- Implemented UIManager and HUD with hearts display and dev-only FPS counter
+- Replaced UIManagerStub in Game.ts with real UIManager; added dispose() call
+- Files changed: src/ui/HUD.ts (new), src/ui/UIManager.ts (new), src/engine/Game.ts (updated)
+- **Learnings:** HUD uses `import.meta.env.DEV` for dev-only FPS — evaluates to false in production builds
+
+---
+
+## 2026-04-14 - US-019
+- CharacterCreatorUI: DOM overlay with shape/color/size pickers and Start Game button
+- CharacterCreator: checks DB for existing character; shows creator UI if none; saves to Neon; spawns player entity
+- Files changed: src/ui/CharacterCreatorUI.ts (new), src/game/CharacterCreator.ts (new)
+- **Learnings:** no-misused-promises fires when async function is passed to void callback — use .then() chain instead
+
+---
+
+## 2026-04-14 - US-018
+- Game.ts orchestrator with fixed-timestep loop (1/60s) and accumulator pattern
+- Frame order: poll → movement → physics → collision → camera → render → UI → scene.render()
+- Wired in main.tsx: game starts after auth, loads TestMap
+- Files changed: src/engine/Game.ts (new), src/main.tsx (updated)
+
+---
+
+## 2026-04-14 - US-017
+- TestMap: 60×60 unit grid with grass/dirt/stone/water/hidden terrain zones
+- Elevated platforms at heights 2-3u, water zone SE corner, hidden terrain east edge
+- Full set of spawn points: player, cats, resources (grass/sticks/water), yarn
+- Files changed: src/maps/TestMap.ts (new)
+
+---
+
+## 2026-04-14 - US-016
+- MapData types: TerrainCell, WaterZone, SpawnPoint, HiddenTerrainArea, MapData
+- MapManager: loadMap spawns terrain entities + boundary walls; getTerrainAt/getHeightAt/getSpawnPoints
+- Files changed: src/maps/MapData.ts (new), src/game/MapManager.ts (new)
+
+---
+
+## 2026-04-14 - US-015
+- NeonClient: fetch-based PostgREST access; upsert/select/delete with Bearer token
+- Files changed: src/modules/persistence/NeonClient.ts (new)
+
+---
+
+## 2026-04-14 - US-014
+- Drizzle schema: characters, game_saves, debug_overrides tables
+- drizzle.config.ts with Neon PostgreSQL, drizzle/rls-policies.sql with pg_session_jwt RLS
+- Files changed: drizzle/schema.ts, drizzle.config.ts, drizzle/rls-policies.sql, package.json (db:push script), tsconfig.json
+
+---
+
+## 2026-04-14 - US-013
+- Added react, react-dom, @workos-inc/authkit-react@0.16.1 (latest; ^1.0.0 doesn't exist yet)
+- Added @types/react, @types/react-dom; updated tsconfig for jsx: react-jsx
+- Converted main.ts → main.tsx; created App.tsx auth gate; AuthModule.ts wrapper
+- Files changed: package.json, tsconfig.json, src/main.tsx, src/App.tsx, src/modules/auth/AuthModule.ts, index.html
+
+---
+
+## 2026-04-14 - US-001
+- Implemented project scaffolding: Vite + TypeScript + Three.js with full toolchain
+- Files changed: package.json (updated ESLint deps), eslint.config.js (fixed flat config scoping), plus committed all existing project files (.env.example, .prettierrc, .prettierignore, .gitignore, .npmrc, tsconfig.json, vite.config.ts, src/main.ts, index.html, pnpm-lock.yaml)
+- **Learnings for future iterations:**
+  - The project was largely pre-scaffolded but deps were mismatched: `@typescript-eslint/eslint-plugin` + `@typescript-eslint/parser` + `eslint-plugin-prettier` were installed, but eslint.config.js was already written for the newer `typescript-eslint` unified package + `@eslint/js`
+  - Fixed by removing old split packages and adding `@eslint/js` and `typescript-eslint` to devDependencies
+  - ESLint flat config must scope `recommendedTypeChecked` (type-aware rules) only to `src/**/*.ts` — applying it globally causes the config file itself to fail since it's not in tsconfig
+---

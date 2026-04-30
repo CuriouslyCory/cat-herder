@@ -1,6 +1,6 @@
 {
   "project": "Cat Herder",
-  "branchName": "feat/map-editor-and-polish",
+  "branchName": "feat/map-editor-and-polish-v2",
   "description": "Phase 4: Developer-facing map editor (gated to NODE_ENV=development, tree-shaken from production), 2D map overlay, balance tuning passes, edge case hardening, visual polish, and final quality gate (pnpm lint/typecheck/build). Depends on PRD-01, PRD-02, PRD-03.",
   "userStories": [
     {

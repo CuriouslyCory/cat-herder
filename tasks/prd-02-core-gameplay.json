@@ -1,6 +1,6 @@
 {
   "project": "Cat Herder",
-  "branchName": "feat/core-gameplay",
+  "branchName": "feat/core-gameplay-v2",
   "description": "Phase 2: Core gameplay loop on top of Phase 1 engine — water/swimming, oxygen, 4 cat types (Loaf, Zoomies, Curiosity, Pounce), resource gathering, inventory, yarn economy, enhanced HUD. Depends on PRD-01.",
   "userStories": [
     {

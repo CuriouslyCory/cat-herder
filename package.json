@@ -11,7 +11,9 @@
     "db:studio": "drizzle-kit studio",
     "dev": "next dev",
     "preview": "next build && next start",
+    "ralph": "STORIES=$(jq '.userStories | length' .agents/skills/ralph/scripts/prd.json) && .agents/skills/ralph/scripts/ralph.sh $((STORIES + 4))",
     "start": "next start",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -29,6 +31,7 @@
     "react-dom": "^19.2.5",
     "server-only": "^0.0.1",
     "superjson": "^2.2.6",
+    "three": "^0.184.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -36,7 +39,12 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.4",
     "postcss": "^8.5.12",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3"
