@@ -11,8 +11,11 @@
 - getCatHalfHeight(def) / getXZHalfExtent(def) helpers in CatCompanionManager derive correct extents from MeshConfig geometry kind + behavior.params without per-cat switch logic
 - Cat entity center Y = surfaceY + halfHeight (so mesh bottom rests on terrain, not half-underground); PhysicsEngine body position matches
 - Only the player has a PhysicsEngine body by default; terrain tiles (flat floor) rely on the y≥0 clamp; elevated terrain needs registered physics bodies (added for cats in US-106)
-
 - Cat definitions live in src/game/cats/definitions/<CatType>.ts; all exported via CAT_REGISTRY Map<CatType,CatDefinition> in definitions/index.ts — systems should import CAT_REGISTRY, not individual files
+- GatheringSystem uses distance check (distSq < INTERACT_RANGE_SQ) not trigger events to detect nearby resource nodes; nodes have collisionMask=0 (no physics response needed)
+- Resource node entities are created in Game.spawnTestMapResourceNodes() after loadMap(); not part of MapData/MapManager (world entities, not terrain)
+- GameState.hasInventorySpace() / addResource() provide the basic inventory contract; capacity enforcement happens in US-112 but the interface is forward-compatible
+- HUD gather progress bar lives at bottom:110px (above cat bar at bottom:56px) and uses display:none to hide when not gathering — same pattern as oxygen gauge
 - CatDefinition.behavior.params is Record<string, number|string|boolean> for cat-specific config (no per-cat union types needed in the interface)
 - OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
 - OxygenSystem queries OxygenState+SwimmingState+PlayerControlled; OxygenState is always paired with SwimmingState (no need for null guards when both appear in query)
@@ -137,4 +140,16 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - CatAISystem sets Expired; per-cat systems detect Expired and call dismiss() — this avoids CatAISystem needing a CatCompanionManager dependency and keeps cleanup logic in each cat's system
   - CuriositySystem's "on first activate" signal changed from `state === "Idle"` to `state === "Active" && revealedEntities.length === 0` — works because CatAISystem transitions in the same fixed tick before CuriositySystem runs
   - Per-cat systems guard with `if (!world.isAlive(catEntity)) continue` after any dismiss call to handle same-frame entity destruction
+---
+
+## 2026-04-30 - US-111
+- Implemented resource gathering: ResourceNode component, GatheringSystem, GameState inventory helpers, HUD progress bar, 15 resource node entities in TestMap
+- Files created: src/game/ecs/components/ResourceNode.ts, src/game/systems/GatheringSystem.ts
+- Files modified: src/game/types.ts (ResourceType enum + resource:gathered event), src/game/engine/GameState.ts (inventory stacks + addResource/hasInventorySpace), src/game/ui/HUD.ts (gather progress bar), src/game/ui/UIManager.ts (gatherState in HUDState), src/game/engine/Game.ts (GatheringSystem wire-up + spawnTestMapResourceNodes())
+- pnpm typecheck, pnpm lint, pnpm build all pass
+- **Learnings for future iterations:**
+  - GatheringSystem caches _gatherState each fixed tick; buildHUDState() reads it in the variable-rate render pass — decouples fixed/render rates cleanly
+  - Resource node colliders use collisionMask=0 (no physics response); distance check in GatheringSystem avoids trigger infrastructure complexity
+  - GameState.addResource() is forward-compatible with US-112's capacity enforcement — hasInventorySpace() is already the gate
+  - HUD gather bar hides via display:none (same pattern as oxygen gauge); visible only during an active gather action
 ---

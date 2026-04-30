@@ -202,8 +202,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via ResourceType enum (types.ts), ResourceNode component (isBeingGathered, gatherProgress, cooldownRemaining), GatheringSystem (E-key start, movement/E cancel, progress tick, complete→inventory+cooldown, dim mesh), GameState.addResource()/hasInventorySpace(), HUD gather progress bar (bottom-center, hidden when not gathering), and 15 resource node entities created in Game.spawnTestMapResourceNodes() after map load (9 Grass, 4 Sticks, 2 Water). resource:gathered event emitted on complete."
     },
     {
       "id": "US-112",
