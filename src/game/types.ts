@@ -8,6 +8,7 @@ export enum GameAction {
   ToggleMap = "ToggleMap",
   ToggleDebug = "ToggleDebug",
   Pause = "Pause",
+  Dive = "Dive",
 }
 
 export enum CatType {

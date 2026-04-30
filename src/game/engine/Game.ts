@@ -6,6 +6,7 @@ import { World } from "../ecs/World";
 import { RenderSystem } from "../systems/RenderSystem";
 import { MovementSystem } from "../systems/MovementSystem";
 import { CollisionSystem } from "../systems/CollisionSystem";
+import { WaterSystem } from "../systems/WaterSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { UIManager } from "../ui/UIManager";
@@ -100,6 +101,7 @@ export class Game {
   // ── Systems (called in frame order) ─────────────────────────────────────────
   private readonly movementSystem: MovementSystem;
   private readonly collisionSystem: CollisionSystem;
+  private readonly waterSystem: WaterSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -135,6 +137,8 @@ export class Game {
     // 6. Systems — instantiated with their dependencies; update() called each frame
     this.movementSystem = new MovementSystem(this.inputManager, this.physics);
     this.collisionSystem = new CollisionSystem(this.eventBus);
+    // WaterSystem subscribes to trigger events emitted by CollisionSystem
+    this.waterSystem = new WaterSystem(this.world, this.physics, this.eventBus);
     this.renderSystem = new RenderSystem(this.sceneManager);
 
     // 7. CameraController — installs OrthographicCamera into SceneManager
@@ -199,6 +203,7 @@ export class Game {
     this.pause();
     this.cameraController.dispose();
     this.inputManager.dispose();
+    this.waterSystem.dispose();
     this.uiManager.dispose();
     this.sceneManager.dispose();
     this.eventBus.clear();
@@ -311,6 +316,8 @@ export class Game {
       this.movementSystem.update(this.world, FIXED_DT);
       this.physics.step(FIXED_DT);
       this.collisionSystem.update(this.world, FIXED_DT);
+      // WaterSystem reacts to trigger events emitted by CollisionSystem above
+      this.waterSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 

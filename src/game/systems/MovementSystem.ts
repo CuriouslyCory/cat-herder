@@ -5,6 +5,7 @@ import type { PhysicsEngine } from "../engine/PhysicsEngine";
 import type { Transform } from "../ecs/components/Transform";
 import type { Velocity } from "../ecs/components/Velocity";
 import type { PlayerControlled } from "../ecs/components/PlayerControlled";
+import type { SwimmingState } from "../ecs/components/SwimmingState";
 import { GameAction } from "../types";
 import { runtimeConfig } from "../config";
 
@@ -51,6 +52,13 @@ export class MovementSystem implements System {
         transform.x = pos.x;
         transform.y = pos.y;
         transform.z = pos.z;
+      }
+
+      // ── Swimming branch — replaces all land physics when in water ─────────
+      const swimming = world.getComponent<SwimmingState>(entity, "SwimmingState");
+      if (swimming !== null) {
+        this.applySwimmingPhysics(handle, transform, velocity, swimming, dt);
+        continue;
       }
 
       const grounded = this.physics.isBodyGrounded(handle);
@@ -132,6 +140,71 @@ export class MovementSystem implements System {
       }
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Private — swimming physics
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Apply swimming movement physics for an entity that has SwimmingState.
+   *
+   * Horizontal: blends from walkSpeed → swimSpeedSurface/Dive using transitionBlend
+   *             so the speed change at the water boundary is smooth (no pop).
+   * Vertical:   Buoyancy — float at waterSurfaceY + collisionRadius by default.
+   *             Diving (Shift held) — descend at swimSpeedVertical.
+   *             Ascending (released Shift while submerged) — rise at swimSpeedAscend.
+   */
+  private applySwimmingPhysics(
+    handle: import("../engine/PhysicsEngine").BodyHandle,
+    transform: Transform,
+    velocity: Velocity,
+    swimming: SwimmingState,
+    dt: number,
+  ): void {
+    const cfg = runtimeConfig;
+
+    // Update dive state from input
+    swimming.isDiving = this.inputManager.isActionHeld(GameAction.Dive);
+
+    // Ramp blend in over ~0.3s to smooth the speed transition at water entry
+    swimming.transitionBlend = Math.min(1, swimming.transitionBlend + dt / 0.3);
+
+    // Target horizontal speed based on dive state, blended from walk speed on entry
+    const targetSpeedH = swimming.isDiving ? cfg.swimSpeedDive : cfg.swimSpeedSurface;
+    const blendedSpeed = lerp(cfg.walkSpeed, targetSpeedH, swimming.transitionBlend);
+    const accelRate = targetSpeedH / cfg.swimAcceleration;
+
+    const intent = this.inputManager.getMovementIntent();
+    const newVx = moveToward(velocity.dx, intent.x * blendedSpeed, accelRate * dt);
+    const newVz = moveToward(velocity.dz, intent.z * blendedSpeed, accelRate * dt);
+
+    // Y position of player center when floating on the water surface
+    const floatY = swimming.waterSurfaceY + cfg.collisionRadius;
+
+    let vy: number;
+    if (swimming.isDiving) {
+      // Descend at dive speed
+      vy = -cfg.swimSpeedVertical;
+    } else if (transform.y < floatY - 0.02) {
+      // Below surface — rise
+      vy = cfg.swimSpeedAscend;
+    } else {
+      // At or above surface — float: zero Y velocity and snap to float level
+      vy = 0;
+      transform.y = floatY;
+      this.physics.setPosition(handle, { x: transform.x, y: floatY, z: transform.z });
+    }
+
+    velocity.dx = newVx;
+    velocity.dz = newVz;
+    velocity.dy = vy;
+
+    this.physics.setVelocity(handle, { x: newVx, y: vy, z: newVz });
+
+    if (intent.x !== 0 || intent.z !== 0) {
+      transform.rotationY = Math.atan2(intent.x, intent.z);
+    }
+  }
 }
 
 /**
@@ -146,4 +219,8 @@ function moveToward(
   const diff = target - current;
   if (Math.abs(diff) <= maxDelta) return target;
   return current + Math.sign(diff) * maxDelta;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }

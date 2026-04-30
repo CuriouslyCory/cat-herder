@@ -45,6 +45,7 @@ export class InputManager {
       [GameAction.ToggleMap]: ["KeyM"],
       [GameAction.ToggleDebug]: ["CtrlD"], // synthetic key — handled in onKeyDown
       [GameAction.Pause]: ["Escape"],
+      [GameAction.Dive]: ["ShiftLeft", "ShiftRight"],
     };
 
   constructor(canvas: HTMLCanvasElement, sceneManager: SceneManager) {

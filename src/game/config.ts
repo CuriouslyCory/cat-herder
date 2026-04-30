@@ -8,8 +8,11 @@
 export interface GameConfig {
   // Movement
   walkSpeed: number; // units/second
-  swimSpeed: number; // units/second
-  swimSpeedVertical: number; // units/second
+  swimSpeedSurface: number; // units/second horizontal while on water surface
+  swimSpeedDive: number; // units/second horizontal while diving (Shift held)
+  swimSpeedAscend: number; // units/second upward when rising to surface
+  swimSpeedVertical: number; // units/second downward while diving
+  swimAcceleration: number; // seconds to reach full swim speed
   acceleration: number; // seconds to reach full speed
   deceleration: number; // seconds to stop from full speed
   airControlFactor: number; // fraction of normal horizontal control while airborne
@@ -44,8 +47,11 @@ export interface GameConfig {
 const BASE_CONFIG: GameConfig = {
   // Movement
   walkSpeed: 4.5,
-  swimSpeed: 2.5,
+  swimSpeedSurface: 3.2,
+  swimSpeedDive: 2.0,
+  swimSpeedAscend: 2.5,
   swimSpeedVertical: 1.5,
+  swimAcceleration: 0.5,
   acceleration: 0.3,
   deceleration: 0.2,
   airControlFactor: 0.7,

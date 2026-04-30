@@ -4,6 +4,7 @@ import type { EventBus } from "../engine/EventBus";
 import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
+import { createWaterTrigger } from "../ecs/components/WaterTrigger";
 import type { MapData, TerrainCell, SpawnPoint } from "./MapData";
 import { TerrainType } from "../types";
 
@@ -211,21 +212,38 @@ export class MapManager {
     );
 
     // Collision config:
-    //   Water → trigger (swim events, no physics push)
+    //   Water → trigger (swim events, no physics push); layer 1 + mask 1 so
+    //           CollisionSystem detects overlap with the layer-1 player entity.
     //   Flat floor → collisionMask=0 (CollisionSystem skips; PhysicsEngine raycasts)
     //   Elevated terrain → collisionMask=1 (interacts with player via CollisionSystem)
     const isTrigger = cell.type === TerrainType.Water;
-    const collisionMask = !isTrigger && cell.height > 0 ? 1 : 0;
 
-    this.world.addComponent(
-      entity,
-      createCollider("box", Math.max(width, depth) / 2, {
-        isStatic: true,
-        isTrigger,
-        collisionLayer: 2,
-        collisionMask,
-      }),
-    );
+    if (isTrigger) {
+      // Water surfaces use the player's layer (1) so CollisionSystem fires trigger events.
+      this.world.addComponent(
+        entity,
+        createCollider("box", Math.max(width, depth) / 2, {
+          isStatic: true,
+          isTrigger: true,
+          collisionLayer: 1,
+          collisionMask: 1,
+        }),
+      );
+      // Tag so WaterSystem can identify this as a water zone.
+      // Surface Y = top of the water slab = cell.height (0 for flat water).
+      this.world.addComponent(entity, createWaterTrigger(cell.height));
+    } else {
+      const collisionMask = cell.height > 0 ? 1 : 0;
+      this.world.addComponent(
+        entity,
+        createCollider("box", Math.max(width, depth) / 2, {
+          isStatic: true,
+          isTrigger: false,
+          collisionLayer: 2,
+          collisionMask,
+        }),
+      );
+    }
 
     this.terrainEntities.push(entity);
   }

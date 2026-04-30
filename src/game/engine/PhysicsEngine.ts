@@ -47,6 +47,8 @@ interface PhysicsBody {
   position: Vec3;
   velocity: Vec3;
   isGrounded: boolean;
+  /** When true, gravity is not applied — used for swimming entities. */
+  noGravity: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ export class PhysicsEngine {
       position: { x: 0, y: 0, z: 0 },
       velocity: { x: 0, y: 0, z: 0 },
       isGrounded: false,
+      noGravity: false,
     });
     this.entityToHandle.set(entity, handle);
     return handle;
@@ -132,6 +135,15 @@ export class PhysicsEngine {
   /** Reverse-lookup: entity → BodyHandle, or null if not registered. */
   getHandleByEntity(entity: Entity): BodyHandle | null {
     return this.entityToHandle.get(entity) ?? null;
+  }
+
+  /**
+   * Enable or disable gravity for a specific body.
+   * Disable when the entity is swimming so buoyancy logic controls Y instead.
+   */
+  setGravityEnabled(handle: BodyHandle, enabled: boolean): void {
+    const body = this.bodies.get(handle);
+    if (body) body.noGravity = !enabled;
   }
 
   // --- Raycast ---
@@ -187,8 +199,8 @@ export class PhysicsEngine {
   private integrateBody(body: PhysicsBody, dt: number): void {
     const cfg = runtimeConfig;
 
-    // Gravity — only when airborne
-    if (!body.isGrounded) {
+    // Gravity — only when airborne and gravity is not suppressed (e.g. swimming)
+    if (!body.isGrounded && !body.noGravity) {
       body.velocity.y += cfg.gravity * dt;
     }
 
