@@ -2,328 +2,356 @@
 
 ## Introduction
 
-Build the technical foundation for Cat Herder: a Vite + Three.js + TypeScript game engine with ECS architecture, player movement, isometric camera, character creation, WorkOS authentication, and Neon DB persistence infrastructure. This phase produces a playable prototype where a character moves around a test map with responsive controls.
+Build the in-browser game runtime for Cat Herder on top of the existing Next.js 16 + T3 + WorkOS AuthKit + Drizzle/Neon foundation. This phase produces a Three.js + ECS engine that mounts inside the protected `/play` route, plus player movement, isometric camera, character creation, and the database/tRPC plumbing required to persist a character.
 
-This is the bedrock — every subsequent phase builds on these modules. Getting movement feel and engine architecture right here prevents costly rework later.
+The bedrock for everything that follows. Movement feel and engine architecture must be right here, because every later phase builds on these modules.
+
+### Already done — do NOT redo
+
+The following baseline was completed during the project reboot and is the starting point for this PRD:
+
+- **Project scaffolding** — Next.js 16 (App Router) + TypeScript (strict) + Tailwind v4 + tRPC + React Query + superjson, bootstrapped via `create-t3-app` with pnpm. `pnpm dev`, `pnpm build`, `pnpm typecheck`, `pnpm db:push`, `pnpm db:studio` are wired up in `package.json`.
+- **WorkOS AuthKit** — `@workos-inc/authkit-nextjs` integrated end-to-end. `src/proxy.ts` (Next.js 16's renamed `middleware.ts`) gates every route except `/` and `/api/trpc/*` behind WorkOS hosted sign-in. `<AuthKitProvider>` wraps the tree in `src/app/layout.tsx`. Server components use `withAuth({ ensureSignedIn: true })`; client components use `useAuth()` from `@workos-inc/authkit-nextjs/components`. The `/auth/callback` route handler is in place. Sign-in / sign-out flows are verified working.
+- **Database client** — `@neondatabase/serverless` + `drizzle-orm` configured. `db` is exported from `src/server/db/index.ts` using `drizzle-orm/neon-http`. `drizzle.config.ts` is set up; migrations push via `pnpm db:push`.
+- **tRPC scaffold** — `publicProcedure` and `protectedProcedure` exist in `src/server/api/trpc.ts`. `protectedProcedure` already injects the WorkOS user (typed via `UserInfo["user"]`) into context and throws `UNAUTHORIZED` if the user is missing. A sample `post` router exists at `src/server/api/routers/post.ts` and is wired into `appRouter`.
+- **Env validation** — `src/env.js` validates `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`, and `NEXT_PUBLIC_WORKOS_REDIRECT_URI` via `@t3-oss/env-nextjs`. **Use this file to add new env vars; do not introduce a parallel mechanism.**
+- **`/play` route** — `src/app/play/page.tsx` is the protected game route. Currently it renders a placeholder header; the Three.js canvas mounts here.
+
+### Out-of-the-box gaps to close in this PRD
+
+- `three` and `@types/three` are not installed yet.
+- No game tables in the Drizzle schema (`src/server/db/schema.ts` has only the placeholder `posts` table).
+- No game tRPC router exists yet.
+- No ESLint config or `lint` script exists. **`pnpm lint` is required by `CLAUDE.md` as a quality gate.** US-019 below adds it.
 
 ## Goals
 
-- Establish a deep-module architecture (small interfaces, complex internals) that is easy to extend
-- Achieve responsive, satisfying player movement (walk, jump with coyote time + buffer)
-- Render an isometric 3D scene using colored primitives (no art assets needed)
-- Authenticate users via WorkOS AuthKit (client-only flow)
-- Set up Neon DB with schema and RLS policies for secure per-user data
-- Load a test map from a data definition (foundation for map editor later)
-- All tuning constants centralized in one config file
+- Establish a deep-module architecture (small interfaces, complex internals) that is easy to extend.
+- Achieve responsive, satisfying player movement (walk, jump with coyote time + buffer).
+- Render an isometric 3D scene inside the `/play` page using colored primitives (no art assets needed).
+- Add the character/save/debug Drizzle tables and a `game` tRPC router so the browser never speaks to Postgres directly — all persistence flows through `protectedProcedure`.
+- Load a test map from a data definition (foundation for the Phase 4 map editor).
+- All tuning constants centralized in one config file.
 
 ## User Stories
 
-### US-001: Project Scaffolding
-**Description:** As a developer, I need a properly configured Vite + TypeScript + Three.js project so that I have a working dev environment with linting, type checking, and hot reload.
+### US-001: Install Three.js & mount the game canvas at `/play`
+**Description:** As a developer, I need Three.js installed and a client-only canvas component mounted inside the protected `/play` route so the engine can run in the browser without breaking SSR.
 
 **Acceptance Criteria:**
-- [ ] `pnpm create vite` with TypeScript template, configured for the project
-- [ ] `three` and `@types/three` installed as dependencies
-- [ ] `tsconfig.json` with strict mode enabled
-- [ ] ESLint configured with TypeScript rules
-- [ ] Prettier configured for consistent formatting
-- [ ] `pnpm dev` starts dev server and renders a basic Three.js scene (colored box on a ground plane)
-- [ ] `pnpm lint`, `pnpm typecheck`, and `pnpm build` all pass
-- [ ] `.env.example` created with placeholder env vars: `VITE_WORKOS_CLIENT_ID`, `VITE_WORKOS_REDIRECT_URI`, `VITE_NEON_DATA_API_URL`
+- [ ] `three` and `@types/three` installed (`pnpm add three && pnpm add -D @types/three`).
+- [ ] `src/app/play/_components/GameCanvas.tsx` is a `"use client"` component that owns a `<canvas>` element, sizes it to its parent, and instantiates the `Game` orchestrator (US-017) on mount.
+- [ ] `src/app/play/page.tsx` imports `GameCanvas` via `next/dynamic(() => import("./_components/GameCanvas"), { ssr: false })` so Three.js never executes during server rendering.
+- [ ] `GameCanvas` calls `game.destroy()` on unmount — no leaked WebGL contexts during HMR or route changes.
+- [ ] The `/play` page still uses `withAuth({ ensureSignedIn: true })` and passes the safe subset of the WorkOS `user` (e.g. `{ id, firstName, email }`) down as a prop.
+- [ ] `pnpm dev` renders a Three.js scene (colored box on a ground plane) inside `/play` for an authenticated user.
+- [ ] `pnpm typecheck` and `pnpm build` pass.
 
 ---
 
-### US-002: Core Engine Types & Config
-**Description:** As a developer, I need shared type definitions, game event types, and a centralized config file so that all modules reference a single source of truth for game constants.
+### US-002: Core engine types & config
+**Description:** As a developer, I need shared type definitions, game event types, and a centralized config file so all modules reference a single source of truth for game constants.
 
 **Acceptance Criteria:**
-- [ ] `src/types.ts` defines: `GameAction` enum (Jump, Interact, ToggleMap, ToggleDebug, Pause), `CatType` enum (Loaf, Zoomies, CuriosityCat, Pounce), `TerrainType` enum, `GameEvent` union type (typed discriminated union for all events), `Vector3`-compatible types
-- [ ] `src/config.ts` contains all GDD constants: movement speeds (walk 4.5 u/s), jump impulse (3.5u), gravity (-12 u/s^2), coyote time (5 frames), jump buffer (5 frames), collision radius (0.4u), acceleration (0.3s ramp-up), deceleration (0.2s ramp-down), swimming speeds, oxygen rates, camera angles (45deg azimuth, 60deg elevation), auto-save interval (30s)
-- [ ] Config exported as `const` with a runtime mutable copy for debug menu use
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/types.ts` defines: `GameAction` enum (Jump, Interact, ToggleMap, ToggleDebug, Pause), `CatType` enum (Loaf, Zoomies, CuriosityCat, Pounce), `TerrainType` enum, `GameEvent` discriminated union, `Vector3`-compatible types.
+- [ ] `src/game/config.ts` contains all GDD constants: walk speed 4.5 u/s, jump impulse 3.5u, gravity -12 u/s², coyote time 5 frames, jump buffer 5 frames, collision radius 0.4u, accel 0.3s, decel 0.2s, swimming speeds, oxygen rates, camera angles (45° azimuth, 60° elevation), auto-save interval 30s.
+- [ ] Config exported as a frozen `CONFIG` const plus a mutable `runtimeConfig` deep-copy for the debug menu.
+- [ ] All game source lives under `src/game/` (engine, ecs, systems, ui, maps subfolders) — kept cleanly separate from `src/app/`, `src/server/`, `src/trpc/`.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-003: EventBus (Typed Pub/Sub)
-**Description:** As a developer, I need a typed event bus so that modules communicate without direct coupling.
+### US-003: EventBus (typed pub/sub)
+**Description:** As a developer, I need a typed event bus so modules communicate without direct coupling.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/EventBus.ts` implements: `emit<T>(event: T)`, `on<T>(type, handler): Unsubscribe`, `off(type, handler)`
-- [ ] Events are type-safe — TypeScript enforces correct event shapes at call sites
-- [ ] Supports multiple listeners per event type
-- [ ] `Unsubscribe` function returned by `on()` removes that specific listener
-- [ ] No memory leaks — destroyed modules can clean up subscriptions
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/EventBus.ts` implements `emit<T>(event: T)`, `on<T>(type, handler): Unsubscribe`, `off(type, handler)`.
+- [ ] Events typed against the `GameEvent` discriminated union from US-002.
+- [ ] Multiple listeners per event type supported.
+- [ ] `Unsubscribe` returned by `on()` removes that specific listener.
+- [ ] Destroyed modules can clean up subscriptions (no leaks across HMR cycles).
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-004: SceneManager (Three.js Isolation)
-**Description:** As a developer, I need Three.js isolated behind a single module so that no game logic ever imports from `three` directly.
+### US-004: SceneManager (Three.js isolation boundary)
+**Description:** As a developer, I need Three.js isolated behind a single module so no game logic ever imports `three` directly.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/SceneManager.ts` exposes: `constructor(canvas)`, `addMesh(config): SceneHandle`, `removeMesh(handle)`, `updateTransform(handle, position, rotation, scale)`, `render()`, `resize(width, height)`, `screenToWorld(screenX, screenY): Vector3 | null`
-- [ ] `MeshConfig` type supports geometry types: `box`, `sphere`, `cylinder`, `plane`; plus `size`, `color` (hex string), `castShadow`, `receiveShadow`
-- [ ] Internally creates `THREE.Scene`, `THREE.WebGLRenderer`, `THREE.AmbientLight`, `THREE.DirectionalLight`
-- [ ] Handles window resize events (updates renderer size and camera aspect)
-- [ ] Handles device pixel ratio for sharp rendering
-- [ ] `SceneHandle` is an opaque type — callers cannot access the underlying `THREE.Object3D`
-- [ ] No other file in `src/` imports from `three` except `SceneManager.ts` and `CameraController.ts`
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/SceneManager.ts` exposes: `constructor(canvas)`, `addMesh(config): SceneHandle`, `removeMesh(handle)`, `updateTransform(handle, position, rotation, scale)`, `render()`, `resize(width, height)`, `screenToWorld(screenX, screenY): Vector3 | null`, `dispose()`.
+- [ ] `MeshConfig` supports geometries `box`, `sphere`, `cylinder`, `plane` plus `size`, `color` (hex string), `castShadow`, `receiveShadow`.
+- [ ] Internally creates `THREE.Scene`, `THREE.WebGLRenderer`, `THREE.AmbientLight`, `THREE.DirectionalLight`.
+- [ ] Handles `ResizeObserver` / window resize events and device pixel ratio for sharp rendering.
+- [ ] `SceneHandle` is opaque — callers cannot reach the underlying `THREE.Object3D`.
+- [ ] **Only `src/game/engine/SceneManager.ts` and `src/game/engine/CameraController.ts` may import from `three`.** Enforced by ESLint `no-restricted-imports` (US-019).
+- [ ] `dispose()` releases all GPU resources — required for clean HMR / route changes.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-005: ECS Foundation
-**Description:** As a developer, I need an Entity-Component-System foundation so that all game objects are data-driven and systems operate on component queries.
+### US-005: ECS World, Entity, Component, System base
+**Description:** As a developer, I need an Entity-Component-System foundation so all game objects are data-driven and systems operate on component queries.
 
 **Acceptance Criteria:**
-- [ ] `src/ecs/Entity.ts` — Entity is a numeric ID (not a class with methods)
-- [ ] `src/ecs/Component.ts` — Base component type/interface
-- [ ] `src/ecs/System.ts` — System interface with `update(world, dt)` method
-- [ ] `src/ecs/World.ts` — implements: `createEntity(): Entity`, `destroyEntity(entity)`, `addComponent<T>(entity, component)`, `removeComponent<T>(entity, componentType)`, `getComponent<T>(entity, type): T | null`, `query(...componentTypes): Entity[]`
-- [ ] Query results are cached — second call with same component types is O(1)
-- [ ] Cache invalidated when components are added/removed
-- [ ] Core components created: `Transform` (position, rotation, scale), `Renderable` (meshConfig, sceneHandle), `Velocity` (dx, dy, dz), `Collider` (shape, size, isStatic, isTrigger, layer, mask), `PlayerControlled` (marker + input state)
-- [ ] All components in `src/ecs/components/` directory
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/ecs/Entity.ts` — Entity is a numeric ID type alias (not a class).
+- [ ] `src/game/ecs/Component.ts` — base component interface with a static type tag for identification.
+- [ ] `src/game/ecs/System.ts` — `System` interface with `update(world, dt)`.
+- [ ] `src/game/ecs/World.ts` implements `createEntity(): Entity`, `destroyEntity(entity)`, `addComponent<T>(entity, component)`, `removeComponent<T>(entity, type)`, `getComponent<T>(entity, type): T | null`, `query(...types): Entity[]`.
+- [ ] `query()` results cached; second call with same component types is O(1). Cache invalidates on add/remove.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-006: RenderSystem (ECS-to-Three.js Bridge)
+### US-006: Core ECS components
+**Description:** As a developer, I need core ECS components so entities can have position, visuals, physics, and player control.
+
+**Acceptance Criteria:**
+- [ ] `src/game/ecs/components/Transform.ts` — position (x,y,z), rotation (y-axis radians), scale (x,y,z).
+- [ ] `src/game/ecs/components/Renderable.ts` — `meshConfig` (from SceneManager), `sceneHandle` (nullable, set by RenderSystem).
+- [ ] `src/game/ecs/components/Velocity.ts` — dx, dy, dz (units per second).
+- [ ] `src/game/ecs/components/Collider.ts` — shape, size, isStatic, isTrigger, collisionLayer, collisionMask.
+- [ ] `src/game/ecs/components/PlayerControlled.ts` — marker with `isGrounded`, `coyoteTimer`, `jumpBufferTimer`.
+- [ ] `pnpm typecheck` passes.
+
+---
+
+### US-007: RenderSystem (ECS-to-Three.js bridge)
 **Description:** As a developer, I need a system that synchronizes ECS entity transforms to Three.js scene objects each frame.
 
 **Acceptance Criteria:**
-- [ ] `src/systems/RenderSystem.ts` implements `System` interface
-- [ ] Each frame: queries entities with `Transform` + `Renderable`
-- [ ] For new entities (no `sceneHandle` yet): calls `sceneManager.addMesh()` using `Renderable.meshConfig`, stores handle
-- [ ] For existing entities: calls `sceneManager.updateTransform()` with current `Transform` values
-- [ ] For destroyed entities: calls `sceneManager.removeMesh()` to clean up
-- [ ] No game logic in this system — pure data sync
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/systems/RenderSystem.ts` implements `System`.
+- [ ] Each frame: queries `Transform` + `Renderable`. New entities → `sceneManager.addMesh()`, store handle. Existing → `sceneManager.updateTransform()`. Destroyed → `sceneManager.removeMesh()`.
+- [ ] No game logic — pure data sync.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-007: InputManager
-**Description:** As a player, I want responsive keyboard and mouse input so that my character reacts immediately to WASD movement, jumping, and other actions.
+### US-008: InputManager
+**Description:** As a player, I want responsive keyboard and mouse input so my character reacts immediately to WASD movement, jumping, and other actions.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/InputManager.ts` exposes: `getMovementIntent(): {x: number, z: number}` (normalized vector), `isActionPressed(action: GameAction): boolean` (true on the frame action was pressed), `isActionHeld(action: GameAction): boolean` (true while held), `getMouseWorldPosition(): Vector3 | null`, `poll()` (called once per frame to update state)
-- [ ] WASD and Arrow Keys produce 8-directional movement intent
-- [ ] Diagonal movement normalized to unit length (no faster diagonal movement)
-- [ ] Jump (`Spacebar`) registers as single press (not continuous while held)
-- [ ] Interact (`E`) registers as single press
-- [ ] Map toggle (`M`) registers as single press
-- [ ] Debug toggle (`Ctrl+D`) registers as single press
-- [ ] Mouse position raycasted to world-space ground plane via `SceneManager.screenToWorld()`
-- [ ] Browser default scroll on arrow keys prevented (`e.preventDefault()`)
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/InputManager.ts` exposes `getMovementIntent(): {x, z}` (normalized), `isActionPressed(action)` (single-frame), `isActionHeld(action)`, `getMouseWorldPosition(): Vector3 | null`, `poll()`, `dispose()`.
+- [ ] WASD and Arrow Keys produce 8-direction intent; diagonals normalized.
+- [ ] Spacebar = Jump (single press), `E` = Interact, `M` = Map, `Ctrl+D` = Debug.
+- [ ] Mouse position raycast through `SceneManager.screenToWorld()`.
+- [ ] Browser arrow-key scrolling prevented via `e.preventDefault()` on the scoped target.
+- [ ] Listeners attach to the `<canvas>` element (not `window`) so they don't fire when the user is interacting with DOM UI; `dispose()` removes them on unmount.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-008: PhysicsEngine
-**Description:** As a developer, I need a lightweight physics engine for gravity, ground detection, and collision so that the player interacts physically with the world.
+### US-009: PhysicsEngine
+**Description:** As a developer, I need a lightweight physics engine for gravity, ground detection, and collision.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/PhysicsEngine.ts` exposes: `addBody(entity, config): BodyHandle`, `removeBody(handle)`, `raycast(origin, direction, maxDist): RaycastHit | null`, `step(dt)` (called once per frame)
-- [ ] `BodyConfig`: shape (`box` | `sphere` | `cylinder`), size (Vector3), isStatic (bool), isTrigger (bool), collisionLayer (number), collisionMask (number)
-- [ ] Gravity applied at -12 u/s^2 to non-static, non-grounded bodies
-- [ ] Ground detection via downward raycast with 0.05u snap tolerance (per GDD spec)
-- [ ] Circle collision (radius 0.4u per spec) with 0.1u skin width for wall sliding
-- [ ] Trigger volumes (isTrigger=true) detect overlap but don't block movement — emit events via EventBus
-- [ ] Static bodies (terrain, walls) never move
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/PhysicsEngine.ts` exposes `addBody(entity, config): BodyHandle`, `removeBody(handle)`, `raycast(origin, direction, maxDist): RaycastHit | null`, `step(dt)`.
+- [ ] `BodyConfig`: shape, size, isStatic, isTrigger, collisionLayer, collisionMask.
+- [ ] Gravity -12 u/s² on non-static, non-grounded bodies.
+- [ ] Ground detection via downward raycast with 0.05u snap tolerance.
+- [ ] Circle collision (0.4u radius, 0.1u skin width) with wall-sliding.
+- [ ] Triggers detect overlap and emit events via EventBus; static bodies never move.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-009: MovementSystem (Walk + Jump)
-**Description:** As a player, I want smooth walking and responsive jumping so that controlling my character feels satisfying.
+### US-010: MovementSystem (walk + jump)
+**Description:** As a player, I want smooth walking and responsive jumping so controlling my character feels satisfying.
 
 **Acceptance Criteria:**
-- [ ] `src/systems/MovementSystem.ts` implements `System` interface
-- [ ] Walk speed: 4.5 u/s (from `config.ts`)
-- [ ] Acceleration: 0.3s ramp-up from 0 to walk speed
-- [ ] Deceleration: 0.2s ramp-down from walk speed to 0
-- [ ] Jump: 3.5u upward impulse on Spacebar press, 1.2u apex height
-- [ ] Air control: 70% horizontal movement retention while airborne
-- [ ] Coyote time: player can still jump for 5 frames (~83ms) after walking off an edge
-- [ ] Jump buffer: if Spacebar pressed within 5 frames before landing, jump executes on land
-- [ ] Character rotation: sprite/mesh faces movement direction (8-directional)
-- [ ] Movement reads from `InputManager.getMovementIntent()` — no direct keyboard access
-- [ ] All constants sourced from `config.ts` runtime copy (debug-tunable)
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/systems/MovementSystem.ts` implements `System`.
+- [ ] Walk speed 4.5 u/s, accel 0.3s, decel 0.2s — all sourced from `runtimeConfig`.
+- [ ] Jump: 3.5u upward impulse on press, 1.2u apex.
+- [ ] Air control: 70% horizontal retention.
+- [ ] Coyote time 5 frames (~83ms) after walking off edges.
+- [ ] Jump buffer 5 frames before landing.
+- [ ] Mesh rotates to face 8-direction movement.
+- [ ] Reads only from `InputManager` — no direct keyboard access.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-010: CameraController (Isometric Follow)
+### US-011: CameraController (isometric follow)
 **Description:** As a player, I want an isometric camera that smoothly follows my character with a slight lead in my movement direction.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/CameraController.ts` exposes: `follow(target: Entity)`, `setMode(mode: 'follow' | 'free')`, `update(dt)` (called each frame)
-- [ ] Uses Three.js `OrthographicCamera` positioned at 45deg azimuth, 60deg elevation (per GDD spec)
-- [ ] Dynamic offset: camera leads 2-3 units in the player's facing direction (lerped smoothly)
-- [ ] Smooth follow with damping (no jitter, no snapping)
-- [ ] Scroll wheel adjusts zoom level
-- [ ] Camera clamps to map boundaries (doesn't show void beyond map edges)
-- [ ] `free` mode: WASD moves camera directly (for map editor use later)
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/CameraController.ts` exposes `follow(target: Entity)`, `setMode('follow' | 'free')`, `update(dt)`, `dispose()`.
+- [ ] Three.js `OrthographicCamera` at 45° azimuth, 60° elevation.
+- [ ] Dynamic 2–3u offset in player facing direction (lerped).
+- [ ] Smooth follow with damping; scroll-wheel zoom.
+- [ ] Clamps to map boundaries.
+- [ ] `free` mode: WASD pans camera (used by Phase 4 map editor).
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-011: CollisionSystem
-**Description:** As a developer, I need per-frame collision detection so that entities interact physically with terrain and each other.
+### US-012: CollisionSystem
+**Description:** As a developer, I need per-frame collision detection so entities interact physically with terrain and each other.
 
 **Acceptance Criteria:**
-- [ ] `src/systems/CollisionSystem.ts` implements `System` interface
-- [ ] Queries entities with `Transform` + `Collider`
-- [ ] Broad phase: AABB overlap detection to find candidate pairs
-- [ ] Narrow phase: circle-circle or circle-box resolution
-- [ ] Collision response: pushes non-static bodies apart (wall sliding with skin width)
-- [ ] Trigger overlaps detected and emitted via EventBus (no physics response)
-- [ ] Collision layers/masks respected (e.g., player collides with terrain but not with UI triggers)
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/systems/CollisionSystem.ts` implements `System`.
+- [ ] Queries `Transform` + `Collider`.
+- [ ] Broad phase: AABB overlap. Narrow phase: circle-circle / circle-box.
+- [ ] Pushes non-static bodies apart with skin-width sliding.
+- [ ] Trigger overlaps emit events via EventBus (no physics response).
+- [ ] Layers/masks respected.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-012: Character Creator
-**Description:** As a new player, I want to customize my character's shape, color, and size so that my avatar feels personal.
+### US-013: Drizzle schema for game tables
+**Description:** As a developer, I need the game's persistence tables defined in Drizzle so character, save, and debug data has a typed home.
 
 **Acceptance Criteria:**
-- [ ] `src/ui/CharacterCreatorUI.ts` renders an HTML overlay with:
-  - Shape picker: Block, Sphere, Cylinder (3 options, visual preview of each)
-  - Color picker: hex color input or palette of 8+ preset colors
-  - Size slider: Small (0.8), Medium (1.0), Large (1.2)
-  - "Start Game" button
-- [ ] `src/game/CharacterCreator.ts` takes chosen appearance → creates player entity with matching `Renderable` (shape/color/size) and `Transform` at map spawn point
-- [ ] Character appearance saved to Neon DB `characters` table on creation
-- [ ] On subsequent logins, character loaded from DB (skip creator)
-- [ ] Character renders in scene as colored Three.js primitive matching chosen options
-- [ ] `pnpm typecheck` passes
+- [ ] `src/server/db/schema.ts` adds three tables (using the existing `createTable` factory so the `cat-herder_` prefix is preserved):
+  - `characters`: `userId` (varchar 256, **primary key** — one character per WorkOS user for MVP), `shape` (varchar — `box`/`sphere`/`cylinder`), `colorHex` (varchar 7), `sizeScale` (real), `createdAt`, `updatedAt`.
+  - `gameSaves`: `userId` (varchar 256, primary key), `version` (varchar — `"0.1"`), `saveData` (`jsonb`), `createdAt`, `updatedAt`.
+  - `debugOverrides`: `userId` (varchar 256, primary key), `overrides` (`jsonb`), `updatedAt`. (Reserved for PRD-03 — never applied automatically on load.)
+- [ ] **No RLS / `pg_session_jwt` / PostgREST setup.** Authorization is enforced inside tRPC `protectedProcedure` by scoping every query to `ctx.user.id`. This is the deliberate trade vs. the original RLS plan: simpler ops, type-safe queries, and one auth boundary instead of two.
+- [ ] `userId` matches the WorkOS `user.id` shape (`user_01XXXXXXXXXXXXXXXXXXXXXXXX`).
+- [ ] `pnpm db:push` runs cleanly against the Neon dev database.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-013: WorkOS Authentication
-**Description:** As a user, I want to sign in with my account so that my character and progress are saved.
+### US-014: `game` tRPC router
+**Description:** As a developer, I need a `game` tRPC router so the browser engine can read/write character, save, and debug data without ever touching Postgres directly.
 
 **Acceptance Criteria:**
-- [ ] `@workos-inc/authkit-react` installed and configured
-- [ ] `src/main.ts` wraps app in `<AuthKitProvider clientId={...} redirectUri={...}>`
-- [ ] `src/App.ts` acts as auth gate: unauthenticated → title screen with "Sign In" button; authenticated → game
-- [ ] `src/modules/auth/AuthModule.ts` wraps WorkOS hook: `signIn()`, `signOut()`, `getUser(): AuthUser | null`, `getToken(): Promise<string>`
-- [ ] Sign in redirects to WorkOS Hosted UI, returns with valid JWT
-- [ ] JWT `sub` claim used as user identity for all DB operations
-- [ ] Session persists across page refresh (HttpOnly cookie refresh token)
-- [ ] Sign out clears session and returns to title screen
-- [ ] `pnpm typecheck` passes
+- [ ] `src/server/api/routers/game.ts` exports a `gameRouter` registered in `appRouter` (`src/server/api/root.ts`).
+- [ ] All procedures use `protectedProcedure`. Every query/mutation filters by `ctx.user.id` — never trust a `userId` from input.
+- [ ] Procedures:
+  - `getCharacter()` → returns the caller's character or `null`.
+  - `upsertCharacter(input: { shape, colorHex, sizeScale })` → validated by Zod (`shape` enum, `colorHex` hex regex, `sizeScale` 0.5–2.0); upserts row.
+  - `getSave()` → returns `{ version, saveData } | null`.
+  - `upsertSave(input: { version, saveData })` → upserts; `saveData` validated as a generic JSON object (concrete shape lives in PRD-03).
+  - `deleteSave()` → deletes the caller's save row (used by debug menu in PRD-03).
+- [ ] Each procedure validates inputs with Zod and returns typed results to the client.
+- [ ] `pnpm typecheck` passes; manual round-trip from `/play` confirms read/write.
 
 ---
 
-### US-014: Neon DB Setup
-**Description:** As a developer, I need the database schema deployed with RLS so that user data is securely isolated.
+### US-015: Character Creator
+**Description:** As a new player, I want to customize my character's shape, color, and size so my avatar feels personal.
 
 **Acceptance Criteria:**
-- [ ] Neon project created with PostgreSQL database
-- [ ] `drizzle/schema.ts` defines tables: `characters` (user_id, shape, color_hex, size_scale, timestamps), `game_saves` (user_id, version, save_data JSONB, timestamps), `debug_overrides` (user_id, overrides JSONB)
-- [ ] `drizzle.config.ts` configured for Neon connection
-- [ ] `drizzle/rls-policies.sql` enables RLS on all tables with `user_id = auth.user_id()` policies
-- [ ] `pg_session_jwt` extension enabled for JWT auth
-- [ ] WorkOS JWKS URL configured in Neon dashboard
-- [ ] `src/modules/persistence/NeonClient.ts` implements `fetch()`-based DB access: `upsert(table, data)`, `select<T>(table, query?)`, `delete(table, query?)`
-- [ ] All requests include `Authorization: Bearer <jwt>` from AuthModule
-- [ ] Schema deployed via `pnpm drizzle-kit push`
-- [ ] Verified: can read/write character data from browser with auth token
-- [ ] `pnpm typecheck` passes
+- [ ] `src/app/play/_components/CharacterCreator.tsx` is a client component (React) that renders an HTML overlay with:
+  - Shape picker: Block, Sphere, Cylinder (visual preview of each).
+  - Color picker: hex input + 8 preset swatches.
+  - Size slider: Small (0.8), Medium (1.0), Large (1.2).
+  - "Start Game" button.
+- [ ] On submit: calls `api.game.upsertCharacter.useMutation()` (tRPC), then dismisses the overlay and signals the engine to spawn the player entity with matching `Renderable` (shape/color/size) at the map spawn point.
+- [ ] On `/play` mount: `api.game.getCharacter.useQuery()` decides whether to render the creator (no character) or hand control to the engine (character exists).
+- [ ] Character renders in scene as the chosen colored primitive.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-015: MapManager & Test Map
-**Description:** As a player, I want to spawn on a test map with varied terrain so that I have a world to explore.
+### US-016: MapManager & test map
+**Description:** As a player, I want to spawn on a test map with varied terrain so I have a world to explore.
 
 **Acceptance Criteria:**
-- [ ] `src/maps/MapData.ts` defines `MapData` interface: name, size (width/depth), terrain grid (2D array of `TerrainCell`), water zones, spawn points, hidden terrain zones
-- [ ] `TerrainCell`: type (grass/dirt/stone/water), height (float), navigable (bool)
-- [ ] `src/game/MapManager.ts` exposes: `loadMap(data: MapData)`, `getTerrainAt(x, z): TerrainType`, `getHeightAt(x, z): number`, `getSpawnPoints(): SpawnPoint[]`
-- [ ] `loadMap()` creates terrain entities with `Transform`, `Renderable`, `Collider` — rendered as colored planes/boxes per terrain type
-- [ ] `src/maps/TestMap.ts` defines a 60x60 unit map with: grass zones (green), dirt zone (brown), stone area (gray), water zone (blue, ~15x15u), elevated platforms (2-3u high), player spawn at center, 2 cat spawn points, hidden terrain area (invisible until Curiosity Cat reveals), map boundary walls
-- [ ] Player spawns at the map's player spawn point
-- [ ] Different terrain types are visually distinct (different colors)
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/maps/MapData.ts` defines `MapData`: name, size (width/depth), terrain grid (2D `TerrainCell` array), water zones, spawn points, hidden terrain zones.
+- [ ] `TerrainCell`: `type` (grass/dirt/stone/water), `height`, `navigable`.
+- [ ] `src/game/maps/MapManager.ts` exposes `loadMap(data)`, `getTerrainAt(x, z)`, `getHeightAt(x, z)`, `getSpawnPoints()`.
+- [ ] `loadMap()` creates terrain entities (Transform + Renderable + Collider) rendered as colored planes/boxes per terrain type.
+- [ ] `src/game/maps/TestMap.ts` defines a 60×60 unit map with grass (green), dirt (brown), stone (gray), a ~15×15u water zone (blue), 2–3u elevated platforms, player spawn at center, 2 cat spawn points, one hidden terrain area, and boundary walls.
+- [ ] Player spawns at the player spawn point.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-016: Game Orchestrator
-**Description:** As a developer, I need a top-level Game class that bootstraps all modules and runs the game loop.
+### US-017: Game orchestrator
+**Description:** As a developer, I need a top-level `Game` class that bootstraps all modules and runs the game loop inside the canvas.
 
 **Acceptance Criteria:**
-- [ ] `src/engine/Game.ts` exposes: `constructor(canvas: HTMLCanvasElement)`, `start(): Promise<void>`, `pause()`, `resume()`
-- [ ] `start()` initializes all modules in correct dependency order: EventBus → SceneManager → InputManager → PhysicsEngine → World → all Systems → CameraController → MapManager → UIManager
-- [ ] Game loop uses fixed timestep (1/60s physics step) with accumulator pattern and interpolation for rendering
-- [ ] Frame update order: InputManager.poll() → MovementSystem → PhysicsEngine.step() → CollisionSystem → CameraSystem → RenderSystem → UIManager → SceneManager.render()
-- [ ] `pause()` stops the loop; `resume()` restarts it
-- [ ] Performance: maintains 60 FPS on dev machine with test map loaded
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/engine/Game.ts` exposes `constructor(canvas: HTMLCanvasElement, opts: { user: { id: string; firstName?: string }, trpc: GameTrpcAdapter })`, `start(): Promise<void>`, `pause()`, `resume()`, `destroy()`.
+- [ ] `start()` initializes modules in order: EventBus → SceneManager → InputManager → PhysicsEngine → World → Systems → CameraController → MapManager → UIManager.
+- [ ] Fixed timestep (1/60s physics) with accumulator; rendering interpolates between physics states.
+- [ ] Frame order: `InputManager.poll()` → `MovementSystem` → `PhysicsEngine.step()` → `CollisionSystem` → `CameraController.update()` → `RenderSystem` → `UIManager.update()` → `SceneManager.render()`.
+- [ ] `destroy()` cancels the rAF loop, disposes SceneManager / InputManager / CameraController, and detaches every listener — required so React StrictMode and HMR don't leak WebGL contexts.
+- [ ] `GameTrpcAdapter` is a small interface the orchestrator uses to call the `game` router; the engine never imports from `~/trpc/*` directly so it stays portable. `GameCanvas` constructs the adapter (closing over `api.game.*` mutations) and injects it.
+- [ ] Maintains 60 FPS on a dev machine with the test map loaded.
+- [ ] `pnpm typecheck` passes.
 
 ---
 
-### US-017: Basic HUD Shell
+### US-018: Basic HUD shell
 **Description:** As a player, I need a minimal HUD showing my basic status so I have feedback during gameplay.
 
 **Acceptance Criteria:**
-- [ ] `src/ui/UIManager.ts` manages mounting/unmounting UI panels over the Three.js canvas
-- [ ] `src/ui/HUD.ts` renders: health display (placeholder hearts), FPS counter (top-right, dev builds only)
-- [ ] HUD is plain DOM (no React) — updated via `UIManager.update(dt)`
-- [ ] HUD elements positioned to not obstruct gameplay
-- [ ] `pnpm typecheck` passes
+- [ ] `src/game/ui/UIManager.ts` mounts/unmounts plain DOM panels positioned over the canvas (no React inside the engine — keeps the loop framework-agnostic).
+- [ ] `src/game/ui/HUD.ts` renders placeholder hearts and an FPS counter (top-right, only when `process.env.NODE_ENV === "development"`).
+- [ ] HUD elements positioned to not obstruct gameplay.
+- [ ] `pnpm typecheck` passes.
+
+---
+
+### US-019: ESLint + lint quality gate
+**Description:** As a developer, I need `pnpm lint` working so the `CLAUDE.md` quality gate passes and architectural rules can be enforced statically.
+
+**Acceptance Criteria:**
+- [ ] ESLint installed with the Next.js config (`pnpm add -D eslint eslint-config-next @typescript-eslint/parser @typescript-eslint/eslint-plugin`) and a flat `eslint.config.js` (or compat shim) at the repo root.
+- [ ] `lint` script added to `package.json` (`"lint": "next lint"` or equivalent).
+- [ ] `no-restricted-imports` rule blocks importing from `three` outside `src/game/engine/SceneManager.ts` and `src/game/engine/CameraController.ts`.
+- [ ] `pnpm lint` passes against the current codebase.
 
 ## Functional Requirements
 
-- FR-1: The game must render an isometric 3D scene using Three.js with OrthographicCamera at 45deg azimuth / 60deg elevation
-- FR-2: Player movement must use WASD/Arrow Keys for 8-directional input at 4.5 u/s walk speed with 0.3s acceleration and 0.2s deceleration
-- FR-3: Jump must apply 3.5u upward impulse with 1.2u apex, 70% air control, 5-frame coyote time, and 5-frame jump buffer
-- FR-4: Gravity must apply at -12 u/s^2 to airborne entities
-- FR-5: Circle collision (0.4u radius, 0.1u skin width) must produce wall sliding, not hard stops
-- FR-6: Camera must smoothly follow player with 2-3u dynamic lead in facing direction
-- FR-7: Three.js must be isolated behind SceneManager — no game logic module imports `three`
-- FR-8: All game objects must be ECS entities with component-based data
-- FR-9: Character creator must offer Block/Sphere/Cylinder shapes, hex color, and Small/Medium/Large sizes
-- FR-10: Authentication must use WorkOS AuthKit client-only flow (no backend server)
-- FR-11: Database must use Neon Data API with RLS — all tables enforce `user_id = auth.user_id()`
-- FR-12: Test map must be 60x60 units with grass/dirt/stone terrain, water zone, elevated platforms, and boundary walls
-- FR-13: Game loop must use fixed timestep (1/60s) with interpolated rendering
+- FR-1: The `/play` route is the single mount point for the game; SSR is disabled for the engine via `next/dynamic({ ssr: false })`.
+- FR-2: Authentication is enforced by `src/proxy.ts` middleware + `withAuth({ ensureSignedIn: true })`. The engine does **not** implement its own auth.
+- FR-3: All persistence flows through tRPC `protectedProcedure` queries/mutations on `gameRouter`. The browser **never** opens a direct connection to Neon.
+- FR-4: All authorization is server-side scoping by `ctx.user.id`. There is no RLS, no `pg_session_jwt`, and no PostgREST.
+- FR-5: Three.js may be imported only by `SceneManager` and `CameraController`. Enforced by ESLint `no-restricted-imports`.
+- FR-6: All game objects are ECS entities with component-based data.
+- FR-7: Player movement uses WASD/Arrow Keys for 8-direction input at 4.5 u/s with 0.3s accel, 0.2s decel.
+- FR-8: Jump applies 3.5u upward impulse with 1.2u apex, 70% air control, 5-frame coyote time, 5-frame jump buffer.
+- FR-9: Gravity applies at -12 u/s² to airborne entities.
+- FR-10: Circle collision (0.4u radius, 0.1u skin width) produces wall sliding.
+- FR-11: Camera smoothly follows player with 2–3u dynamic lead in facing direction.
+- FR-12: Character creator offers Block/Sphere/Cylinder shapes, hex color, and Small/Medium/Large sizes; persisted via `game.upsertCharacter`.
+- FR-13: Test map is 60×60 units with grass/dirt/stone terrain, water zone, elevated platforms, and boundary walls.
+- FR-14: Game loop uses fixed 1/60s timestep with interpolated rendering.
+- FR-15: `Game.destroy()` is fully reentrant — `destroy()` then `start()` again leaks no resources.
 
 ## Non-Goals (Out of Scope)
 
-- No resource gathering, inventory, or farm systems (Phase 2)
-- No cat companion system (Phase 2-3)
-- No swimming mechanics (Phase 2)
-- No save/load of game state (Phase 3) — only character appearance is persisted
-- No debug menu (Phase 3)
-- No map editor (Phase 4)
-- No mobile/touch input
-- No audio/sound effects
-- No click-to-move or A* pathfinding
-- No dash mechanic
-- No art assets or 3D models — colored primitives only
+- No resource gathering, inventory, or farm systems (Phase 2).
+- No cat companion system (Phase 2–3).
+- No swimming mechanics (Phase 2).
+- No save/load of game state (Phase 3) — only character appearance is persisted here.
+- No debug menu (Phase 3).
+- No map editor (Phase 4).
+- No mobile/touch input.
+- No audio / sound effects.
+- No click-to-move or A* pathfinding.
+- No dash mechanic.
+- No art assets or 3D models — colored primitives only.
+- No re-implementation of auth, env validation, tRPC bootstrap, or the Drizzle/Neon client — those exist.
 
 ## Technical Considerations
 
-- **Three.js isolation**: `SceneManager` is the boundary. `RenderSystem` is the only ECS system that calls SceneManager. This ensures Three.js can be swapped or upgraded without touching game logic.
-- **ECS query caching**: `World.query()` must cache results for performance. With ~100+ entities on the test map (terrain tiles + player + spawn markers), uncached queries would be expensive at 60fps.
-- **Fixed timestep**: Physics and movement use fixed dt (1/60s). Rendering interpolates between physics states for smooth visuals on variable-refresh displays.
-- **Config as runtime copy**: `config.ts` exports a frozen `CONFIG` const and a mutable `runtimeConfig` copy. Systems read `runtimeConfig`. Debug menu (Phase 3) will mutate `runtimeConfig`.
-- **Neon Data API**: All DB access via `fetch()` against PostgREST endpoint. No ORM in the browser bundle. Drizzle Kit is devDependency only for schema migrations.
-- **WorkOS JWKS**: Neon validates JWTs via WorkOS JWKS URL (`https://api.workos.com/sso/jwks/<clientId>`). This must be configured in Neon dashboard before Data API calls work.
+- **Three.js isolation.** `SceneManager` and `CameraController` are the only files allowed to import `three`. `RenderSystem` is the only ECS system that calls `SceneManager`. This keeps Three.js swappable.
+- **Engine in `src/game/`, not the App Router.** Keep the engine framework-agnostic. The only Next.js-coupled files are `src/app/play/page.tsx` (server component) and `src/app/play/_components/GameCanvas.tsx` / `CharacterCreator.tsx` (client components). The engine receives an injected `GameTrpcAdapter` so it never imports from `~/trpc/*`.
+- **No SSR for the engine.** Three.js requires a real DOM/WebGL context. Mount via `next/dynamic({ ssr: false })`.
+- **`process.env.NODE_ENV`, not `import.meta.env.DEV`.** Vite-isms do not apply on Next.js. Use `process.env.NODE_ENV === "development"` for dev-only branches.
+- **HMR safety.** The dev server tears down components frequently. `Game.destroy()` and matching `dispose()` methods on `SceneManager`, `InputManager`, `CameraController`, and EventBus subscribers are required to avoid leaking WebGL contexts and event listeners.
+- **ECS query caching.** With ~100+ entities on the test map, uncached queries would be expensive at 60 FPS.
+- **Fixed timestep.** Physics and movement run at fixed 1/60s; rendering interpolates for smooth visuals on variable-refresh displays.
+- **Config as runtime copy.** `config.ts` exports a frozen `CONFIG` and a mutable `runtimeConfig`. Systems read `runtimeConfig`. The Phase 3 debug menu mutates it.
+- **Persistence path.** Use the tRPC React client (`api.game.*.useQuery()` / `useMutation()`) from React components; from inside the engine, use a thin injected adapter that the canvas wires up at construction time. This keeps the engine free of React and tRPC imports.
 
 ## Success Metrics
 
-- Player movement feels responsive and satisfying (acceleration curves feel "weighted but not sluggish")
-- Jump with coyote time + buffer feels forgiving (players rarely miss intended jumps)
-- Camera follow is smooth (no jitter, slight lead feels natural)
-- Auth flow completes in under 5 seconds (redirect → back in game)
-- Character creation persists across sessions (create once, play many times)
-- `pnpm build` produces <500KB JS bundle (excluding Three.js)
-- Consistent 60 FPS with test map loaded
+- Player movement feels responsive and satisfying ("weighted but not sluggish").
+- Jump with coyote time + buffer feels forgiving (players rarely miss intended jumps).
+- Camera follow is smooth (no jitter, slight lead feels natural).
+- Character creation persists across sessions (create once, play many times).
+- `pnpm build` succeeds with no errors and no console warnings on `/play`.
+- Consistent 60 FPS with test map loaded on a dev machine.
 
 ## Open Questions
 
-- Should we use React for the auth boundary only (AuthKitProvider) and plain DOM for all game UI? (Current plan: yes)
-- What's the exact OrthographicCamera frustum size for the isometric view? Needs tuning based on how much of the 60x60 map should be visible.
-- Should the ground plane use a single large plane mesh or individual tiles? (Performance vs visual variety tradeoff)
+- What's the exact `OrthographicCamera` frustum size for the isometric view? Tune based on how much of the 60×60 map should be visible.
+- Should the ground plane use a single large plane mesh or individual tiles? (Performance vs visual variety tradeoff.)
+- Should `GameCanvas` show a loading state while `getCharacter` is in flight, or render the creator optimistically?
+- Should `characters` be one-row-per-user (current proposal) or allow multiple? MVP says one; revisit if loadouts/skins ship later.
