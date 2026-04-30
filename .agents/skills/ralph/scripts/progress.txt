@@ -1,6 +1,22 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-009
+- Created `src/game/engine/PhysicsEngine.ts` — self-contained physics engine
+- `BodyHandle = symbol` (opaque, follows SceneHandle pattern)
+- `addBody(entity, config)` initializes body at origin; call `setPosition()` to place after ECS Transform is known
+- `step(dt)`: applies gravity to non-grounded dynamic bodies, integrates velocity, runs downward raycast for ground detection (slab-method AABB), resolves XZ-plane circle-box collisions with wall-sliding
+- `raycast()` does full 3D ray vs AABB (slab method) and ray vs sphere
+- Trigger overlaps tracked via `Set<string>` with `"triggerEntity:targetEntity"` keys; `trigger:enter` / `trigger:exit` emitted via EventBus
+- Extra accessors: `getPosition`, `setPosition`, `getVelocity`, `setVelocity`, `isBodyGrounded`, `getHandleByEntity` — needed for MovementSystem sync
+- **Learnings for future iterations:**
+  - PhysicsEngine is self-contained (no ECS World dependency) — it's the math layer; MovementSystem is the sync/ECS layer.
+  - Ground detection: raycast from body center downward; max distance = body.config.size + groundSnapTolerance; snap to `hit.point.y + body.config.size`.
+  - Wall-sliding for circle-box: find closest point on box, push circle center along overlap vector. When distSq=0 (exactly inside), fall back to X-axis push.
+  - Slab-method AABB: parallel slabs return null if origin outside; tmin<0 (origin inside box) returns null for entry hit.
+  - `runtimeConfig` (not `CONFIG`) sourced for gravity/skinWidth/groundSnapTolerance so debug menu tweaks apply live.
+---
+
 ## Codebase Patterns
 - `next/dynamic` with `ssr: false` must live in a `'use client'` component in Next.js 16+ (Turbopack). Server Components cannot use it directly. Pattern: server page → client loader with dynamic import → actual component.
 - The main repo is on `main` (Next.js T3 app). Branch `feat/engine-foundation` is a stale worktree with an old Vite-based game. Working branch is `feat/engine-foundation-v2` from main.

@@ -146,8 +146,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Self-contained physics engine with internal body state. BodyHandle is a Symbol. Slab-method AABB raycast for ground detection. Circle-vs-box collision resolves via closest-point-on-box push (wall-sliding). Trigger overlaps tracked with 'entity:entity' key set; enter/exit events emitted via EventBus. Additional accessors (getPosition, setPosition, getVelocity, setVelocity, isBodyGrounded, getHandleByEntity) provided for MovementSystem integration."
     },
     {
       "id": "US-010",
