@@ -165,8 +165,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "MovementSystem queries Transform+Velocity+PlayerControlled. Syncs transform from physics body (prev-frame result) at start. Coyote timer armed on grounded→airborne transition, ticked each airborne frame. Jump buffer armed on Jump press, consumed when canJump (grounded or coyote>0). Horizontal: per-axis accel/decel rates (walkSpeed/accel|decel time), target scaled by airControlFactor when airborne. Velocity written to physics body each frame; Y is owned by physics except on jump frames. Facing: atan2(intent.x, intent.z) → rotationY. moveToward() helper avoids float jitter at rest."
     },
     {
       "id": "US-011",

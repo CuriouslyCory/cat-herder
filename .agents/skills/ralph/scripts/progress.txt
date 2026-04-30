@@ -1,6 +1,24 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-010
+- Created `src/game/systems/MovementSystem.ts` — walk + jump with coyote time and jump buffer
+- Queries Transform + Velocity + PlayerControlled; skips entities with no physics body handle
+- Syncs ECS Transform position from physics body at the start of each frame (prev-frame result)
+- Coyote timer: armed on grounded→airborne transition, ticked down each airborne frame
+- Jump buffer: armed on Jump press, consumed when canJump (grounded OR coyote>0)
+- Horizontal velocity: per-axis accel/decel rates (walkSpeed / accel|decel seconds); target scaled by airControlFactor (0.7) when airborne
+- Y velocity owned by PhysicsEngine; MovementSystem injects only the initial jump impulse
+- Writes full velocity (x, y, z) to physics body each frame
+- Facing: `transform.rotationY = Math.atan2(intent.x, intent.z)` when intent non-zero
+- `moveToward()` helper produces exact target value when within maxDelta (no float jitter at rest)
+- **Learnings for future iterations:**
+  - MovementSystem is the ECS↔Physics sync layer for position (reads from physics) and velocity (writes to physics). RenderSystem never needs to touch physics directly.
+  - Coyote time arms on the frame *after* leaving the ground (player.isGrounded was true, grounded is now false). Reset immediately when grounded.
+  - Jump buffer and coyote time are consumed together on a successful jump to prevent double-jumps.
+  - Per-axis accel/decel (intent.x !== 0 ? accelRate : decelRate) handles direction changes more intuitively than a single combined rate.
+---
+
 ## 2026-04-29 - US-009
 - Created `src/game/engine/PhysicsEngine.ts` — self-contained physics engine
 - `BodyHandle = symbol` (opaque, follows SceneHandle pattern)
