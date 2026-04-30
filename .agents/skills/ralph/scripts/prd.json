@@ -66,8 +66,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "SceneHandle is a Symbol (opaque). MeshConfig supports box/sphere/cylinder/plane. camera is a public settable field so CameraController can install an OrthographicCamera. screenToWorld() uses Raycaster against scene meshes. dispose() removes ResizeObserver + all mesh GPU resources."
     },
     {
       "id": "US-005",
@@ -82,8 +82,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Entity is a numeric type alias. Component is an interface with a `type: string` tag. System interface has update(world, dt). World uses Map<Entity, Map<ComponentType, Component>> with a sorted-key query cache that invalidates on any structural change."
     },
     {
       "id": "US-006",

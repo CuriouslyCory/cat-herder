@@ -44,3 +44,30 @@ Started: Wed Apr 29 05:27:00 PM MST 2026
   - Snapshotting the Set with `[...bucket]` before iterating prevents handlers added during `emit()` from running in the same cycle (safer default).
   - `clear()` must be called in `destroy()` / teardown to prevent listener leaks across React StrictMode double-mounts and HMR cycles.
 ---
+
+## 2026-04-29 - US-004
+- Created `src/game/engine/SceneManager.ts` — Three.js isolation boundary
+- `SceneHandle` is a `symbol` (opaque by nature — callers cannot reach `THREE.Object3D`)
+- `MeshConfig` supports box / sphere / cylinder / plane; optional `dims` tuple overrides per-geometry axes
+- `camera` is a public settable field so `CameraController` can swap in an `OrthographicCamera` without SceneManager knowing its type
+- `resize()` handles both PerspectiveCamera (aspect ratio) and OrthographicCamera (just updateProjectionMatrix — CameraController owns the frustum math)
+- `screenToWorld()` normalizes to NDC, casts a ray, returns first intersection as `Vec3 | null`
+- `dispose()` disconnects ResizeObserver, walks the mesh map calling `removeMesh()` (disposes geometry + material), then disposes renderer
+- **Learnings for future iterations:**
+  - `Symbol("SceneHandle")` is the cleanest opaque handle — no class needed, impossible to forge or access internals from outside the module.
+  - `renderer.setSize(w, h, false)` — the `false` flag prevents Three.js from setting `canvas.style.width/height` which would fight CSS layout.
+  - When `camera` is typed as `THREE.Camera` (the base class), `instanceof` checks are needed before accessing subclass-specific methods like `.aspect` or `.updateProjectionMatrix()` specialized behavior. Both Perspective and Ortho do inherit `updateProjectionMatrix()` from Camera though — only the aspect update is Perspective-specific.
+  - The ESLint `no-restricted-imports` rule (US-019) will enforce that only this file and CameraController import from "three". SceneManager's public API exports only our own types (Vec3, MeshConfig, SceneHandle, RaycastHit) — no THREE types leak through the boundary.
+---
+
+## 2026-04-29 - US-005
+- Created `src/game/ecs/Entity.ts` — `Entity = number` type alias
+- Created `src/game/ecs/Component.ts` — `ComponentType = string` alias + `Component` interface with `readonly type: ComponentType`
+- Created `src/game/ecs/System.ts` — `System` interface with `update(world: World, dt: number): void`
+- Created `src/game/ecs/World.ts` — full ECS registry with `createEntity`, `destroyEntity`, `addComponent`, `removeComponent`, `getComponent`, and cached `query(...types)` (sorted-key string, full cache invalidation on structural changes)
+- **Learnings for future iterations:**
+  - Query cache key = `[...types].sort().join("|")` — sort ensures `query("Transform","Renderable")` and `query("Renderable","Transform")` share the same cache entry.
+  - Full cache invalidation on any structural change is correct at this scale (< a few hundred entities). Avoid per-key invalidation complexity.
+  - `World` is a plain class (not a singleton) so multiple worlds can exist in tests. The Game orchestrator owns the single runtime instance.
+  - `System.ts` imports `World` as a type-only import to avoid circular references — keep this pattern for all system files.
+---
