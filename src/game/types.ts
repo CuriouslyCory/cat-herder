@@ -59,4 +59,6 @@ export type GameEvent =
   | { type: "save:complete" }
   | { type: "debug:toggled"; visible: boolean }
   | { type: "game:paused" }
-  | { type: "game:resumed" };
+  | { type: "game:resumed" }
+  | { type: "oxygen:warning"; entity: number }
+  | { type: "oxygen:depleted"; entity: number };

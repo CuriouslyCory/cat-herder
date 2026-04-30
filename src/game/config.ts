@@ -30,9 +30,11 @@ export interface GameConfig {
   groundSnapTolerance: number; // downward snap distance for ground detection (u)
 
   // Oxygen (swimming)
-  oxygenMax: number; // seconds of air
-  oxygenDrainRate: number; // seconds lost per second underwater
-  oxygenRefillRate: number; // seconds recovered per second on surface
+  oxygenMax: number; // percentage (100 = full)
+  oxygenDrainRate: number; // percent/s lost while diving (isDiving===true)
+  oxygenRefillRate: number; // percent/s recovered on water surface (not diving)
+  oxygenHealthDrainRate: number; // hp/s lost when oxygen reaches 0
+  oxygenWarningThreshold: number; // percent at which OXYGEN_WARNING event fires
 
   // Camera
   cameraAzimuth: number; // degrees — isometric horizontal angle
@@ -69,9 +71,11 @@ const BASE_CONFIG: GameConfig = {
   groundSnapTolerance: 0.05,
 
   // Oxygen
-  oxygenMax: 15,
-  oxygenDrainRate: 1,
-  oxygenRefillRate: 3,
+  oxygenMax: 100,            // 100% max
+  oxygenDrainRate: 3.33,     // 1% per 0.3s = 3.33%/s while diving
+  oxygenRefillRate: 5,       // 5%/s when floating at surface
+  oxygenHealthDrainRate: 1,  // 1 hp/s when oxygen depleted
+  oxygenWarningThreshold: 20, // fire warning at 20%
 
   // Camera
   cameraAzimuth: 45,

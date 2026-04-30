@@ -4,6 +4,7 @@ import type { EventBus, Unsubscribe } from "../engine/EventBus";
 import type { PhysicsEngine } from "../engine/PhysicsEngine";
 import type { WaterTrigger } from "../ecs/components/WaterTrigger";
 import { createSwimmingState } from "../ecs/components/SwimmingState";
+import { createOxygenState } from "../ecs/components/OxygenState";
 
 /**
  * WaterSystem — manages SwimmingState lifecycle via trigger events.
@@ -65,6 +66,7 @@ export class WaterSystem implements System {
     if (this.world.getComponent(playerEntity, "SwimmingState")) return;
 
     this.world.addComponent(playerEntity, createSwimmingState(waterTrigger.surfaceY));
+    this.world.addComponent(playerEntity, createOxygenState());
 
     const handle = this.physics.getHandleByEntity(playerEntity);
     if (handle) this.physics.setGravityEnabled(handle, false);
@@ -76,6 +78,7 @@ export class WaterSystem implements System {
     if (!this.world.getComponent(playerEntity, "SwimmingState")) return;
 
     this.world.removeComponent(playerEntity, "SwimmingState");
+    this.world.removeComponent(playerEntity, "OxygenState");
 
     const handle = this.physics.getHandleByEntity(playerEntity);
     if (handle) this.physics.setGravityEnabled(handle, true);

@@ -1,6 +1,19 @@
 import { HUD } from "./HUD";
 
 /**
+ * HUD frame state passed from the game loop each render tick.
+ * All fields are optional — UIManager uses sensible defaults when absent.
+ */
+export interface HUDState {
+  /** Current oxygen [0-100] while submerged; null hides the gauge. */
+  oxygenPercent: number | null;
+  /** Player current health (integer hp). */
+  health: number;
+  /** Player max health (integer hp). */
+  maxHealth: number;
+}
+
+/**
  * UIManager — mounts and manages plain DOM panels over the game canvas.
  *
  * Creates a single overlay div that covers the canvas (requires the canvas's
@@ -28,8 +41,13 @@ export class UIManager {
   }
 
   /** Called once per render frame by the game loop. */
-  update(dt: number): void {
-    this.hud.update(dt);
+  update(dt: number, state?: Partial<HUDState>): void {
+    this.hud.update(
+      dt,
+      state?.oxygenPercent ?? null,
+      state?.health ?? 5,
+      state?.maxHealth ?? 5,
+    );
   }
 
   /** Remove all mounted DOM panels and listeners. */

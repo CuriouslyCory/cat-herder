@@ -7,6 +7,7 @@ import { RenderSystem } from "../systems/RenderSystem";
 import { MovementSystem } from "../systems/MovementSystem";
 import { CollisionSystem } from "../systems/CollisionSystem";
 import { WaterSystem } from "../systems/WaterSystem";
+import { OxygenSystem } from "../systems/OxygenSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { UIManager } from "../ui/UIManager";
@@ -19,6 +20,8 @@ import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
+import type { OxygenState } from "../ecs/components/OxygenState";
+import type { PlayerControlled } from "../ecs/components/PlayerControlled";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -102,6 +105,7 @@ export class Game {
   private readonly movementSystem: MovementSystem;
   private readonly collisionSystem: CollisionSystem;
   private readonly waterSystem: WaterSystem;
+  private readonly oxygenSystem: OxygenSystem;
   private readonly renderSystem: RenderSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
@@ -139,6 +143,8 @@ export class Game {
     this.collisionSystem = new CollisionSystem(this.eventBus);
     // WaterSystem subscribes to trigger events emitted by CollisionSystem
     this.waterSystem = new WaterSystem(this.world, this.physics, this.eventBus);
+    // OxygenSystem runs after WaterSystem (needs OxygenState + SwimmingState set up)
+    this.oxygenSystem = new OxygenSystem(this.eventBus);
     this.renderSystem = new RenderSystem(this.sceneManager);
 
     // 7. CameraController — installs OrthographicCamera into SceneManager
@@ -318,13 +324,15 @@ export class Game {
       this.collisionSystem.update(this.world, FIXED_DT);
       // WaterSystem reacts to trigger events emitted by CollisionSystem above
       this.waterSystem.update(this.world, FIXED_DT);
+      // OxygenSystem runs after WaterSystem so OxygenState is already present
+      this.oxygenSystem.update(this.world, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
     // ── Variable-rate render pass ──────────────────────────────────────────────
     this.cameraController.update(realDt);
     this.renderSystem.update(this.world, realDt);
-    this.uiManager.update(realDt);
+    this.uiManager.update(realDt, this.buildHUDState());
     this.sceneManager.render();
 
     // ── Auto-save (every CONFIG.autoSaveIntervalMs milliseconds) ───────────────
@@ -333,6 +341,26 @@ export class Game {
       this.saveTimer = 0;
       this.triggerAutoSave();
     }
+  }
+
+  /**
+   * Reads oxygen and health state from the player entity each render frame
+   * and returns a snapshot for the HUD.
+   */
+  private buildHUDState(): import("../ui/UIManager").HUDState {
+    const entity = this.playerEntity;
+    if (entity === null) {
+      return { oxygenPercent: null, health: 5, maxHealth: 5 };
+    }
+
+    const player = this.world.getComponent<PlayerControlled>(entity, "PlayerControlled");
+    const oxygen = this.world.getComponent<OxygenState>(entity, "OxygenState");
+
+    return {
+      oxygenPercent: oxygen ? oxygen.oxygenPercent : null,
+      health: player?.health ?? 5,
+      maxHealth: player?.maxHealth ?? 5,
+    };
   }
 
   private triggerAutoSave(): void {
