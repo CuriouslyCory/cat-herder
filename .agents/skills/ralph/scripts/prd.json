@@ -318,8 +318,8 @@
         "pnpm lint passes against the current codebase"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "eslint@9 + eslint-config-next@16 (flat config array) + @typescript-eslint/parser+plugin. eslint.config.js uses createRequire to load CJS eslint-config-next from ESM module. no-restricted-imports blocks `three` everywhere except SceneManager.ts and CameraController.ts via config-level ignores. GameCanvas.tsx fixed: upsertSaveRef synced via useEffect (not render body), savedCharacterConfig derived via useMemo instead of setState-in-effect. ESLint 9 required — v10 breaks eslint-plugin-react@7.37.5 (bundled in eslint-config-next) with contextOrFilename.getFilename API change."
     }
   ]
 }

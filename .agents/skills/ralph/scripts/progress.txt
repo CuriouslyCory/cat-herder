@@ -1,6 +1,30 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## Codebase Patterns
+- ESLint: project requires eslint@9 (not v10) — v10 breaks eslint-plugin-react@7.37.5 bundled in eslint-config-next via `getFilename` API removal
+- ESLint flat config in ESM project: use `createRequire(import.meta.url)` to load CJS eslint-config-next from eslint.config.js
+- React ref sync pattern: update `ref.current = value` inside `useEffect(() => { ... })` (no deps), NOT during render body — react-hooks/refs rule enforces this
+- Derived state anti-pattern: avoid `setState` inside `useEffect` for values derivable from props/query data — use `useMemo` instead to eliminate cascading renders
+
+## 2026-04-29 - US-019
+- Installed eslint@9, eslint-config-next@16, @typescript-eslint/parser, @typescript-eslint/eslint-plugin
+- Created `eslint.config.js` (flat config) using `createRequire` to load CJS eslint-config-next/core-web-vitals from the ESM project
+- Added `no-restricted-imports` blocking `three` everywhere except SceneManager.ts and CameraController.ts (enforced via config-level `ignores`)
+- Added `"lint": "eslint src"` to package.json (next lint command removed in Next.js 16)
+- Fixed two react-hooks violations in GameCanvas.tsx:
+  - `react-hooks/refs`: moved `upsertSaveRef.current = value` from render body into `useEffect(() => { ... })` with no deps
+  - `react-hooks/set-state-in-effect`: replaced `useState` + effect for DB hydration with `useMemo` deriving `savedCharacterConfig` directly; combined with `createdCharacter` state for creator output
+- pnpm lint, pnpm typecheck pass
+- **Learnings for future iterations:**
+  - ESLint 10 is incompatible with eslint-plugin-react@7.37.5 (bundled in eslint-config-next@16); pin to eslint@9.
+  - `"type": "module"` projects require `createRequire(import.meta.url)` to load CJS packages in eslint.config.js.
+  - `next lint` CLI command was removed in Next.js 16; use `eslint src` directly.
+  - Config-level `ignores` on a flat config object skips ALL rules in that object for matched files — correct way to carve out exceptions to no-restricted-imports.
+  - `react-hooks/refs` rule: any `ref.current = x` during render is an error; use `useEffect(() => { ref.current = x; })`.
+  - `react-hooks/set-state-in-effect` rule: if state is purely derived from query/props data, replace the `useEffect + setState` pattern with `useMemo`.
+---
+
 ## 2026-04-29 - US-017
 - Rewrote `src/game/engine/Game.ts` — full orchestrator replacing the US-001 Three.js stub
 - Added `GameTrpcAdapter` interface (upsertSave only for MVP auto-save); engine never imports ~/trpc
