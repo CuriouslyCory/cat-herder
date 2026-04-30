@@ -20,8 +20,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via SwimmingState/WaterTrigger components, WaterSystem (event-driven lifecycle), and MovementSystem swimming branch."
     },
     {
       "id": "US-102",

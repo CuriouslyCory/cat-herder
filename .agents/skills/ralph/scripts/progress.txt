@@ -1,3 +1,23 @@
+## Codebase Patterns
+- Water triggers use collisionLayer=1/mask=1 (player layer) so CollisionSystem fires trigger events; floor tiles use layer=2/mask=0 (PhysicsEngine raycasts only)
+- SwimmingState lifecycle is event-driven (trigger:enter/exit from CollisionSystem); MovementSystem applies swim physics by querying for SwimmingState each frame — no state machine
+- PhysicsEngine.setGravityEnabled(handle, bool) controls per-body gravity; must be called when adding/removing SwimmingState
+- Terrain entities are created before the player, so terrain entity IDs are always smaller; in pairKey(a,b) the smaller id comes first → water entity is usually "trigger" in events
+- Game loop order: movementSystem → physics.step() → collisionSystem → waterSystem (WaterSystem reacts to trigger events emitted by CollisionSystem)
+- Config changes: swimSpeed/swimSpeedVertical replaced with swimSpeedSurface(3.2), swimSpeedDive(2.0), swimSpeedAscend(2.5), swimSpeedVertical(1.5), swimAcceleration(0.5)
+---
+
 # Ralph Progress Log
 Started: Thu Apr 30 09:41:37 AM MST 2026
+---
+
+## 2026-04-30 - US-101
+- Implemented full water mechanics: SwimmingState component, WaterTrigger component, WaterSystem (event-driven), and swimming branch in MovementSystem
+- Files changed: SwimmingState.ts, WaterTrigger.ts, WaterSystem.ts (new), MovementSystem.ts (swimming branch), MapManager.ts (WaterTrigger component, fixed collision mask), PhysicsEngine.ts (noGravity flag + setGravityEnabled), InputManager.ts (Dive action), config.ts (swim config), types.ts (GameAction.Dive), Game.ts (WaterSystem wiring)
+- **Learnings for future iterations:**
+  - CollisionSystem's pairKey sorts by entity id, not by trigger/target role — WaterSystem.resolveWaterPlayer() checks both orderings
+  - Water tiles originally had collisionLayer=2/mask=0 which prevented trigger events; needed layer=1/mask=1 to match player
+  - PhysicsEngine has its own trigger detection (detectTriggerOverlaps) but only for registered physics bodies — terrain has no physics body, so only CollisionSystem fires water triggers
+  - transitionBlend in SwimmingState prevents speed pop at water boundary; ramps 0→1 over 0.3s
+  - Use `moveToward` for swim acceleration (same helper as land movement)
 ---
