@@ -66,8 +66,8 @@ export class PounceSystem {
       const behavior = world.getComponent<CatBehavior>(catEntity, "CatBehavior")!;
       if (behavior.catType !== CatType.Pounce) continue;
 
-      // Transition Idle → Active on the first frame after summon.
-      if (behavior.state === "Idle") behavior.state = "Active";
+      // CatAISystem handles Idle→Active; only process Active cats here.
+      if (behavior.state !== "Active") continue;
 
       const catTransform = world.getComponent<Transform>(catEntity, "Transform")!;
 

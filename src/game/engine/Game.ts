@@ -13,6 +13,7 @@ import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CuriositySystem } from "../systems/CuriositySystem";
 import { PounceSystem } from "../systems/PounceSystem";
+import { CatAISystem } from "../systems/CatAISystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -115,6 +116,7 @@ export class Game {
   private readonly waterSystem: WaterSystem;
   private readonly oxygenSystem: OxygenSystem;
   private readonly catPlacementSystem: CatPlacementSystem;
+  private readonly catAISystem: CatAISystem;
   private readonly zoomiesSystem: ZoomiesSystem;
   private readonly curiositySystem: CuriositySystem;
   private readonly pounceSystem: PounceSystem;
@@ -182,7 +184,10 @@ export class Game {
       this.physics,
     );
 
-    // 11. ZoomiesSystem — trail timer, auto-dismiss, and speed-boost overlap
+    // 11. CatAISystem — generic state machine for all cat companions (runs first)
+    this.catAISystem = new CatAISystem();
+
+    // 11a. ZoomiesSystem — Expired detection, auto-dismiss, and speed-boost overlap
     this.zoomiesSystem = new ZoomiesSystem(this.catCompanionManager);
 
     // 11b. CuriositySystem — hidden terrain reveal timer and auto-dismiss
@@ -375,9 +380,11 @@ export class Game {
       this.waterSystem.update(this.world, FIXED_DT);
       // OxygenSystem runs after WaterSystem so OxygenState is already present
       this.oxygenSystem.update(this.world, FIXED_DT);
-      // ZoomiesSystem ticks trail timers and updates SpeedBoost on the player
+      // CatAISystem drives generic state machine for all cats (Idle→Active→Expired)
+      this.catAISystem.update(this.world, FIXED_DT);
+      // ZoomiesSystem detects Expired and handles trail overlap + SpeedBoost
       this.zoomiesSystem.update(this.world, FIXED_DT);
-      // CuriositySystem reveals/hides hidden terrain and auto-dismisses on expiry
+      // CuriositySystem reveals terrain on first Active tick and dismisses on Expired
       this.curiositySystem.update(this.world, FIXED_DT);
       // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
       this.pounceSystem.update(this.world, FIXED_DT);

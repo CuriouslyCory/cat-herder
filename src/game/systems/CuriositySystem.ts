@@ -16,13 +16,15 @@ import { CatType } from "../types";
  * CuriositySystem — drives Curiosity Cat behavior each fixed physics tick.
  *
  * Responsibilities:
- *  1. On first tick for a Curiosity cat (Idle → Active): scan for HiddenTerrain
- *     entities within the reveal radius, make them visible, enable their colliders,
- *     increment revealCount, and emit `hidden:terrain:revealed`.
- *  2. Tick CatBehavior.stateTimer for each active Curiosity cat.
- *  3. Auto-dismiss at 20 s (yarn consumed — state marked Expired before dismiss).
- *  4. On dismiss: decrement revealCount on each previously revealed entity;
- *     hide terrain whose revealCount returns to 0.
+ *  1. On the first Active tick (detected by revealedEntities.length === 0):
+ *     scan for HiddenTerrain entities within the reveal radius, make them
+ *     visible, enable their colliders, increment revealCount, and emit
+ *     `hidden:terrain:revealed`.
+ *  2. Detect Expired state (set by CatAISystem) and clean up revealed terrain
+ *     before calling dismiss() (yarn consumed — not returned).
+ *
+ * State management (Idle→Active, timer, Expired marking) is handled centrally
+ * by CatAISystem which runs before this system each fixed tick.
  *
  * SceneManager is injected so the system can update mesh opacity without
  * crossing the Three.js isolation boundary elsewhere.
@@ -34,9 +36,8 @@ export class CuriositySystem {
     private readonly eventBus: EventBus,
   ) {}
 
-  update(world: World, dt: number): void {
+  update(world: World, _dt: number): void {
     const catDef = CAT_REGISTRY.get(CatType.CuriosityCat);
-    const duration = catDef?.behavior.duration ?? 20;
     const defaultRadius =
       typeof catDef?.behavior.params?.revealRadius === "number"
         ? catDef.behavior.params.revealRadius
@@ -46,28 +47,30 @@ export class CuriositySystem {
     const curiosityCats = world.query("CatBehavior", "Transform", "CuriosityReveal");
 
     for (const catEntity of curiosityCats) {
+      if (!world.isAlive(catEntity)) continue;
+
       const behavior = world.getComponent<CatBehavior>(catEntity, "CatBehavior")!;
       const transform = world.getComponent<Transform>(catEntity, "Transform")!;
       const reveal = world.getComponent<CuriosityReveal>(catEntity, "CuriosityReveal")!;
 
-      // Only process Curiosity cats (the query already filters by CuriosityReveal,
-      // but guard against future component reuse).
+      // Guard: only process Curiosity cats (CuriosityReveal is cat-specific but
+      // guard against accidental component reuse in future cat types).
       if (behavior.catType !== CatType.CuriosityCat) continue;
 
-      if (behavior.state === "Idle") {
-        // Transition Idle → Active: reveal nearby hidden terrain.
-        behavior.state = "Active";
+      if (behavior.state === "Expired") {
+        // CatAISystem already marked Expired — hide terrain then dismiss.
+        // dismiss() skips yarn refund because state !== "Active".
+        this.hideRevealedTerrain(world, reveal);
+        this.catCompanionManager.dismiss(catEntity);
+        continue;
+      }
+
+      if (behavior.state === "Active" && reveal.revealedEntities.length === 0) {
+        // First Active tick: reveal nearby hidden terrain.
+        // CatAISystem transitioned Idle→Active this same frame, so revealedEntities
+        // is guaranteed empty until we populate it here.
         const radius = reveal.revealRadius > 0 ? reveal.revealRadius : defaultRadius;
         this.revealNearbyTerrain(world, catEntity, transform, reveal, radius);
-      } else if (behavior.state === "Active") {
-        behavior.stateTimer += dt;
-
-        if (behavior.stateTimer >= duration) {
-          // Duration elapsed — mark Expired so dismiss() skips yarn refund.
-          behavior.state = "Expired";
-          this.hideRevealedTerrain(world, reveal);
-          this.catCompanionManager.dismiss(catEntity);
-        }
       }
     }
   }

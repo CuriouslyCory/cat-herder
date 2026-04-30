@@ -12,23 +12,26 @@ import { CatType } from "../types";
  * ZoomiesSystem — drives Zoomies cat behavior each fixed physics tick.
  *
  * Responsibilities:
- *  1. Tick CatBehavior.stateTimer for every active Zoomies cat.
- *  2. Auto-dismiss when the 8s duration elapses (yarn consumed, not returned).
- *  3. Check per-frame whether the player overlaps any Zoomies trail entity.
- *  4. Add SpeedBoost to the player on trail entry; remove on exit.
+ *  1. Detect Expired state (set by CatAISystem) and auto-dismiss the cat
+ *     (yarn is consumed — not returned — because state is already Expired).
+ *  2. Check per-frame whether the player overlaps any active Zoomies trail.
+ *  3. Add SpeedBoost to the player on trail entry; remove on exit.
+ *
+ * State management (Idle→Active, timer, Expired marking) is handled centrally
+ * by CatAISystem which runs before this system each fixed tick.
  *
  * The trail overlap check is a manual oriented-AABB test (not a PhysicsEngine
  * trigger) so the trail's exact 6u × 1.5u rectangle can be checked without
  * requiring a non-uniform physics body.
  *
- * Frame position: after OxygenSystem (at the end of the fixed-step sub-tick).
+ * Frame position: after CatAISystem and OxygenSystem in the fixed-step loop.
  */
 export class ZoomiesSystem {
   constructor(
     private readonly catCompanionManager: CatCompanionManager,
   ) {}
 
-  update(world: World, dt: number): void {
+  update(world: World, _dt: number): void {
     // ── Find the player entity ───────────────────────────────────────────────
     const playerEntities = world.query("Transform", "PlayerControlled");
     const playerEntity = playerEntities[0] ?? null;
@@ -40,11 +43,8 @@ export class ZoomiesSystem {
     );
     if (!playerTransform) return;
 
-    // ── Tick Zoomies cat timers ──────────────────────────────────────────────
-    // We iterate ZoomiesTrail entities (one per Zoomies cat) so we only update
-    // Zoomies cats, not every cat in the ECS world.
+    // ── Read speed multiplier from definition ────────────────────────────────
     const zoomiesDef = CAT_REGISTRY.get(CatType.Zoomies);
-    const duration = zoomiesDef?.behavior.duration ?? 8;
     const speedMultiplier =
       typeof zoomiesDef?.behavior.params?.speedMultiplier === "number"
         ? zoomiesDef.behavior.params.speedMultiplier
@@ -63,36 +63,27 @@ export class ZoomiesSystem {
         "Transform",
       )!;
 
-      // If the owning cat is no longer alive (e.g. dismissed elsewhere), clean
-      // up the orphaned trail entity and skip further processing.
+      // If the owning cat is no longer alive (dismissed elsewhere), clean up
+      // the orphaned trail entity and skip.
       if (!world.isAlive(trail.catEntity)) {
         world.destroyEntity(trailEntity);
         continue;
       }
 
-      // Tick the owning cat's state timer.
       const behavior = world.getComponent<CatBehavior>(
         trail.catEntity,
         "CatBehavior",
       );
-      if (behavior) {
-        if (behavior.state === "Idle") {
-          behavior.state = "Active";
-        }
 
-        if (behavior.state === "Active") {
-          behavior.stateTimer += dt;
-
-          if (behavior.stateTimer >= duration) {
-            // Duration elapsed — mark Expired so dismiss() skips yarn refund.
-            behavior.state = "Expired";
-            // dismiss() will destroy both the cat entity and the trail entity.
-            this.catCompanionManager.dismiss(trail.catEntity);
-            // Trail is now destroyed; skip the overlap check for this iteration.
-            continue;
-          }
-        }
+      if (behavior?.state === "Expired") {
+        // CatAISystem already marked Expired — dismiss() will skip yarn refund
+        // because state !== "Active". dismiss() also destroys the trail entity.
+        this.catCompanionManager.dismiss(trail.catEntity);
+        continue;
       }
+
+      // Only process Active cats for the trail overlap check.
+      if (behavior?.state !== "Active") continue;
 
       // ── Oriented AABB overlap check ────────────────────────────────────────
       if (this.isPlayerInTrail(playerTransform, trailTransform, trail)) {
