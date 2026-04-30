@@ -272,8 +272,8 @@
         "pnpm typecheck passes"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "MapData.ts: TerrainCell (type/height/navigable), SpawnPoint (x/z/role), MapData (name/size/terrain[][]/cellSize/spawnPoints). MapManager.ts: greedy-rectangle zone grouping (right-then-down expansion) creates one ECS entity per maximal same-type-same-height rectangle; flat terrain gets thin slab (0.2u) below y=0; elevated terrain box from 0 to height; boundary walls as 4 static box entities. TestMap.ts: 30×30 grid (cellSize=2) = 60×60u world; water zone, dirt path, stone platform (2u), hidden zone, two elevated grass platforms (2u and 3u), player spawn at (0,0,0). pnpm typecheck and pnpm build pass."
     },
     {
       "id": "US-017",

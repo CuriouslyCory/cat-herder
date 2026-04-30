@@ -1,6 +1,19 @@
 # Ralph Progress Log
 Started: Wed Apr 29 05:27:00 PM MST 2026
 
+## 2026-04-29 - US-016
+- Created `src/game/maps/MapData.ts` — TerrainCell (type/height/navigable), SpawnPoint (x/z/role), MapData (name/size/terrain[][]/cellSize/spawnPoints)
+- Created `src/game/maps/MapManager.ts` — greedy-rectangle zone grouping (right-then-down expansion); one ECS entity per maximal rectangle; flat terrain = 0.2u slab below y=0; elevated terrain = box from y=0 to height; 4 boundary wall entities; collision layer 2 (floor mask=0; elevated mask=1); water as trigger
+- Created `src/game/maps/TestMap.ts` — 30×30 grid (cellSize=2 = 60×60u world); water zone (rows 3-9, cols 3-9), dirt path (rows 10-14, cols 13-16), stone platform 2u (rows 2-6, cols 21-27), hidden zone (rows 22-27, cols 22-27), two elevated grass platforms, player spawn (0,0,0), 2 cat spawns
+- pnpm typecheck and pnpm build pass
+- **Learnings for future iterations:**
+  - Greedy-rectangle algo (expand right, then expand down checking all columns): produces compact zone count for regular tile layouts. Labeled `break expandDown` is valid TypeScript for breaking a labeled while from inside an inner for loop.
+  - Use `visited[r2 + 1]?.[cc] ?? false` not `visited[r2 + 1]![cc]` — even with the outer while guard, TypeScript strict-mode array indexing returns `T | undefined` and `?.` is needed to avoid compiler errors.
+  - Collider.size is uniform (circle = radius; box = half-extent on ALL axes). For rectangular terrain, use `Math.max(width, depth) / 2` as a conservative upper bound. This over-sizes the AABB but is harmless when collisionMask=0 (floor tiles) or acceptable for boundary walls.
+  - Flat floor tiles should use collisionMask=0 so CollisionSystem ignores them — ground detection is PhysicsEngine's job (downward raycasting). Elevated terrain uses mask=1 for wall-sliding.
+  - TERRAIN_COLORS[TerrainType.Hidden] matches the scene background color (#1a1a2e) so hidden terrain is visually invisible without a separate rendering path.
+---
+
 ## 2026-04-29 - US-015
 - Created `src/app/play/_components/CharacterCreator.tsx` — React overlay with shape picker (box/sphere/cylinder with SVG previews), 8 preset color swatches + custom color input, 3 size buttons (Small=0.8, Medium=1.0, Large=1.2), and a Start Game button wired to `api.game.upsertCharacter.useMutation()`
 - Updated `src/app/play/_components/GameCanvas.tsx` — added `api.game.getCharacter.useQuery()` to check for an existing character on mount; shows `CharacterCreator` when none found; starts game with character config once confirmed
