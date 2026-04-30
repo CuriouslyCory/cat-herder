@@ -6,8 +6,15 @@ export interface GameUser {
   email?: string | null;
 }
 
+export interface PlayerCharacterConfig {
+  shape: "box" | "sphere" | "cylinder";
+  colorHex: string;
+  sizeScale: number;
+}
+
 export interface GameOpts {
   user: GameUser;
+  character?: PlayerCharacterConfig;
 }
 
 /**
@@ -15,6 +22,9 @@ export interface GameOpts {
  *
  * US-001 stub: creates a Three.js scene with a colored box on a ground plane.
  * Full implementation in US-017 will wire in ECS, systems, physics, etc.
+ *
+ * US-015 additions: accepts a PlayerCharacterConfig and exposes spawnPlayer()
+ * so the CharacterCreator overlay can update the in-scene mesh after creation.
  */
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -22,6 +32,7 @@ export class Game {
   private camera: THREE.PerspectiveCamera;
   private rafId: number | null = null;
   private resizeObserver: ResizeObserver;
+  private playerMesh: THREE.Mesh | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -58,18 +69,50 @@ export class Game {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Player box
-    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0xff6b35 });
-    const box = new THREE.Mesh(boxGeo, boxMat);
-    box.position.y = 0.5;
-    box.castShadow = true;
-    this.scene.add(box);
+    // Spawn player mesh (character config or default placeholder)
+    if (opts.character) {
+      this.spawnPlayer(opts.character);
+    } else {
+      this.spawnDefaultPlayer();
+    }
 
     // Handle resize
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(canvas);
     this.handleResize();
+  }
+
+  /**
+   * Replace the player mesh with one matching the given character config.
+   * Called once on start (if character exists) and after CharacterCreator submits.
+   */
+  spawnPlayer(config: PlayerCharacterConfig): void {
+    if (this.playerMesh) {
+      this.scene.remove(this.playerMesh);
+      this.playerMesh.geometry.dispose();
+      (this.playerMesh.material as THREE.Material).dispose();
+      this.playerMesh = null;
+    }
+
+    const s = config.sizeScale;
+    let geo: THREE.BufferGeometry;
+    switch (config.shape) {
+      case "sphere":
+        geo = new THREE.SphereGeometry(0.5 * s, 16, 16);
+        break;
+      case "cylinder":
+        geo = new THREE.CylinderGeometry(0.4 * s, 0.4 * s, s, 12);
+        break;
+      default:
+        geo = new THREE.BoxGeometry(s, s, s);
+    }
+
+    const mat = new THREE.MeshStandardMaterial({ color: config.colorHex });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = 0.5 * s;
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    this.playerMesh = mesh;
   }
 
   async start(): Promise<void> {
@@ -105,5 +148,15 @@ export class Game {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+  }
+
+  private spawnDefaultPlayer(): void {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xff6b35 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = 0.5;
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    this.playerMesh = mesh;
   }
 }
