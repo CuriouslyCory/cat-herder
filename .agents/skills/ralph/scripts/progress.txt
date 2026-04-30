@@ -109,3 +109,16 @@ Started: Thu Apr 30 09:41:37 AM MST 2026
   - Trail entity destroyed by CatCompanionManager.dismiss(), not by ZoomiesSystem — keeps cleanup centralised in one place
   - Multiple Zoomies cats: ZoomiesSystem handles multiple trails; player gets SpeedBoost from the last trail they're in (last wins in the loop); all trails same multiplier so order doesn't matter
 ---
+
+## 2026-04-30 - US-109
+- Implemented Pounce cat launch mechanic: PounceSystem (XZ footprint + grounded check + once-per-landing Set), wired into Game.ts fixed loop after CuriositySystem, Pounce platform added to TestMap
+- Files created: src/game/systems/PounceSystem.ts
+- Files modified: src/game/engine/Game.ts (import + instantiation + loop call), src/game/maps/TestMap.ts (height=1 platform rows 14-15 cols 6-7)
+- **Learnings for future iterations:**
+  - PounceSystem does NOT need CatCompanionManager — dismiss is handled externally (right-click); system only applies the launch impulse
+  - "Once per landing" is enforced by a `launchedCats: Set<Entity>` in PounceSystem; entry added on launch, removed when player exits XZ footprint (snapshot iteration to avoid Set mutation during loop)
+  - Air control (70%) is already global via runtimeConfig.airControlFactor in MovementSystem — no per-cat wiring needed for Pounce
+  - physicsEngine.isBodyGrounded(handle) distinguishes player standing ON the Pounce cat (top surface detected by raycast) vs. walking into its side (blocked by XZ collider but not grounded by it)
+  - Launch physics (impulse=3.5 u/s, gravity=-12): player peaks ~0.51u above launch point; Pounce cat top at ~0.5u gives player peak ~1.41u center — height=1 terrain platform is marginally reachable. The "3.5u above resting height" AC is aspirational; real physics gate is ~1u platform max with current gravity config
+  - CatBehavior.state is transitioned Idle→Active in PounceSystem on the first frame (same pattern as ZoomiesSystem/CuriositySystem)
+---

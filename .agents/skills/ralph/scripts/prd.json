@@ -166,8 +166,8 @@
         "pnpm typecheck passes."
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented via PounceSystem (XZ footprint overlap + physics isBodyGrounded check, launchedCats Set for once-per-landing, reads params from CAT_REGISTRY). Physics body already registered by CatCompanionManager for effectType='launch'. Air control (70%) already global in runtimeConfig.airControlFactor. Test map adds a height=1 grass platform at X∈[-19,-15], Z∈[-1,3] reachable via Pounce launch from flat ground beside it."
     },
     {
       "id": "US-110",
