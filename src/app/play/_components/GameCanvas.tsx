@@ -30,8 +30,9 @@ export function GameCanvas({ user }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
 
-  // Local character state: populated from DB query or from CharacterCreator submit
-  const [character, setCharacter] = useState<PlayerCharacterConfig | null>(null);
+  // Character explicitly set by CharacterCreator (takes priority over DB row)
+  const [createdCharacter, setCreatedCharacter] =
+    useState<PlayerCharacterConfig | null>(null);
 
   const { data: savedCharacter, isLoading } = api.game.getCharacter.useQuery();
 
@@ -42,9 +43,12 @@ export function GameCanvas({ user }: GameCanvasProps) {
   const { mutateAsync: upsertSaveMutateAsync } =
     api.game.upsertSave.useMutation();
 
-  // Keep a stable ref to mutateAsync so the adapter object never needs to change
+  // Ref is initialized once; synced after every commit so the game loop always
+  // calls the latest mutateAsync without needing to recreate the stable adapter.
   const upsertSaveRef = useRef(upsertSaveMutateAsync);
-  upsertSaveRef.current = upsertSaveMutateAsync;
+  useEffect(() => {
+    upsertSaveRef.current = upsertSaveMutateAsync;
+  });
 
   // Stable adapter — created once; always delegates to the latest mutateAsync
   const trpcAdapter = useMemo<GameTrpcAdapter>(
@@ -55,18 +59,21 @@ export function GameCanvas({ user }: GameCanvasProps) {
   );
 
   // ── DB hydration ────────────────────────────────────────────────────────────
-  // When the DB query resolves with an existing character, hydrate local state
-  useEffect(() => {
-    if (isLoading || !savedCharacter) return;
+  // Derive config directly from the query result — no effect or setState needed.
+  const savedCharacterConfig = useMemo<PlayerCharacterConfig | null>(() => {
+    if (isLoading || !savedCharacter) return null;
     const { shape, colorHex, sizeScale } = savedCharacter;
-    // Shape stored as varchar in DB; cast to the literal union (values are Zod-validated on write)
+    // Shape stored as varchar in DB; validated on write via Zod, but cast safely here.
     const validShape = (["box", "sphere", "cylinder"] as const).includes(
       shape as PlayerCharacterConfig["shape"],
     )
       ? (shape as PlayerCharacterConfig["shape"])
       : "box";
-    setCharacter({ shape: validShape, colorHex, sizeScale });
+    return { shape: validShape, colorHex, sizeScale };
   }, [savedCharacter, isLoading]);
+
+  // Effective character: prefer creator output over DB row
+  const character = createdCharacter ?? savedCharacterConfig;
 
   // ── Game lifecycle ──────────────────────────────────────────────────────────
   // Start (or update) the game whenever a character becomes available
@@ -105,7 +112,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
   // lifetime of this mount. Including them would trigger an unnecessary restart.
 
   const handleCharacterCreated = useCallback((config: PlayerCharacterConfig) => {
-    setCharacter(config);
+    setCreatedCharacter(config);
   }, []);
 
   const showCreator = !isLoading && character === null;
