@@ -266,7 +266,8 @@ export class PhysicsEngine {
 
     // Flat-floor fallback: prevents dynamic bodies from falling below the base terrain
     // (y = 0). Elevated platforms are handled by registered static physics bodies.
-    if (!body.isGrounded && newPos.y <= body.config.size) {
+    // Skip for noGravity bodies (e.g. swimming) — buoyancy logic controls their Y.
+    if (!body.isGrounded && !body.noGravity && newPos.y <= body.config.size) {
       newPos.y = body.config.size;
       if (body.velocity.y < 0) body.velocity.y = 0;
       body.isGrounded = true;

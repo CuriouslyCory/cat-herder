@@ -246,7 +246,7 @@ export class MapManager {
       // Surface Y = top of the water slab = cell.height (0 for flat water).
       this.world.addComponent(entity, createWaterTrigger(cell.height));
     } else {
-      const collisionMask = cell.height > 0 ? 1 : 0;
+      const collisionMask = isHidden ? 0 : cell.height > 0 ? 1 : 0;
       this.world.addComponent(
         entity,
         createCollider("box", Math.max(width, depth) / 2, {
