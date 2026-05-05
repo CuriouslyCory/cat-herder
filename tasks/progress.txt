@@ -198,3 +198,22 @@
   - `update()` is a no-op guard pattern: return early if `!_visible || !_catStatusContainer || !catCompanionManager` — safe to call every frame
   - Optional constructor params added after existing ones preserve backward-compatibility; no existing tests needed updating
 ---
+
+## 2026-05-05 - US-208
+- Added World tab to DebugMenu: time scale slider (0.25x–4.0x), wireframe toggle, reload map button, entity count display, Fill/Empty all resource nodes, spawn resource node (type + X/Z inputs)
+- Added `timeScale: number = 1.0` to GameConfig (config.ts) and BASE_CONFIG
+- Game.ts fixed-step loop now computes `scaledDt = FIXED_DT * runtimeConfig.timeScale` and passes it to all systems; InputManager.poll() is outside the loop and unaffected
+- Added `toggleWireframes(enabled: boolean)` to SceneManager: iterates registered meshes and sets material.wireframe
+- Added `get entityCount(): number` to World (exposes this.entities.size)
+- DebugMenu constructor extended with optional `reloadMap?: () => void` and `sceneManager?: { toggleWireframes }` (params 9 and 10)
+- `update()` now also refreshes `_entityCountEl` (total + cats + nodes breakdown) each frame when menu is open
+- New apply methods: applyTimeScale, applyReloadMap, applyWireframes, applyFillAllNodes, applyEmptyAllNodes, applySpawnResourceNode
+- applySpawnResourceNode: creates entity in world with Transform + Renderable + Collider + ResourceNode; RenderSystem picks it up on next frame
+- 21 new tests; 311 total pass; pnpm test && lint && typecheck && build all clean
+- **Learnings for future iterations:**
+  - timeScale scales FIXED_DT passed to systems inside the accumulator loop; the accumulator drains by real FIXED_DT so step rate stays stable at 60Hz
+  - SceneManager.toggleWireframes iterates all registered meshes — includes cat/resource/terrain meshes; debug-only so visual purity is acceptable
+  - World.entityCount is a simple `this.entities.size` getter; no cache invalidation needed
+  - applySpawnResourceNode creates entities directly in World; no SceneManager call needed — RenderSystem auto-registers new Renderable entities
+  - MapManagerLike / SceneManagerRef minimal interfaces defined in DebugMenu.ts to avoid importing full engine types into the UI layer
+---

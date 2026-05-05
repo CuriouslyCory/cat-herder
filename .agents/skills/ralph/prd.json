@@ -118,7 +118,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "The shared upsert helper must accept userId + version + saveData and handle the Drizzle onConflictDoUpdate. withAuth() pattern: see existing protected routes for reference."
     },
     {
@@ -139,7 +139,7 @@
         "Verify in browser using dev-browser skill: load page, confirm loading state appears, game starts with correct state."
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "This story integrates Persistence into the existing GameCanvas lifecycle. The loading/error UI can be simple DOM overlays -- no need for a full React component since GameCanvas manages its own DOM."
     },
     {
@@ -162,7 +162,7 @@
         "Verify in browser using dev-browser skill: Ctrl+D opens menu, change player stats, confirm changes apply in-game."
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "This story creates the DebugMenu framework (panel, tabs, toggle) AND the Player tab. Other tabs are placeholders -- US-207/208/209 fill them in."
     },
     {
@@ -179,7 +179,7 @@
         "Verify in browser using dev-browser skill: open Cats tab, force-summon each type, verify cats appear, dismiss all."
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on DebugMenu framework from US-206. Replace the 'Coming soon' placeholder in the Cats tab."
     },
     {
@@ -196,7 +196,7 @@
         "Verify in browser using dev-browser skill: open World tab, adjust time scale, toggle wireframes, fill/empty nodes."
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on DebugMenu framework from US-206. The wireframe toggle touches SceneManager -- keep the Three.js layer logic minimal (one wireframe material, iterate collider entities)."
     },
     {
