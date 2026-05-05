@@ -70,6 +70,7 @@ beforeEach(() => {
 afterEach(() => {
   persistence.dispose();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 // ---------------------------------------------------------------------------
@@ -382,5 +383,76 @@ describe("fromExternalSaveData()", () => {
     external.world.activeCats = [{ catType: CatType.Loaf, position: { x: 1, y: 0, z: 2 } }];
     const internal = fromExternalSaveData(external);
     expect(internal.world.activeCats).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setupBeforeUnload() / dispose() beforeunload cleanup
+// ---------------------------------------------------------------------------
+
+describe("setupBeforeUnload()", () => {
+  it("registers a beforeunload listener on window", () => {
+    const addEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener, removeEventListener: vi.fn() });
+    vi.stubGlobal("navigator", { sendBeacon: vi.fn().mockReturnValue(true) });
+
+    persistence.setupBeforeUnload();
+
+    expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+  });
+
+  it("dispose() removes the beforeunload listener", () => {
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener });
+    vi.stubGlobal("navigator", { sendBeacon: vi.fn().mockReturnValue(true) });
+
+    persistence.setupBeforeUnload();
+    persistence.dispose();
+
+    expect(removeEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+  });
+
+  it("calls sendBeacon with serialized state when beforeunload fires", () => {
+    const sendBeacon = vi.fn().mockReturnValue(true);
+    let capturedHandler: (() => void) | null = null;
+    vi.stubGlobal("window", {
+      addEventListener: (_: string, fn: () => void) => {
+        capturedHandler = fn;
+      },
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("navigator", { sendBeacon });
+
+    persistence.setupBeforeUnload();
+    capturedHandler!();
+
+    expect(sendBeacon).toHaveBeenCalledWith(
+      "/api/game/beacon-save",
+      expect.stringContaining('"character"'),
+    );
+  });
+
+  it("falls back gracefully when navigator.sendBeacon is unavailable", () => {
+    let capturedHandler: (() => void) | null = null;
+    vi.stubGlobal("window", {
+      addEventListener: (_: string, fn: () => void) => {
+        capturedHandler = fn;
+      },
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("navigator", {}); // no sendBeacon
+
+    persistence.setupBeforeUnload();
+    expect(() => capturedHandler!()).not.toThrow();
+  });
+
+  it("does not remove listener if setupBeforeUnload was never called", () => {
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener });
+    vi.stubGlobal("navigator", { sendBeacon: vi.fn() });
+
+    // dispose() without prior setupBeforeUnload — should not call removeEventListener
+    persistence.dispose();
+    expect(removeEventListener).not.toHaveBeenCalled();
   });
 });

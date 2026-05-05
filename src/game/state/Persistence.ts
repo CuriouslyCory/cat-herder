@@ -87,6 +87,7 @@ export class Persistence {
   private _hasNonPositionDirty = false;
   private _positionHasChangedSinceLastSave = false;
   private readonly _unsubs: Array<() => void> = [];
+  private _beforeUnloadHandler: (() => void) | null = null;
 
   constructor(
     private readonly gameState: GameState,
@@ -176,8 +177,28 @@ export class Persistence {
     this.gameState.restore(fromExternalSaveData(data));
   }
 
+  setupBeforeUnload(): void {
+    const handler = () => {
+      const internal = this.gameState.serialize();
+      const saveData = toExternalSaveData(internal);
+      const payload = JSON.stringify({ version: CURRENT_VERSION, saveData });
+      if (
+        typeof navigator !== "undefined" &&
+        typeof navigator.sendBeacon === "function"
+      ) {
+        navigator.sendBeacon("/api/game/beacon-save", payload);
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    this._beforeUnloadHandler = handler;
+  }
+
   dispose(): void {
     this.stopAutoSave();
+    if (this._beforeUnloadHandler !== null) {
+      window.removeEventListener("beforeunload", this._beforeUnloadHandler);
+      this._beforeUnloadHandler = null;
+    }
     for (const unsub of this._unsubs) unsub();
     this._unsubs.length = 0;
   }

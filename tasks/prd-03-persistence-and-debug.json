@@ -58,7 +58,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "GameState already exists at src/game/engine/GameState.ts with yarn + inventory tracking. EXTEND it -- do not create a new file at src/game/state/. Keep all existing methods working."
     },
     {
@@ -76,7 +76,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Create new src/game/state/ directory for SaveData.ts and migrations.ts. The Zod schema must be importable from both client (game engine) and server (gameRouter) -- no browser-only or server-only imports in the schema module."
     },
     {
@@ -100,7 +100,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "This story does NOT include the beacon-save route or beforeunload handler -- those are in US-204. Focus on the core persistence engine."
     },
     {
@@ -118,7 +118,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "The shared upsert helper must accept userId + version + saveData and handle the Drizzle onConflictDoUpdate. withAuth() pattern: see existing protected routes for reference."
     },
     {
