@@ -6,10 +6,12 @@ import { World } from "~/game/ecs/World";
 import { CONFIG } from "~/game/config";
 import type { GameConfig } from "~/game/config";
 import type { GameEvent } from "~/game/types";
-import { CatType } from "~/game/types";
+import { CatType, ResourceType } from "~/game/types";
 import type { Vec3 } from "~/game/types";
 import type { CatCompanionManager } from "~/game/cats/CatCompanionManager";
 import type { Entity } from "~/game/ecs/Entity";
+import { createTransform } from "~/game/ecs/components/Transform";
+import { createResourceNode } from "~/game/ecs/components/ResourceNode";
 
 // ---------------------------------------------------------------------------
 // Minimal DOM stubs — node test env has no document/window
@@ -502,6 +504,228 @@ describe("Cats tab", () => {
       // Menu starts closed
       menuWithCats.update();
       expect(mockCatManager.getActiveCompanions).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// World tab
+// ---------------------------------------------------------------------------
+
+describe("World tab", () => {
+  // ---------------------------------------------------------------------------
+  // applyTimeScale
+  // ---------------------------------------------------------------------------
+
+  describe("applyTimeScale()", () => {
+    it("sets runtimeConfig.timeScale", () => {
+      menu.applyTimeScale(2.0);
+      expect(runtimeCfg.timeScale).toBe(2.0);
+    });
+
+    it("clamps to 0.25..4.0", () => {
+      menu.applyTimeScale(0.01);
+      expect(runtimeCfg.timeScale).toBe(0.25);
+      menu.applyTimeScale(99);
+      expect(runtimeCfg.timeScale).toBe(4.0);
+    });
+
+    it("stores timeScale in debugState", () => {
+      menu.applyTimeScale(1.5);
+      expect(menu.debugState.timeScale).toBe(1.5);
+    });
+
+    it("emits debug:value-changed with runtimeConfig.timeScale key", () => {
+      menu.applyTimeScale(2.0);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "runtimeConfig.timeScale", value: 2.0 }),
+      );
+    });
+
+    it("timeScale does not appear in GameState.serialize()", () => {
+      menu.applyTimeScale(3.0);
+      const save = gameState.serialize();
+      expect(JSON.stringify(save)).not.toContain("timeScale");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyReloadMap
+  // ---------------------------------------------------------------------------
+
+  describe("applyReloadMap()", () => {
+    it("calls the reloadMap callback when provided", () => {
+      const reloadCb = vi.fn();
+      const menuWithReload = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState,
+        eventBus,
+        runtimeCfg,
+        world,
+        undefined,
+        undefined,
+        undefined,
+        reloadCb,
+      );
+      menuWithReload.applyReloadMap();
+      expect(reloadCb).toHaveBeenCalledOnce();
+      menuWithReload.dispose();
+    });
+
+    it("is a no-op when reloadMap is not provided", () => {
+      // menu has no reloadMap — should not throw
+      expect(() => menu.applyReloadMap()).not.toThrow();
+    });
+
+    it("emits debug:value-changed with debug.reloadMap key", () => {
+      menu.applyReloadMap();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.reloadMap", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyWireframes
+  // ---------------------------------------------------------------------------
+
+  describe("applyWireframes()", () => {
+    it("calls sceneManager.toggleWireframes when provided", () => {
+      const mockScene = { toggleWireframes: vi.fn() };
+      const menuWithScene = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState,
+        eventBus,
+        runtimeCfg,
+        world,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        mockScene,
+      );
+      menuWithScene.applyWireframes(true);
+      expect(mockScene.toggleWireframes).toHaveBeenCalledWith(true);
+      menuWithScene.applyWireframes(false);
+      expect(mockScene.toggleWireframes).toHaveBeenCalledWith(false);
+      menuWithScene.dispose();
+    });
+
+    it("is a no-op when sceneManager is not provided", () => {
+      expect(() => menu.applyWireframes(true)).not.toThrow();
+    });
+
+    it("emits debug:value-changed with debug.wireframes key", () => {
+      menu.applyWireframes(true);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.wireframes", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyFillAllNodes / applyEmptyAllNodes
+  // ---------------------------------------------------------------------------
+
+  describe("applyFillAllNodes()", () => {
+    it("resets all ResourceNode cooldowns to 0", () => {
+      // Spawn two resource node entities in the world
+      const e1 = world.createEntity();
+      world.addComponent(e1, createTransform(0, 0.5, 0));
+      const node1 = createResourceNode(ResourceType.Grass, 1.5, 1, 30);
+      node1.cooldownRemaining = 25;
+      world.addComponent(e1, node1);
+
+      const e2 = world.createEntity();
+      world.addComponent(e2, createTransform(5, 0.5, 0));
+      const node2 = createResourceNode(ResourceType.Sticks, 1.5, 1, 45);
+      node2.cooldownRemaining = 40;
+      world.addComponent(e2, node2);
+
+      menu.applyFillAllNodes();
+
+      expect(node1.cooldownRemaining).toBe(0);
+      expect(node2.cooldownRemaining).toBe(0);
+    });
+
+    it("emits debug:value-changed with debug.fillAllNodes key", () => {
+      menu.applyFillAllNodes();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.fillAllNodes", value: true }),
+      );
+    });
+
+    it("is safe when no resource nodes exist", () => {
+      expect(() => menu.applyFillAllNodes()).not.toThrow();
+    });
+  });
+
+  describe("applyEmptyAllNodes()", () => {
+    it("sets all ResourceNode cooldowns to their respawnTime", () => {
+      const e1 = world.createEntity();
+      world.addComponent(e1, createTransform(0, 0.5, 0));
+      const node1 = createResourceNode(ResourceType.Grass, 1.5, 1, 30);
+      node1.cooldownRemaining = 0;
+      world.addComponent(e1, node1);
+
+      menu.applyEmptyAllNodes();
+
+      expect(node1.cooldownRemaining).toBe(30);
+    });
+
+    it("emits debug:value-changed with debug.emptyAllNodes key", () => {
+      menu.applyEmptyAllNodes();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.emptyAllNodes", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applySpawnResourceNode
+  // ---------------------------------------------------------------------------
+
+  describe("applySpawnResourceNode()", () => {
+    it("creates a new entity with ResourceNode component in world", () => {
+      const countBefore = world.query("ResourceNode").length;
+      menu.applySpawnResourceNode(ResourceType.Grass, 3, 7);
+      const countAfter = world.query("ResourceNode").length;
+      expect(countAfter).toBe(countBefore + 1);
+    });
+
+    it("new ResourceNode has correct resourceType", () => {
+      menu.applySpawnResourceNode(ResourceType.Water, 0, 0);
+      const nodes = world.query("ResourceNode");
+      const last = nodes[nodes.length - 1]!;
+      const node = world.getComponent<import("~/game/ecs/components/ResourceNode").ResourceNode>(last, "ResourceNode");
+      expect(node?.resourceType).toBe(ResourceType.Water);
+    });
+
+    it("emits debug:value-changed with debug.spawnResourceNode key", () => {
+      menu.applySpawnResourceNode(ResourceType.Sticks, 1, 2);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.spawnResourceNode" }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // entityCount via update()
+  // ---------------------------------------------------------------------------
+
+  describe("World tab entity count (update)", () => {
+    it("entityCount getter on World reflects alive entities", () => {
+      const before = world.entityCount;
+      world.createEntity();
+      world.createEntity();
+      expect(world.entityCount).toBe(before + 2);
+    });
+
+    it("entityCount decreases after destroyEntity", () => {
+      const e = world.createEntity();
+      const before = world.entityCount;
+      world.destroyEntity(e);
+      expect(world.entityCount).toBe(before - 1);
     });
   });
 });

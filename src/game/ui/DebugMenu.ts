@@ -5,8 +5,18 @@ import { CONFIG } from "../config";
 import type { World } from "../ecs/World";
 import type { CatCompanionManager } from "../cats/CatCompanionManager";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
-import { CatType } from "../types";
+import type { ResourceNode } from "../ecs/components/ResourceNode";
+import { createTransform } from "../ecs/components/Transform";
+import { createRenderable } from "../ecs/components/Renderable";
+import { createCollider } from "../ecs/components/Collider";
+import { createResourceNode } from "../ecs/components/ResourceNode";
+import { CatType, ResourceType } from "../types";
 import type { Vec3 } from "../types";
+
+// Minimal interface for map-reload dependency (avoids importing TestMap in this module)
+interface MapReloadFn { (): void; }
+// Minimal interface for SceneManager — only the wireframe toggle is needed here
+interface SceneManagerRef { toggleWireframes(enabled: boolean): void; }
 
 // ---------------------------------------------------------------------------
 // DebugMenu — tabbed dev overlay, dev builds only.
@@ -36,10 +46,15 @@ export class DebugMenu {
   private catLimitInput: HTMLInputElement | null = null;
   private _catStatusContainer: HTMLElement | null = null;
 
+  // World tab element refs
+  private _entityCountEl: HTMLElement | null = null;
+  private _wireframesEnabled = false;
+
   // Transient debug state — NEVER included in GameState.serialize()
-  readonly debugState: { godMode: boolean; speedMultiplier: number } = {
+  readonly debugState: { godMode: boolean; speedMultiplier: number; timeScale: number } = {
     godMode: false,
     speedMultiplier: 1.0,
+    timeScale: 1.0,
   };
 
   private readonly _baseWalkSpeed: number;
@@ -57,6 +72,10 @@ export class DebugMenu {
     private readonly catCompanionManager?: CatCompanionManager,
     // Optional: returns the player's current world position for force-summon placement.
     private readonly getPlayerPosition?: () => Vec3 | null,
+    // Optional: World tab — reloads the current map (terrain only, no entity respawn).
+    private readonly reloadMap?: MapReloadFn,
+    // Optional: World tab — scene manager for wireframe toggle.
+    private readonly sceneManager?: SceneManagerRef,
   ) {
     this._baseWalkSpeed = CONFIG.walkSpeed;
     if (process.env.NODE_ENV !== "development") return;
@@ -78,27 +97,41 @@ export class DebugMenu {
   }
 
   /**
-   * Refresh the Cats tab status display. Call once per render frame from Game.ts.
-   * No-ops when the menu is closed or catCompanionManager is not wired.
+   * Refresh dynamic displays (Cats status, World entity count).
+   * Call once per render frame from Game.ts.
+   * No-ops when the menu is closed.
    */
   update(): void {
-    if (!this._visible || !this._catStatusContainer || !this.catCompanionManager) return;
-    const active = this.catCompanionManager.getActiveCompanions();
-    this._catStatusContainer.innerHTML = "";
-    if (active.length === 0) {
-      const msg = document.createElement("div");
-      msg.style.cssText = "font-size:10px;color:rgba(255,255,255,0.3);";
-      msg.textContent = "No active cats";
-      this._catStatusContainer.appendChild(msg);
-      return;
+    if (!this._visible) return;
+
+    // Cats tab — active companion status
+    if (this._catStatusContainer && this.catCompanionManager) {
+      const active = this.catCompanionManager.getActiveCompanions();
+      this._catStatusContainer.innerHTML = "";
+      if (active.length === 0) {
+        const msg = document.createElement("div");
+        msg.style.cssText = "font-size:10px;color:rgba(255,255,255,0.3);";
+        msg.textContent = "No active cats";
+        this._catStatusContainer.appendChild(msg);
+      } else {
+        for (const entity of active) {
+          const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
+          const row = document.createElement("div");
+          row.style.cssText =
+            "font-size:10px;color:rgba(255,255,255,0.7);display:flex;justify-content:space-between;";
+          row.textContent = behavior ? `${behavior.catType} — ${behavior.state}` : `#${entity}`;
+          this._catStatusContainer.appendChild(row);
+        }
+      }
     }
-    for (const entity of active) {
-      const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
-      const row = document.createElement("div");
-      row.style.cssText =
-        "font-size:10px;color:rgba(255,255,255,0.7);display:flex;justify-content:space-between;";
-      row.textContent = behavior ? `${behavior.catType} — ${behavior.state}` : `#${entity}`;
-      this._catStatusContainer.appendChild(row);
+
+    // World tab — entity count
+    if (this._entityCountEl) {
+      const total = this.world.entityCount;
+      const resourceNodes = this.world.query("ResourceNode").length;
+      const catBehaviors = this.world.query("CatBehavior").length;
+      this._entityCountEl.textContent =
+        `${total} total  (cats: ${catBehaviors}, nodes: ${resourceNodes})`;
     }
   }
 
@@ -202,6 +235,104 @@ export class DebugMenu {
     this.eventBus.emit({ type: "debug:value-changed", key: "debug.dismissAll", value: true });
   }
 
+  // ── Apply methods — World tab ─────────────────────────────────────────────
+
+  applyTimeScale(scale: number): void {
+    const s = Math.max(0.25, Math.min(4.0, scale));
+    this.debugState.timeScale = s;
+    this.runtimeCfg.timeScale = s;
+    this.eventBus.emit({ type: "debug:value-changed", key: "runtimeConfig.timeScale", value: s });
+  }
+
+  applyReloadMap(): void {
+    this.reloadMap?.();
+    this.eventBus.emit({ type: "debug:value-changed", key: "debug.reloadMap", value: true });
+  }
+
+  applyWireframes(enabled: boolean): void {
+    this._wireframesEnabled = enabled;
+    this.sceneManager?.toggleWireframes(enabled);
+    this.eventBus.emit({
+      type: "debug:value-changed",
+      key: "debug.wireframes",
+      value: enabled,
+    });
+  }
+
+  /** Reset all ResourceNode cooldowns so every node is immediately gatherable. */
+  applyFillAllNodes(): void {
+    for (const entity of this.world.query("ResourceNode")) {
+      const node = this.world.getComponent<ResourceNode>(entity, "ResourceNode");
+      if (node) node.cooldownRemaining = 0;
+    }
+    this.eventBus.emit({ type: "debug:value-changed", key: "debug.fillAllNodes", value: true });
+  }
+
+  /** Set all ResourceNode cooldowns to their maximum respawn time. */
+  applyEmptyAllNodes(): void {
+    for (const entity of this.world.query("ResourceNode")) {
+      const node = this.world.getComponent<ResourceNode>(entity, "ResourceNode");
+      if (node) node.cooldownRemaining = node.respawnTime;
+    }
+    this.eventBus.emit({ type: "debug:value-changed", key: "debug.emptyAllNodes", value: true });
+  }
+
+  /**
+   * Spawn a new resource node entity at the given world position.
+   * RenderSystem will register the mesh on the next frame.
+   */
+  applySpawnResourceNode(resourceType: ResourceType, x: number, z: number): void {
+    const GATHER_TIME: Record<ResourceType, number> = {
+      [ResourceType.Grass]: 1.5,
+      [ResourceType.Sticks]: 1.5,
+      [ResourceType.Water]: 2.0,
+    };
+    const RESPAWN_TIME: Record<ResourceType, number> = {
+      [ResourceType.Grass]: 30,
+      [ResourceType.Sticks]: 45,
+      [ResourceType.Water]: 60,
+    };
+    const COLORS: Record<ResourceType, string> = {
+      [ResourceType.Grass]: "#7bc67e",
+      [ResourceType.Sticks]: "#8b6355",
+      [ResourceType.Water]: "#4fc3f7",
+    };
+
+    const entity = this.world.createEntity();
+    this.world.addComponent(entity, createTransform(x, 0.5, z));
+    this.world.addComponent(
+      entity,
+      createRenderable({
+        geometry: resourceType === ResourceType.Sticks ? "cylinder" : "sphere",
+        size: 0.4,
+        color: COLORS[resourceType],
+        castShadow: true,
+        emissive: COLORS[resourceType],
+        emissiveIntensity: 0.2,
+        outlineCategory: "resource",
+      }),
+    );
+    this.world.addComponent(
+      entity,
+      createCollider("circle", 0.5, {
+        isStatic: true,
+        isTrigger: true,
+        collisionLayer: 1,
+        collisionMask: 0,
+      }),
+    );
+    this.world.addComponent(
+      entity,
+      createResourceNode(resourceType, GATHER_TIME[resourceType]!, 1, RESPAWN_TIME[resourceType]!),
+    );
+
+    this.eventBus.emit({
+      type: "debug:value-changed",
+      key: "debug.spawnResourceNode",
+      value: { resourceType, x, z },
+    });
+  }
+
   dispose(): void {
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
@@ -220,6 +351,7 @@ export class DebugMenu {
     this.godModeCheckbox = null;
     this.catLimitInput = null;
     this._catStatusContainer = null;
+    this._entityCountEl = null;
   }
 
   // ── Private — panel construction ─────────────────────────────────────────
@@ -274,7 +406,7 @@ export class DebugMenu {
 
     this._buildPlayerTab(tabPanels.get("player")!);
     this._buildCatsTab(tabPanels.get("cats")!);
-    this._buildPlaceholderTab(tabPanels.get("world")!, "World tab — coming in US-208");
+    this._buildWorldTab(tabPanels.get("world")!);
     this._buildPlaceholderTab(tabPanels.get("session")!, "Session tab — coming in US-209");
 
     this.container.appendChild(panel);
@@ -497,6 +629,141 @@ export class DebugMenu {
     statusContainer.style.cssText = "display:flex;flex-direction:column;gap:3px;min-height:18px;";
     this._catStatusContainer = statusContainer;
     container.appendChild(statusContainer);
+  }
+
+  private _buildWorldTab(container: HTMLElement): void {
+    // ── Time scale ─────────────────────────────────────────────────────────
+    container.appendChild(
+      this._row("Time ×", this._buildRangeSlider({
+        min: 0.25, max: 4.0, step: 0.25,
+        value: 1.0,
+        onChange: (v) => this.applyTimeScale(v),
+        ref: () => {},
+        showValue: true,
+      })),
+    );
+
+    // ── Wireframes ─────────────────────────────────────────────────────────
+    const wireRow = document.createElement("div");
+    wireRow.style.cssText = "display:flex;align-items:center;gap:8px;";
+    const wireLabel = document.createElement("span");
+    wireLabel.style.cssText = "font-size:11px;color:rgba(255,255,255,0.55);min-width:72px;";
+    wireLabel.textContent = "Wireframes";
+    const wireCheckbox = document.createElement("input") as HTMLInputElement;
+    wireCheckbox.type = "checkbox";
+    wireCheckbox.checked = false;
+    wireCheckbox.style.cssText = "width:16px;height:16px;cursor:pointer;accent-color:#a3e635;";
+    wireCheckbox.addEventListener("change", () => this.applyWireframes(wireCheckbox.checked));
+    wireRow.appendChild(wireLabel);
+    wireRow.appendChild(wireCheckbox);
+    container.appendChild(wireRow);
+
+    // ── Reload map ─────────────────────────────────────────────────────────
+    const reloadRow = document.createElement("div");
+    reloadRow.style.cssText = "display:flex;justify-content:flex-end;";
+    const reloadBtn = document.createElement("button");
+    reloadBtn.textContent = "Reload Map";
+    reloadBtn.style.cssText =
+      "padding:3px 10px;background:rgba(255,200,50,0.1);border:1px solid rgba(255,200,50,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:11px;color:rgba(255,220,100,0.9);cursor:pointer;";
+    reloadBtn.addEventListener("click", () => this.applyReloadMap());
+    reloadRow.appendChild(reloadBtn);
+    container.appendChild(reloadRow);
+
+    // ── Entity count ────────────────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const entityHeader = document.createElement("div");
+    entityHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    entityHeader.textContent = "ENTITY COUNT";
+    container.appendChild(entityHeader);
+    const entityCountEl = document.createElement("div");
+    entityCountEl.style.cssText =
+      "font-size:10px;color:rgba(255,255,255,0.7);min-height:14px;";
+    this._entityCountEl = entityCountEl;
+    container.appendChild(entityCountEl);
+
+    // ── Resource node controls ──────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const nodeHeader = document.createElement("div");
+    nodeHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    nodeHeader.textContent = "RESOURCE NODES";
+    container.appendChild(nodeHeader);
+
+    const nodeBtnRow = document.createElement("div");
+    nodeBtnRow.style.cssText = "display:flex;gap:6px;";
+    const fillBtn = document.createElement("button");
+    fillBtn.textContent = "Fill All";
+    fillBtn.style.cssText =
+      "flex:1;padding:3px 6px;background:rgba(163,230,53,0.12);border:1px solid rgba(163,230,53,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(163,230,53,0.9);cursor:pointer;";
+    fillBtn.addEventListener("click", () => this.applyFillAllNodes());
+    const emptyBtn = document.createElement("button");
+    emptyBtn.textContent = "Empty All";
+    emptyBtn.style.cssText =
+      "flex:1;padding:3px 6px;background:rgba(255,100,100,0.1);border:1px solid rgba(255,100,100,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(255,150,150,0.9);cursor:pointer;";
+    emptyBtn.addEventListener("click", () => this.applyEmptyAllNodes());
+    nodeBtnRow.appendChild(fillBtn);
+    nodeBtnRow.appendChild(emptyBtn);
+    container.appendChild(nodeBtnRow);
+
+    // ── Spawn resource node ─────────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const spawnHeader = document.createElement("div");
+    spawnHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    spawnHeader.textContent = "SPAWN NODE";
+    container.appendChild(spawnHeader);
+
+    // Type select
+    const spawnRow1 = document.createElement("div");
+    spawnRow1.style.cssText = "display:flex;align-items:center;gap:6px;";
+    const typeLabel = document.createElement("span");
+    typeLabel.style.cssText = "font-size:11px;color:rgba(255,255,255,0.55);min-width:36px;";
+    typeLabel.textContent = "Type";
+    const typeSelect = document.createElement("select") as HTMLSelectElement;
+    typeSelect.style.cssText =
+      "flex:1;padding:3px 6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);" +
+      "border-radius:4px;font-family:monospace;font-size:11px;color:rgba(255,255,255,0.9);outline:none;";
+    for (const rt of [ResourceType.Grass, ResourceType.Sticks, ResourceType.Water]) {
+      const opt = document.createElement("option") as HTMLOptionElement;
+      opt.value = rt;
+      opt.textContent = rt;
+      typeSelect.appendChild(opt);
+    }
+    spawnRow1.appendChild(typeLabel);
+    spawnRow1.appendChild(typeSelect);
+    container.appendChild(spawnRow1);
+
+    // X / Z inputs + Spawn button
+    const spawnRow2 = document.createElement("div");
+    spawnRow2.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;";
+    const xInput = document.createElement("input") as HTMLInputElement;
+    xInput.type = "number";
+    xInput.placeholder = "X";
+    xInput.style.cssText = this._inputCss("52px");
+    const zInput = document.createElement("input") as HTMLInputElement;
+    zInput.type = "number";
+    zInput.placeholder = "Z";
+    zInput.style.cssText = this._inputCss("52px");
+    const spawnBtn = document.createElement("button");
+    spawnBtn.textContent = "Spawn";
+    spawnBtn.style.cssText =
+      "padding:3px 10px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);" +
+      "border-radius:4px;font-family:monospace;font-size:11px;color:rgba(255,255,255,0.85);cursor:pointer;";
+    spawnBtn.addEventListener("click", () => {
+      const x = parseFloat(xInput.value);
+      const z = parseFloat(zInput.value);
+      if (!isNaN(x) && !isNaN(z)) {
+        this.applySpawnResourceNode(typeSelect.value as ResourceType, x, z);
+      }
+    });
+    spawnRow2.appendChild(xInput);
+    spawnRow2.appendChild(zInput);
+    spawnRow2.appendChild(spawnBtn);
+    container.appendChild(spawnRow2);
   }
 
   private _buildPlaceholderTab(container: HTMLElement, message: string): void {

@@ -285,6 +285,13 @@ export class Game {
           const t = this.world.getComponent<Transform>(this.playerEntity, "Transform");
           return t ? { x: t.x, y: t.y, z: t.z } : null;
         },
+        // US-208: map reload callback (unload + reload without respawning nodes/player)
+        () => {
+          this.mapManager.unloadMap();
+          this.mapManager.loadMap(TestMap);
+        },
+        // US-208: sceneManager for wireframe toggle
+        this.sceneManager,
       );
     }
   }
@@ -718,27 +725,31 @@ export class Game {
     this.lastTime = time;
 
     // ── Fixed-timestep physics (may run 0, 1, or rarely 2 ticks per frame) ────
+    // timeScale (debug only) scales the dt fed to systems without changing the
+    // accumulator drain rate, so simulation speed changes without affecting frame
+    // scheduling. InputManager.poll() runs outside this loop and is unaffected.
     this.accumulator += realDt;
     while (this.accumulator >= FIXED_DT) {
-      this.movementSystem.update(this.world, FIXED_DT);
-      this.physics.step(FIXED_DT);
-      this.collisionSystem.update(this.world, FIXED_DT);
+      const scaledDt = FIXED_DT * runtimeConfig.timeScale;
+      this.movementSystem.update(this.world, scaledDt);
+      this.physics.step(scaledDt);
+      this.collisionSystem.update(this.world, scaledDt);
       // WaterSystem reacts to trigger events emitted by CollisionSystem above
-      this.waterSystem.update(this.world, FIXED_DT);
+      this.waterSystem.update(this.world, scaledDt);
       // OxygenSystem runs after WaterSystem so OxygenState is already present
-      this.oxygenSystem.update(this.world, FIXED_DT);
+      this.oxygenSystem.update(this.world, scaledDt);
       // CatAISystem drives generic state machine for all cats (Idle→Active→Expired)
-      this.catAISystem.update(this.world, FIXED_DT);
+      this.catAISystem.update(this.world, scaledDt);
       // ZoomiesSystem detects Expired and handles trail overlap + SpeedBoost
-      this.zoomiesSystem.update(this.world, FIXED_DT);
+      this.zoomiesSystem.update(this.world, scaledDt);
       // CuriositySystem reveals terrain on first Active tick and dismisses on Expired
-      this.curiositySystem.update(this.world, FIXED_DT);
+      this.curiositySystem.update(this.world, scaledDt);
       // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
-      this.pounceSystem.update(this.world, FIXED_DT);
+      this.pounceSystem.update(this.world, scaledDt);
       // GatheringSystem handles E-key resource gathering, cooldowns, and progress
-      this.gatheringSystem.update(this.world, FIXED_DT);
+      this.gatheringSystem.update(this.world, scaledDt);
       // YarnPickupSystem auto-collects yarn pickups on player proximity
-      this.yarnPickupSystem.update(this.world, FIXED_DT);
+      this.yarnPickupSystem.update(this.world, scaledDt);
       this.accumulator -= FIXED_DT;
     }
 
