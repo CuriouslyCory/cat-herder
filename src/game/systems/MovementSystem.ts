@@ -62,7 +62,11 @@ export class MovementSystem implements System {
         continue;
       }
 
-      const grounded = this.physics.isBodyGrounded(handle);
+      // Check both current and previous-frame grounded state to bridge the
+      // 1-frame lag where PhysicsEngine.step() hasn't run yet this tick.
+      const grounded =
+        this.physics.isBodyGrounded(handle) ||
+        this.physics.wasBodyGroundedLastFrame(handle);
 
       // ── 2. Coyote time ────────────────────────────────────────────────────
       // Arms when the player walks off an edge (grounded last frame → airborne

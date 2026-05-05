@@ -53,6 +53,9 @@ interface PhysicsBody {
   position: Vec3;
   velocity: Vec3;
   isGrounded: boolean;
+  /** Grounded state from the previous step — bridges the 1-frame lag
+   *  between PhysicsEngine.step() and MovementSystem reading the flag. */
+  wasGroundedLastFrame: boolean;
   /** When true, gravity is not applied — used for swimming entities. */
   noGravity: boolean;
 }
@@ -95,6 +98,7 @@ export class PhysicsEngine {
       position: { x: 0, y: 0, z: 0 },
       velocity: { x: 0, y: 0, z: 0 },
       isGrounded: false,
+      wasGroundedLastFrame: false,
       noGravity: false,
     });
     this.entityToHandle.set(entity, handle);
@@ -136,6 +140,10 @@ export class PhysicsEngine {
 
   isBodyGrounded(handle: BodyHandle): boolean {
     return this.bodies.get(handle)?.isGrounded ?? false;
+  }
+
+  wasBodyGroundedLastFrame(handle: BodyHandle): boolean {
+    return this.bodies.get(handle)?.wasGroundedLastFrame ?? false;
   }
 
   /** Reverse-lookup: entity → BodyHandle, or null if not registered. */
@@ -245,6 +253,7 @@ export class PhysicsEngine {
 
     // Ground detection — downward raycast from body center
     // Max distance: body radius + ground snap tolerance
+    body.wasGroundedLastFrame = body.isGrounded;
     body.isGrounded = false;
     const groundMaxDist = body.config.size + cfg.groundSnapTolerance;
     const groundHit = this.raycastDownward(newPos, groundMaxDist, body);
@@ -257,7 +266,7 @@ export class PhysicsEngine {
 
     // Flat-floor fallback: prevents dynamic bodies from falling below the base terrain
     // (y = 0). Elevated platforms are handled by registered static physics bodies.
-    if (!body.isGrounded && newPos.y < body.config.size) {
+    if (!body.isGrounded && newPos.y <= body.config.size) {
       newPos.y = body.config.size;
       if (body.velocity.y < 0) body.velocity.y = 0;
       body.isGrounded = true;

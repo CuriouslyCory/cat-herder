@@ -89,7 +89,7 @@ const BASE_CONFIG: GameConfig = {
   gravity: -12,
   collisionRadius: 0.4,
   skinWidth: 0.1,
-  groundSnapTolerance: 0.05,
+  groundSnapTolerance: 0.15,
 
   // Oxygen
   oxygenMax: 100,            // 100% max

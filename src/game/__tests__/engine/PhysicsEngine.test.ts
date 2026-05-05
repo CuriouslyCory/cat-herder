@@ -349,6 +349,108 @@ describe("PhysicsEngine", () => {
     });
   });
 
+  describe("grounded stability", () => {
+    it("stays grounded on flat floor across multiple frames (no oscillation)", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(handle, { x: 0, y: 0.4, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: -1, z: 0 });
+
+      // First step: lands on flat floor
+      physics.step(1 / 60);
+      expect(physics.isBodyGrounded(handle)).toBe(true);
+
+      // Subsequent steps: should remain grounded with zero velocity
+      for (let i = 0; i < 10; i++) {
+        physics.step(1 / 60);
+        expect(physics.isBodyGrounded(handle)).toBe(true);
+        expect(physics.getVelocity(handle)!.y).toBe(0);
+      }
+    });
+
+    it("stays grounded when resting exactly at body.config.size", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      // Place exactly at the flat-floor threshold
+      physics.setPosition(handle, { x: 0, y: 0.4, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: 0, z: 0 });
+
+      for (let i = 0; i < 10; i++) {
+        physics.step(1 / 60);
+        expect(physics.isBodyGrounded(handle)).toBe(true);
+      }
+    });
+
+    it("tracks wasGroundedLastFrame correctly", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+
+      // Start airborne
+      physics.setPosition(handle, { x: 0, y: 5, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: 0, z: 0 });
+
+      expect(physics.wasBodyGroundedLastFrame(handle)).toBe(false);
+
+      // Step until grounded
+      for (let i = 0; i < 120; i++) {
+        physics.step(1 / 60);
+        if (physics.isBodyGrounded(handle)) break;
+      }
+      expect(physics.isBodyGrounded(handle)).toBe(true);
+
+      // Next step: wasGroundedLastFrame should be true
+      physics.step(1 / 60);
+      expect(physics.wasBodyGroundedLastFrame(handle)).toBe(true);
+    });
+
+    it("wasGroundedLastFrame becomes false after jumping off", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(handle, { x: 0, y: 0.4, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: -1, z: 0 });
+
+      // Land
+      physics.step(1 / 60);
+      expect(physics.isBodyGrounded(handle)).toBe(true);
+
+      // Jump: apply upward velocity
+      physics.setVelocity(handle, { x: 0, y: 5, z: 0 });
+      physics.step(1 / 60);
+
+      // isGrounded should be false (airborne), wasGroundedLastFrame should be true
+      expect(physics.isBodyGrounded(handle)).toBe(false);
+      expect(physics.wasBodyGroundedLastFrame(handle)).toBe(true);
+
+      // Another step: now both should be false
+      physics.step(1 / 60);
+      expect(physics.wasBodyGroundedLastFrame(handle)).toBe(false);
+    });
+  });
+
   describe("raycast", () => {
     it("hits a sphere body", () => {
       physics.addBody(1, {
