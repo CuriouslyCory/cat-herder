@@ -100,7 +100,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "This story does NOT include the beacon-save route or beforeunload handler -- those are in US-204. Focus on the core persistence engine."
     },
     {

@@ -103,3 +103,23 @@
   - The active MIGRATIONS chain is empty at CURRENT_VERSION 0.1; migration_0_1_to_0_2 is exported but not in the chain yet -- add it when bumping to 0.2
   - GameTrpcAdapter in Game.ts was using Record<string, unknown> for saveData -- now uses SaveData from state/SaveData.ts; Game.ts placeholder auto-save was removed
 ---
+
+## 2026-05-05 - US-203
+- Created src/game/state/Persistence.ts: save/load/auto-save orchestrator
+- Key design: GameState uses internal { player, world } format; SaveData.ts Zod schema uses { character, world, session } — Persistence bridges via toExternalSaveData/fromExternalSaveData helpers (both exported for US-205)
+- save(): serializes, validates with saveDataSchema, upserts via trpcAdapter, clears isDirty, emits save:failed on error (never crashes)
+- load(): calls trpcAdapter.getSave(), runs migrateIfNeeded, returns ExternalSaveData | null (propagates errors for caller to handle)
+- startAutoSave(intervalMs): setInterval; skips if !isDirty; position-only dirty is throttled 5s (tracked via _positionHasChangedSinceLastSave + _lastPositionDirtyAt)
+- forceSave(): calls save() directly, bypasses auto-save dirty checks
+- restoreFromSave(data): calls fromExternalSaveData then gameState.restore() — used by US-205 load flow
+- dispose(): clears interval + all onChange subscriptions
+- Extended GameTrpcAdapter with getSave(): Promise<{version, saveData} | null>; implemented in GameCanvas.tsx via useQuery refetch pattern (enabled:false, staleTime:Infinity)
+- Added save:failed event to GameEvent discriminated union in types.ts
+- 34 new tests in src/game/__tests__/engine/Persistence.test.ts (222 total pass)
+- All checks pass: pnpm test && pnpm lint && pnpm typecheck && pnpm build
+- **Learnings for future iterations:**
+  - GameState.serialize() returns { player, world }; saveDataSchema expects { character, world, session } — the mapping is in Persistence.ts (toExternalSaveData/fromExternalSaveData), not in GameState
+  - Position dirty throttle: subscribe to onChange('player.position') to set _lastPositionDirtyAt + _positionHasChangedSinceLastSave; non-position paths each subscribe to set _hasNonPositionDirty; auto-save checks both flags
+  - GameCanvas.tsx getSave() uses useQuery with enabled:false + refetch — tRPC returns saveData as unknown so cast to Record<string,unknown> is needed
+  - vi.useFakeTimers() mocks Date.now() too, so timestamp comparisons in throttle logic work correctly in tests; use vi.advanceTimersByTimeAsync() to run intervals + flush microtasks
+---
