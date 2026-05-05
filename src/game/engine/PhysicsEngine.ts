@@ -252,16 +252,18 @@ export class PhysicsEngine {
     };
 
     // Ground detection — downward raycast from body center
-    // Max distance: body radius + ground snap tolerance
+    // Only when falling or at rest; skip while rising so the raycast doesn't
+    // re-ground the body mid-jump on nearby surfaces (e.g. loaf platforms).
     body.wasGroundedLastFrame = body.isGrounded;
     body.isGrounded = false;
-    const groundMaxDist = body.config.size + cfg.groundSnapTolerance;
-    const groundHit = this.raycastDownward(newPos, groundMaxDist, body);
-    if (groundHit) {
-      // Snap so the body base (center - radius) rests on the ground surface
-      newPos.y = groundHit.point.y + body.config.size;
-      if (body.velocity.y < 0) body.velocity.y = 0;
-      body.isGrounded = true;
+    if (body.velocity.y <= 0) {
+      const groundMaxDist = body.config.size + cfg.groundSnapTolerance;
+      const groundHit = this.raycastDownward(newPos, groundMaxDist, body);
+      if (groundHit) {
+        newPos.y = groundHit.point.y + body.config.size;
+        if (body.velocity.y < 0) body.velocity.y = 0;
+        body.isGrounded = true;
+      }
     }
 
     // Flat-floor fallback: prevents dynamic bodies from falling below the base terrain
