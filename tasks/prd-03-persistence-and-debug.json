@@ -196,7 +196,7 @@
         "Verify in browser using dev-browser skill: open World tab, adjust time scale, toggle wireframes, fill/empty nodes."
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on DebugMenu framework from US-206. The wireframe toggle touches SceneManager -- keep the Three.js layer logic minimal (one wireframe material, iterate collider entities)."
     },
     {
@@ -232,7 +232,7 @@
         "Verify in browser using dev-browser skill: trigger a save (via debug menu or auto-save), confirm icon appears and fades."
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Follows existing HUD pattern: build DOM in constructor, update via setter methods. The save/error state comes through the same UIManager.update() pipeline as hearts/oxygen/inventory."
     }
   ]

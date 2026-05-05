@@ -233,3 +233,25 @@
   - `vi.fn()` produces `Mock<Procedure | Constructable>` — cast with `as unknown as () => void` when passing as a typed callback parameter
   - `window.confirm` requires `vi.stubGlobal("window", { confirm: vi.fn(() => true) })` in node test env; main afterEach's `vi.unstubAllGlobals()` handles cleanup
 ---
+
+## 2026-05-05 - US-208 (PRD JSON fix)
+- US-208 (World tab) was already implemented but prd-03-persistence-and-debug.json still had passes:false
+- Updated passes to true; no code changes needed
+---
+
+## 2026-05-05 - US-210
+- Added HUD save indicator: small 💾 icon at top:38px;right:8px (below FPS counter in dev)
+- Success variant: appears on `lastSavedAt` timestamp change, shows 2 s then fades out
+- Error variant: appears on `saveError` becoming non-null, shows 5 s with red ✕ and title=errorMessage
+- Persistence.save() now emits `save:complete` event after successful upsert (was already declared in GameEvent union)
+- HUD.setSaveIndicator(lastSavedAt, saveError) deduplicates via timestamp/string comparison — only fires once per new value
+- UIManager.HUDState extended with `lastSavedAt?: number | null` and `saveError?: string | null`
+- Game.ts: subscribes to `save:failed` → sets `_saveError`, auto-clears after 5.1 s; passes both fields via buildHUDState()
+- 11 new tests in src/game/__tests__/engine/HUD.test.ts — DOM stubbed via vi.stubGlobal; vi.useFakeTimers() for setTimeout assertions
+- 336 total tests pass; pnpm lint, typecheck, build all clean
+- **Learnings for future iterations:**
+  - HUD test mock element must include `dataset: {}` — HUD.buildActiveCatBar() writes to `list.dataset["hintId"]` before we get to the save indicator
+  - The save indicator element is identifiable in tests by searching createdEls for the one whose style.cssText includes "transition:opacity 0.3s"
+  - `_saveErrorSeen` is reset to null inside the 5 s timeout so a repeat of the same error string re-triggers after the previous error window closes
+  - 5.1 s clearTimeout in Game.ts (vs 5 s in HUD) gives the HUD time to finish its own transition before Game.ts clears the error — prevents a single-frame flicker
+---
