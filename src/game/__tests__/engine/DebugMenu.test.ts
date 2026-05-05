@@ -3,6 +3,7 @@ import { GameState } from "~/game/engine/GameState";
 import { EventBus } from "~/game/engine/EventBus";
 import { DebugMenu } from "~/game/ui/DebugMenu";
 import { World } from "~/game/ecs/World";
+import type { Persistence } from "~/game/state/Persistence";
 import { CONFIG } from "~/game/config";
 import type { GameConfig } from "~/game/config";
 import type { GameEvent } from "~/game/types";
@@ -726,6 +727,177 @@ describe("World tab", () => {
       const before = world.entityCount;
       world.destroyEntity(e);
       expect(world.entityCount).toBe(before - 1);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session tab
+// ---------------------------------------------------------------------------
+
+describe("Session tab", () => {
+  type MockPersistence = {
+    forceSave: ReturnType<typeof vi.fn>;
+    load: ReturnType<typeof vi.fn>;
+    restoreFromSave: ReturnType<typeof vi.fn>;
+    deleteSave: ReturnType<typeof vi.fn>;
+    lastSavedAt: number | null;
+    isSaving: boolean;
+    startAutoSave: ReturnType<typeof vi.fn>;
+    stopAutoSave: ReturnType<typeof vi.fn>;
+  };
+
+  let mockPersistence: MockPersistence;
+  let onSaveResetCb: ReturnType<typeof vi.fn>;
+  let menuWithSession: DebugMenu;
+
+  beforeEach(() => {
+    mockPersistence = {
+      forceSave: vi.fn(() => Promise.resolve()),
+      load: vi.fn(() => Promise.resolve(null)),
+      restoreFromSave: vi.fn(),
+      deleteSave: vi.fn(() => Promise.resolve()),
+      lastSavedAt: null,
+      isSaving: false,
+      startAutoSave: vi.fn(),
+      stopAutoSave: vi.fn(),
+    };
+    onSaveResetCb = vi.fn();
+    menuWithSession = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockPersistence as unknown as Persistence,
+      onSaveResetCb as unknown as () => void,
+    );
+  });
+
+  afterEach(() => {
+    menuWithSession.dispose();
+    // Outer afterEach handles vi.unstubAllGlobals() — do not clear it here.
+  });
+
+  // ── applyForceSave ────────────────────────────────────────────────────────
+
+  describe("applyForceSave()", () => {
+    it("calls persistence.forceSave()", () => {
+      menuWithSession.applyForceSave();
+      expect(mockPersistence.forceSave).toHaveBeenCalledOnce();
+    });
+
+    it("is a no-op when persistence is not provided", () => {
+      const menuNoPersistence = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState, eventBus, runtimeCfg, world,
+      );
+      expect(() => menuNoPersistence.applyForceSave()).not.toThrow();
+      menuNoPersistence.dispose();
+    });
+  });
+
+  // ── applyForceLoad ────────────────────────────────────────────────────────
+
+  describe("applyForceLoad()", () => {
+    it("calls persistence.load()", () => {
+      menuWithSession.applyForceLoad();
+      expect(mockPersistence.load).toHaveBeenCalledOnce();
+    });
+
+    it("calls restoreFromSave when load returns data", async () => {
+      const fakeData = { character: {}, world: {}, session: {} };
+      mockPersistence.load.mockResolvedValue(fakeData);
+      menuWithSession.applyForceLoad();
+      await Promise.resolve();
+      expect(mockPersistence.restoreFromSave).toHaveBeenCalledWith(fakeData);
+    });
+
+    it("does not call restoreFromSave when load returns null", async () => {
+      mockPersistence.load.mockResolvedValue(null);
+      menuWithSession.applyForceLoad();
+      await Promise.resolve();
+      expect(mockPersistence.restoreFromSave).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── applyResetAllState ────────────────────────────────────────────────────
+
+  describe("applyResetAllState()", () => {
+    it("calls persistence.deleteSave() when user confirms", () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => true) });
+      menuWithSession.applyResetAllState();
+      expect(mockPersistence.deleteSave).toHaveBeenCalledOnce();
+    });
+
+    it("does not call deleteSave when user cancels", () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => false) });
+      menuWithSession.applyResetAllState();
+      expect(mockPersistence.deleteSave).not.toHaveBeenCalled();
+    });
+
+    it("calls onSaveReset callback after deleteSave resolves", async () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => true) });
+      menuWithSession.applyResetAllState();
+      await Promise.resolve();
+      await Promise.resolve(); // flush two microtask ticks for the .then chain
+      expect(onSaveResetCb).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── applyToggleAutoSave ───────────────────────────────────────────────────
+
+  describe("applyToggleAutoSave()", () => {
+    it("calls stopAutoSave when auto-save is currently enabled", () => {
+      menuWithSession.applyToggleAutoSave();
+      expect(mockPersistence.stopAutoSave).toHaveBeenCalledOnce();
+    });
+
+    it("calls startAutoSave when auto-save is currently disabled", () => {
+      menuWithSession.applyToggleAutoSave(); // disable
+      menuWithSession.applyToggleAutoSave(); // re-enable
+      expect(mockPersistence.startAutoSave).toHaveBeenCalledOnce();
+    });
+
+    it("emits debug:value-changed with debug.autoSave key", () => {
+      menuWithSession.applyToggleAutoSave();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.autoSave" }),
+      );
+    });
+  });
+
+  // ── update() — Session diagnostics ───────────────────────────────────────
+
+  describe("update() - session diagnostics", () => {
+    it("updates FPS display when menu is open", () => {
+      menuWithSession.toggle();
+      menuWithSession.update(1 / 30);
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const fpsEl = (menuWithSession as unknown as WithPrivate)._sessionFpsEl;
+      if (fpsEl) expect(fpsEl.textContent).toBe("30 fps");
+    });
+
+    it("does not update FPS display when menu is closed", () => {
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const before = (menuWithSession as unknown as WithPrivate)._sessionFpsEl?.textContent;
+      menuWithSession.update(1 / 30);
+      const after = (menuWithSession as unknown as WithPrivate)._sessionFpsEl?.textContent;
+      expect(after).toBe(before); // no change while closed
+    });
+
+    it("uses last known dt when update() is called without dt", () => {
+      menuWithSession.toggle();
+      menuWithSession.update(1 / 60); // seed the dt
+      menuWithSession.update();       // no dt — should reuse last
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const fpsEl = (menuWithSession as unknown as WithPrivate)._sessionFpsEl;
+      if (fpsEl) expect(fpsEl.textContent).toBe("60 fps");
     });
   });
 });

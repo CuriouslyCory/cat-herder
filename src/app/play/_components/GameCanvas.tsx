@@ -51,6 +51,8 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   const { mutateAsync: upsertSaveMutateAsync } =
     api.game.upsertSave.useMutation();
+  const { mutateAsync: deleteSaveMutateAsync } =
+    api.game.deleteSave.useMutation();
   const { refetch: refetchSave } = api.game.getSave.useQuery(undefined, {
     enabled: false,
     staleTime: Infinity,
@@ -59,9 +61,11 @@ export function GameCanvas({ user }: GameCanvasProps) {
   // Refs are initialized once; synced after every commit so the game loop always
   // calls the latest function without needing to recreate the stable adapter.
   const upsertSaveRef = useRef(upsertSaveMutateAsync);
+  const deleteSaveRef = useRef(deleteSaveMutateAsync);
   const refetchSaveRef = useRef(refetchSave);
   useEffect(() => {
     upsertSaveRef.current = upsertSaveMutateAsync;
+    deleteSaveRef.current = deleteSaveMutateAsync;
     refetchSaveRef.current = refetchSave;
   });
 
@@ -74,6 +78,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
         if (!result.data) return null;
         return result.data as { version: string; saveData: Record<string, unknown> };
       },
+      deleteSave: () => deleteSaveRef.current(),
     }),
     [], // stable for the lifetime of this component mount
   );

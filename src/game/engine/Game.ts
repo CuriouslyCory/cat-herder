@@ -72,6 +72,7 @@ export interface GameTrpcAdapter {
     saveData: SaveData;
   }): Promise<void>;
   getSave(): Promise<{ version: string; saveData: Record<string, unknown> } | null>;
+  deleteSave(): Promise<void>;
 }
 
 export interface GameOpts {
@@ -292,6 +293,12 @@ export class Game {
         },
         // US-208: sceneManager for wireframe toggle
         this.sceneManager,
+        // US-209: persistence for Session tab (force save/load/reset)
+        this.persistence,
+        // US-209: after save is deleted, reload the page so game starts fresh
+        () => {
+          if (typeof window !== "undefined") window.location.reload();
+        },
       );
     }
   }
@@ -760,7 +767,7 @@ export class Game {
     this.renderSystem.update(this.world, realDt);
     this.visualEffectsSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
-    this.debugMenu?.update();
+    this.debugMenu?.update(realDt);
     this.sceneManager.render();
 
     // ── Input bookkeeping (end of frame) ───────────────────────────────────────

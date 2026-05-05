@@ -173,6 +173,10 @@ export class Persistence {
     return this.save();
   }
 
+  async deleteSave(): Promise<void> {
+    await this.trpcAdapter.deleteSave();
+  }
+
   restoreFromSave(data: ExternalSaveData): void {
     this.gameState.restore(fromExternalSaveData(data));
   }

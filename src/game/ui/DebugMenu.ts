@@ -17,6 +17,17 @@ import type { Vec3 } from "../types";
 interface MapReloadFn { (): void; }
 // Minimal interface for SceneManager — only the wireframe toggle is needed here
 interface SceneManagerRef { toggleWireframes(enabled: boolean): void; }
+// Minimal interface for Persistence — only the Session tab needs.
+interface PersistenceLike {
+  forceSave(): Promise<void>;
+  load(): Promise<unknown>;
+  restoreFromSave(data: unknown): void;
+  deleteSave(): Promise<void>;
+  readonly lastSavedAt: number | null;
+  readonly isSaving: boolean;
+  startAutoSave(intervalMs: number): void;
+  stopAutoSave(): void;
+}
 
 // ---------------------------------------------------------------------------
 // DebugMenu — tabbed dev overlay, dev builds only.
@@ -50,6 +61,18 @@ export class DebugMenu {
   private _entityCountEl: HTMLElement | null = null;
   private _wireframesEnabled = false;
 
+  // Session tab element refs
+  private _sessionFpsEl: HTMLElement | null = null;
+  private _sessionLastSavedEl: HTMLElement | null = null;
+  private _sessionTimeEl: HTMLElement | null = null;
+  private _sessionAutoSaveStatusEl: HTMLElement | null = null;
+  private _sessionFeedbackEl: HTMLElement | null = null;
+
+  // Session diagnostics state
+  private _sessionStartTime = 0;
+  private _sessionLastDt = 1 / 60;
+  private _isAutoSaveEnabled = true;
+
   // Transient debug state — NEVER included in GameState.serialize()
   readonly debugState: { godMode: boolean; speedMultiplier: number; timeScale: number } = {
     godMode: false,
@@ -76,9 +99,14 @@ export class DebugMenu {
     private readonly reloadMap?: MapReloadFn,
     // Optional: World tab — scene manager for wireframe toggle.
     private readonly sceneManager?: SceneManagerRef,
+    // Optional: Session tab — persistence engine for save/load/reset.
+    private readonly persistence?: PersistenceLike,
+    // Optional: Session tab — called after deleteSave() succeeds (e.g. reload page).
+    private readonly onSaveReset?: () => void,
   ) {
     this._baseWalkSpeed = CONFIG.walkSpeed;
     if (process.env.NODE_ENV !== "development") return;
+    this._sessionStartTime = Date.now();
     this._build();
     this._registerKeyboard();
   }
@@ -97,12 +125,16 @@ export class DebugMenu {
   }
 
   /**
-   * Refresh dynamic displays (Cats status, World entity count).
+   * Refresh dynamic displays (Cats status, World entity count, Session diagnostics).
    * Call once per render frame from Game.ts.
    * No-ops when the menu is closed.
    */
-  update(): void {
+  update(dt?: number): void {
     if (!this._visible) return;
+
+    if (dt !== undefined && dt > 0) {
+      this._sessionLastDt = dt;
+    }
 
     // Cats tab — active companion status
     if (this._catStatusContainer && this.catCompanionManager) {
@@ -132,6 +164,25 @@ export class DebugMenu {
       const catBehaviors = this.world.query("CatBehavior").length;
       this._entityCountEl.textContent =
         `${total} total  (cats: ${catBehaviors}, nodes: ${resourceNodes})`;
+    }
+
+    // Session tab — FPS
+    if (this._sessionFpsEl && this._sessionLastDt > 0) {
+      this._sessionFpsEl.textContent = `${Math.round(1 / this._sessionLastDt)} fps`;
+    }
+    // Session tab — last saved
+    if (this._sessionLastSavedEl) {
+      const ts = this.persistence?.lastSavedAt;
+      this._sessionLastSavedEl.textContent = ts
+        ? new Date(ts).toLocaleTimeString()
+        : "Never";
+    }
+    // Session tab — elapsed session time
+    if (this._sessionTimeEl && this._sessionStartTime > 0) {
+      const elapsed = Math.floor((Date.now() - this._sessionStartTime) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      this._sessionTimeEl.textContent = `${m}m ${String(s).padStart(2, "0")}s`;
     }
   }
 
@@ -333,6 +384,67 @@ export class DebugMenu {
     });
   }
 
+  // ── Apply methods — Session tab ───────────────────────────────────────────
+
+  applyForceSave(): void {
+    if (!this.persistence) return;
+    this._setSessionFeedback("Saving…");
+    void this.persistence.forceSave().then(() => {
+      this._setSessionFeedback("Saved!");
+      setTimeout(() => this._setSessionFeedback(""), 2000);
+    });
+  }
+
+  applyForceLoad(): void {
+    if (!this.persistence) return;
+    this._setSessionFeedback("Loading…");
+    void this.persistence.load().then((data) => {
+      if (!data) {
+        this._setSessionFeedback("No save found");
+        return;
+      }
+      this.persistence!.restoreFromSave(data);
+      this._setSessionFeedback("Restored!");
+      setTimeout(() => this._setSessionFeedback(""), 2000);
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this._setSessionFeedback(`Error: ${msg}`);
+    });
+  }
+
+  applyResetAllState(): void {
+    if (!this.persistence) return;
+    if (!window.confirm("Are you sure? This deletes your save.")) return;
+    this._setSessionFeedback("Resetting…");
+    void this.persistence.deleteSave().then(() => {
+      this.onSaveReset?.();
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this._setSessionFeedback(`Error: ${msg}`);
+    });
+  }
+
+  applyToggleAutoSave(): void {
+    if (!this.persistence) return;
+    if (this._isAutoSaveEnabled) {
+      this.persistence.stopAutoSave();
+      this._isAutoSaveEnabled = false;
+    } else {
+      this.persistence.startAutoSave(CONFIG.autoSaveIntervalMs);
+      this._isAutoSaveEnabled = true;
+    }
+    if (this._sessionAutoSaveStatusEl) {
+      this._sessionAutoSaveStatusEl.textContent = this._isAutoSaveEnabled
+        ? `Enabled (every ${CONFIG.autoSaveIntervalMs / 1000}s)`
+        : "Disabled";
+    }
+    this.eventBus.emit({
+      type: "debug:value-changed",
+      key: "debug.autoSave",
+      value: this._isAutoSaveEnabled,
+    });
+  }
+
   dispose(): void {
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
@@ -352,6 +464,11 @@ export class DebugMenu {
     this.catLimitInput = null;
     this._catStatusContainer = null;
     this._entityCountEl = null;
+    this._sessionFpsEl = null;
+    this._sessionLastSavedEl = null;
+    this._sessionTimeEl = null;
+    this._sessionAutoSaveStatusEl = null;
+    this._sessionFeedbackEl = null;
   }
 
   // ── Private — panel construction ─────────────────────────────────────────
@@ -407,7 +524,7 @@ export class DebugMenu {
     this._buildPlayerTab(tabPanels.get("player")!);
     this._buildCatsTab(tabPanels.get("cats")!);
     this._buildWorldTab(tabPanels.get("world")!);
-    this._buildPlaceholderTab(tabPanels.get("session")!, "Session tab — coming in US-209");
+    this._buildSessionTab(tabPanels.get("session")!);
 
     this.container.appendChild(panel);
     this.panel = panel;
@@ -764,6 +881,128 @@ export class DebugMenu {
     spawnRow2.appendChild(zInput);
     spawnRow2.appendChild(spawnBtn);
     container.appendChild(spawnRow2);
+  }
+
+  private _buildSessionTab(container: HTMLElement): void {
+    if (!this.persistence) {
+      this._buildPlaceholderTab(container, "Session tab — persistence not wired");
+      return;
+    }
+
+    // ── Save / Load ────────────────────────────────────────────────────────
+    const saveLoadHeader = document.createElement("div");
+    saveLoadHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    saveLoadHeader.textContent = "SAVE / LOAD";
+    container.appendChild(saveLoadHeader);
+
+    const feedbackEl = document.createElement("div");
+    feedbackEl.style.cssText =
+      "font-size:10px;color:rgba(163,230,53,0.8);min-height:14px;text-align:center;";
+    this._sessionFeedbackEl = feedbackEl;
+    container.appendChild(feedbackEl);
+
+    const saveLoadBtns = document.createElement("div");
+    saveLoadBtns.style.cssText = "display:flex;gap:6px;";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.textContent = "Force Save";
+    saveBtn.style.cssText =
+      "flex:1;padding:3px 6px;background:rgba(163,230,53,0.12);border:1px solid rgba(163,230,53,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(163,230,53,0.9);cursor:pointer;";
+    saveBtn.addEventListener("click", () => this.applyForceSave());
+
+    const loadBtn = document.createElement("button");
+    loadBtn.textContent = "Force Load";
+    loadBtn.style.cssText =
+      "flex:1;padding:3px 6px;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(150,200,255,0.9);cursor:pointer;";
+    loadBtn.addEventListener("click", () => this.applyForceLoad());
+
+    saveLoadBtns.appendChild(saveBtn);
+    saveLoadBtns.appendChild(loadBtn);
+    container.appendChild(saveLoadBtns);
+
+    // ── Reset ──────────────────────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const resetRow = document.createElement("div");
+    resetRow.style.cssText = "display:flex;justify-content:flex-end;";
+    const resetBtn = document.createElement("button");
+    resetBtn.textContent = "Reset All State";
+    resetBtn.style.cssText =
+      "padding:3px 10px;background:rgba(255,50,50,0.12);border:1px solid rgba(255,50,50,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:11px;color:rgba(255,120,120,0.9);cursor:pointer;";
+    resetBtn.addEventListener("click", () => this.applyResetAllState());
+    resetRow.appendChild(resetBtn);
+    container.appendChild(resetRow);
+
+    // ── Diagnostics ────────────────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const diagHeader = document.createElement("div");
+    diagHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    diagHeader.textContent = "DIAGNOSTICS";
+    container.appendChild(diagHeader);
+
+    const diagCss = "font-size:10px;color:rgba(255,255,255,0.6);min-height:14px;";
+
+    const lastSavedLabel = document.createElement("div");
+    lastSavedLabel.style.cssText = diagCss;
+    const lastSavedEl = document.createElement("span");
+    this._sessionLastSavedEl = lastSavedEl;
+    lastSavedEl.textContent = "Never";
+    lastSavedLabel.textContent = "Last saved: ";
+    lastSavedLabel.appendChild(lastSavedEl);
+    container.appendChild(lastSavedLabel);
+
+    const fpsLabel = document.createElement("div");
+    fpsLabel.style.cssText = diagCss;
+    const fpsEl = document.createElement("span");
+    this._sessionFpsEl = fpsEl;
+    fpsEl.textContent = "-- fps";
+    fpsLabel.textContent = "FPS: ";
+    fpsLabel.appendChild(fpsEl);
+    container.appendChild(fpsLabel);
+
+    const timeLabel = document.createElement("div");
+    timeLabel.style.cssText = diagCss;
+    const timeEl = document.createElement("span");
+    this._sessionTimeEl = timeEl;
+    timeEl.textContent = "0m 00s";
+    timeLabel.textContent = "Session: ";
+    timeLabel.appendChild(timeEl);
+    container.appendChild(timeLabel);
+
+    // ── Auto-save ──────────────────────────────────────────────────────────
+    container.appendChild(this._divider());
+    const autoSaveHeader = document.createElement("div");
+    autoSaveHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    autoSaveHeader.textContent = "AUTO-SAVE";
+    container.appendChild(autoSaveHeader);
+
+    const autoSaveRow = document.createElement("div");
+    autoSaveRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;";
+
+    const autoSaveStatusEl = document.createElement("span");
+    autoSaveStatusEl.style.cssText = "font-size:10px;color:rgba(255,255,255,0.6);flex:1;";
+    autoSaveStatusEl.textContent = `Enabled (every ${CONFIG.autoSaveIntervalMs / 1000}s)`;
+    this._sessionAutoSaveStatusEl = autoSaveStatusEl;
+
+    const autoSaveToggleBtn = document.createElement("button");
+    autoSaveToggleBtn.textContent = "Toggle";
+    autoSaveToggleBtn.style.cssText =
+      "padding:2px 8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);" +
+      "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(255,255,255,0.7);cursor:pointer;";
+    autoSaveToggleBtn.addEventListener("click", () => this.applyToggleAutoSave());
+
+    autoSaveRow.appendChild(autoSaveStatusEl);
+    autoSaveRow.appendChild(autoSaveToggleBtn);
+    container.appendChild(autoSaveRow);
+  }
+
+  private _setSessionFeedback(msg: string): void {
+    if (this._sessionFeedbackEl) this._sessionFeedbackEl.textContent = msg;
   }
 
   private _buildPlaceholderTab(container: HTMLElement, message: string): void {

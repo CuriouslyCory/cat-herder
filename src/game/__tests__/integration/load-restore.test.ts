@@ -273,6 +273,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
         version: CURRENT_VERSION,
         saveData: validSaveData({ yarn: 42 }),
       }),
+      deleteSave: vi.fn().mockResolvedValue(undefined),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -293,6 +294,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
         version: CURRENT_VERSION,
         saveData: validSaveData(),
       }),
+      deleteSave: vi.fn().mockResolvedValue(undefined),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -310,6 +312,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
     const adapter: GameTrpcAdapter = {
       upsertSave: vi.fn().mockResolvedValue(undefined),
       getSave: vi.fn().mockResolvedValue(null),
+      deleteSave: vi.fn().mockResolvedValue(undefined),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -324,6 +327,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
     const adapter: GameTrpcAdapter = {
       upsertSave: vi.fn().mockResolvedValue(undefined),
       getSave: vi.fn().mockRejectedValue(new Error("Network error")),
+      deleteSave: vi.fn().mockResolvedValue(undefined),
     };
     const gs = new GameState(10);
     const eb = new EventBus();

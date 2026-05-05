@@ -37,15 +37,18 @@ function makeMockAdapter(overrides: Partial<GameTrpcAdapter> = {}): {
   adapter: GameTrpcAdapter;
   upsertSave: ReturnType<typeof vi.fn>;
   getSave: ReturnType<typeof vi.fn>;
+  deleteSave: ReturnType<typeof vi.fn>;
 } {
   const upsertSave = vi.fn().mockResolvedValue(undefined);
   const getSave = vi.fn().mockResolvedValue(null);
+  const deleteSave = vi.fn().mockResolvedValue(undefined);
   const adapter: GameTrpcAdapter = {
     upsertSave,
     getSave,
+    deleteSave,
     ...overrides,
   };
-  return { adapter, upsertSave, getSave };
+  return { adapter, upsertSave, getSave, deleteSave };
 }
 
 // ---------------------------------------------------------------------------
