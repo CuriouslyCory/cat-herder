@@ -6,6 +6,10 @@ import { World } from "~/game/ecs/World";
 import { CONFIG } from "~/game/config";
 import type { GameConfig } from "~/game/config";
 import type { GameEvent } from "~/game/types";
+import { CatType } from "~/game/types";
+import type { Vec3 } from "~/game/types";
+import type { CatCompanionManager } from "~/game/cats/CatCompanionManager";
+import type { Entity } from "~/game/ecs/Entity";
 
 // ---------------------------------------------------------------------------
 // Minimal DOM stubs — node test env has no document/window
@@ -330,5 +334,174 @@ describe("production mode no-op", () => {
     prodMenu.toggle();
     expect(prodMenu.isOpen).toBe(false);
     prodMenu.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cats tab
+// ---------------------------------------------------------------------------
+
+describe("Cats tab", () => {
+  type MockCatManager = {
+    getCatalog: ReturnType<typeof vi.fn>;
+    summon: ReturnType<typeof vi.fn>;
+    dismiss: ReturnType<typeof vi.fn>;
+    getActiveCompanions: ReturnType<typeof vi.fn>;
+    canAfford: ReturnType<typeof vi.fn>;
+    isValidPosition: ReturnType<typeof vi.fn>;
+  };
+
+  let mockCatManager: MockCatManager;
+  let menuWithCats: DebugMenu;
+  let mockGetPlayerPos: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockCatManager = {
+      getCatalog: vi.fn(() => [
+        { type: CatType.Loaf, name: "Loaf", yarnCost: 2, description: "test", unlocked: true },
+        { type: CatType.Zoomies, name: "Zoomies", yarnCost: 3, description: "test", unlocked: true },
+      ]),
+      summon: vi.fn(() => 42 as Entity),
+      dismiss: vi.fn(),
+      getActiveCompanions: vi.fn(() => [] as Entity[]),
+      canAfford: vi.fn(() => true),
+      isValidPosition: vi.fn(() => true),
+    };
+
+    mockGetPlayerPos = vi.fn(() => ({ x: 5, y: 0, z: 3 }));
+
+    menuWithCats = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+      undefined,
+      mockCatManager as unknown as CatCompanionManager,
+      mockGetPlayerPos as unknown as () => Vec3 | null,
+    );
+  });
+
+  afterEach(() => {
+    menuWithCats.dispose();
+  });
+
+  describe("applyForceSummon()", () => {
+    it("calls catCompanionManager.summon at player position + 2 in X", () => {
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(mockCatManager.summon).toHaveBeenCalledWith(
+        CatType.Loaf,
+        expect.objectContaining({ x: 7, z: 3 }),
+      );
+    });
+
+    it("restores yarn to its pre-summon value", () => {
+      gameState.set("player.yarn", 10);
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(gameState.get<number>("player.yarn")).toBe(10);
+    });
+
+    it("restores runtimeConfig.maxActiveCats after summon", () => {
+      runtimeCfg.maxActiveCats = 3;
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(runtimeCfg.maxActiveCats).toBe(3);
+    });
+
+    it("emits debug:value-changed with debug.forceSummon key", () => {
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.forceSummon" }),
+      );
+    });
+
+    it("uses origin + 2 in X when getPlayerPosition returns null", () => {
+      mockGetPlayerPos.mockReturnValue(null);
+      menuWithCats.applyForceSummon(CatType.Zoomies);
+      expect(mockCatManager.summon).toHaveBeenCalledWith(
+        CatType.Zoomies,
+        expect.objectContaining({ x: 2, z: 0 }),
+      );
+    });
+  });
+
+  describe("applyDismissAll()", () => {
+    it("calls dismiss for each active cat", () => {
+      const entity1 = 1 as Entity;
+      const entity2 = 2 as Entity;
+      mockCatManager.getActiveCompanions.mockReturnValue([entity1, entity2]);
+      menuWithCats.applyDismissAll();
+      expect(mockCatManager.dismiss).toHaveBeenCalledWith(entity1);
+      expect(mockCatManager.dismiss).toHaveBeenCalledWith(entity2);
+    });
+
+    it("is a no-op when no cats are active", () => {
+      menuWithCats.applyDismissAll();
+      expect(mockCatManager.dismiss).not.toHaveBeenCalled();
+    });
+
+    it("emits debug:value-changed with debug.dismissAll key", () => {
+      menuWithCats.applyDismissAll();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.dismissAll", value: true }),
+      );
+    });
+  });
+
+  describe("applyYarnOverride()", () => {
+    it("sets player.yarn to any non-negative value (above normal 99 cap)", () => {
+      menuWithCats.applyYarnOverride(500);
+      expect(gameState.get<number>("player.yarn")).toBe(500);
+    });
+
+    it("clamps to 0 for negative values", () => {
+      menuWithCats.applyYarnOverride(-10);
+      expect(gameState.get<number>("player.yarn")).toBe(0);
+    });
+
+    it("emits debug:value-changed with player.yarn key", () => {
+      menuWithCats.applyYarnOverride(100);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "player.yarn", value: 100 }),
+      );
+    });
+  });
+
+  describe("applyCatLimitOverride()", () => {
+    it("sets runtimeConfig.maxActiveCats", () => {
+      menuWithCats.applyCatLimitOverride(7);
+      expect(runtimeCfg.maxActiveCats).toBe(7);
+    });
+
+    it("clamps to 1..10", () => {
+      menuWithCats.applyCatLimitOverride(0);
+      expect(runtimeCfg.maxActiveCats).toBe(1);
+      menuWithCats.applyCatLimitOverride(99);
+      expect(runtimeCfg.maxActiveCats).toBe(10);
+    });
+
+    it("emits debug:value-changed with runtimeConfig.maxActiveCats key", () => {
+      menuWithCats.applyCatLimitOverride(5);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: "debug:value-changed",
+          key: "runtimeConfig.maxActiveCats",
+          value: 5,
+        }),
+      );
+    });
+  });
+
+  describe("update()", () => {
+    it("calls getActiveCompanions when menu is open", () => {
+      menuWithCats.toggle(); // open
+      menuWithCats.update();
+      expect(mockCatManager.getActiveCompanions).toHaveBeenCalled();
+    });
+
+    it("does not call getActiveCompanions when menu is closed", () => {
+      // Menu starts closed
+      menuWithCats.update();
+      expect(mockCatManager.getActiveCompanions).not.toHaveBeenCalled();
+    });
   });
 });

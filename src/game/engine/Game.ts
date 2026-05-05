@@ -279,6 +279,12 @@ export class Game {
           const handle = this.physics.getHandleByEntity(entity);
           if (handle) this.physics.setPosition(handle, { x, y: 1, z });
         },
+        this.catCompanionManager,
+        () => {
+          if (this.playerEntity === null) return null;
+          const t = this.world.getComponent<Transform>(this.playerEntity, "Transform");
+          return t ? { x: t.x, y: t.y, z: t.z } : null;
+        },
       );
     }
   }
@@ -743,6 +749,7 @@ export class Game {
     this.renderSystem.update(this.world, realDt);
     this.visualEffectsSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
+    this.debugMenu?.update();
     this.sceneManager.render();
 
     // ── Input bookkeeping (end of frame) ───────────────────────────────────────

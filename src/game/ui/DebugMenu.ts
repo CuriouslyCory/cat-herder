@@ -3,6 +3,10 @@ import type { EventBus } from "../engine/EventBus";
 import type { GameConfig } from "../config";
 import { CONFIG } from "../config";
 import type { World } from "../ecs/World";
+import type { CatCompanionManager } from "../cats/CatCompanionManager";
+import type { CatBehavior } from "../ecs/components/CatBehavior";
+import { CatType } from "../types";
+import type { Vec3 } from "../types";
 
 // ---------------------------------------------------------------------------
 // DebugMenu — tabbed dev overlay, dev builds only.
@@ -28,6 +32,10 @@ export class DebugMenu {
   private speedSlider: HTMLInputElement | null = null;
   private godModeCheckbox: HTMLInputElement | null = null;
 
+  // Cats tab element refs
+  private catLimitInput: HTMLInputElement | null = null;
+  private _catStatusContainer: HTMLElement | null = null;
+
   // Transient debug state — NEVER included in GameState.serialize()
   readonly debugState: { godMode: boolean; speedMultiplier: number } = {
     godMode: false,
@@ -45,6 +53,10 @@ export class DebugMenu {
     private readonly world: World,
     // Optional: if provided, performs a real physics teleport on the player entity.
     private readonly teleportPlayer?: (x: number, z: number) => void,
+    // Optional: CatCompanionManager for the Cats tab.
+    private readonly catCompanionManager?: CatCompanionManager,
+    // Optional: returns the player's current world position for force-summon placement.
+    private readonly getPlayerPosition?: () => Vec3 | null,
   ) {
     this._baseWalkSpeed = CONFIG.walkSpeed;
     if (process.env.NODE_ENV !== "development") return;
@@ -65,7 +77,32 @@ export class DebugMenu {
     this.eventBus.emit({ type: "debug:toggled", visible: this._visible });
   }
 
-  // ── Apply methods (called by DOM handlers and directly in tests) ──────────
+  /**
+   * Refresh the Cats tab status display. Call once per render frame from Game.ts.
+   * No-ops when the menu is closed or catCompanionManager is not wired.
+   */
+  update(): void {
+    if (!this._visible || !this._catStatusContainer || !this.catCompanionManager) return;
+    const active = this.catCompanionManager.getActiveCompanions();
+    this._catStatusContainer.innerHTML = "";
+    if (active.length === 0) {
+      const msg = document.createElement("div");
+      msg.style.cssText = "font-size:10px;color:rgba(255,255,255,0.3);";
+      msg.textContent = "No active cats";
+      this._catStatusContainer.appendChild(msg);
+      return;
+    }
+    for (const entity of active) {
+      const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
+      const row = document.createElement("div");
+      row.style.cssText =
+        "font-size:10px;color:rgba(255,255,255,0.7);display:flex;justify-content:space-between;";
+      row.textContent = behavior ? `${behavior.catType} — ${behavior.state}` : `#${entity}`;
+      this._catStatusContainer.appendChild(row);
+    }
+  }
+
+  // ── Apply methods — Player tab ────────────────────────────────────────────
 
   applyLevel(value: number): void {
     const n = Math.max(0, Math.min(10, Math.round(value)));
@@ -109,6 +146,62 @@ export class DebugMenu {
     this.eventBus.emit({ type: "debug:value-changed", key: "debug.godMode", value: enabled });
   }
 
+  // ── Apply methods — Cats tab ──────────────────────────────────────────────
+
+  /**
+   * Force-summon a cat at player position + 2 units in X, bypassing yarn cost
+   * and cat limit checks. Yarn and limit are restored to their original values
+   * after the summon call.
+   */
+  applyForceSummon(catType: CatType): void {
+    if (!this.catCompanionManager) return;
+    const playerPos = this.getPlayerPosition?.() ?? { x: 0, y: 0, z: 0 };
+    const position: Vec3 = { x: playerPos.x + 2, y: playerPos.y, z: playerPos.z };
+
+    const savedYarn = this.gameState.get<number>("player.yarn");
+    const savedLimit = this.runtimeCfg.maxActiveCats;
+
+    // Temporarily boost so summon()'s yarn + limit guards always pass.
+    this.gameState.set("player.yarn", savedYarn + 9999);
+    this.runtimeCfg.maxActiveCats = 999;
+
+    this.catCompanionManager.summon(catType, position);
+
+    // Restore original values regardless of summon() outcome.
+    this.runtimeCfg.maxActiveCats = savedLimit;
+    this.gameState.set("player.yarn", savedYarn);
+
+    this.eventBus.emit({ type: "debug:value-changed", key: "debug.forceSummon", value: catType });
+  }
+
+  /**
+   * Override yarn to any non-negative value (Cats tab allows values above the
+   * normal 99 cap to test high-yarn states).
+   */
+  applyYarnOverride(value: number): void {
+    const n = Math.max(0, Math.round(value));
+    this.gameState.set<number>("player.yarn", n);
+    this.eventBus.emit({ type: "debug:value-changed", key: "player.yarn", value: n });
+  }
+
+  applyCatLimitOverride(value: number): void {
+    const n = Math.max(1, Math.min(10, Math.round(value)));
+    this.runtimeCfg.maxActiveCats = n;
+    this.eventBus.emit({
+      type: "debug:value-changed",
+      key: "runtimeConfig.maxActiveCats",
+      value: n,
+    });
+  }
+
+  applyDismissAll(): void {
+    if (!this.catCompanionManager) return;
+    for (const entity of this.catCompanionManager.getActiveCompanions()) {
+      this.catCompanionManager.dismiss(entity);
+    }
+    this.eventBus.emit({ type: "debug:value-changed", key: "debug.dismissAll", value: true });
+  }
+
   dispose(): void {
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
@@ -125,6 +218,8 @@ export class DebugMenu {
     this.teleportZInput = null;
     this.speedSlider = null;
     this.godModeCheckbox = null;
+    this.catLimitInput = null;
+    this._catStatusContainer = null;
   }
 
   // ── Private — panel construction ─────────────────────────────────────────
@@ -178,7 +273,7 @@ export class DebugMenu {
     }
 
     this._buildPlayerTab(tabPanels.get("player")!);
-    this._buildPlaceholderTab(tabPanels.get("cats")!, "Cats tab — coming in US-207");
+    this._buildCatsTab(tabPanels.get("cats")!);
     this._buildPlaceholderTab(tabPanels.get("world")!, "World tab — coming in US-208");
     this._buildPlaceholderTab(tabPanels.get("session")!, "Session tab — coming in US-209");
 
@@ -316,6 +411,94 @@ export class DebugMenu {
     container.appendChild(godRow);
   }
 
+  private _buildCatsTab(container: HTMLElement): void {
+    if (!this.catCompanionManager) {
+      this._buildPlaceholderTab(container, "Cats tab — catCompanionManager not wired");
+      return;
+    }
+
+    // Force-summon section header
+    const summonHeader = document.createElement("div");
+    summonHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    summonHeader.textContent = "FORCE SUMMON";
+    container.appendChild(summonHeader);
+
+    for (const entry of this.catCompanionManager.getCatalog()) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;";
+
+      const label = document.createElement("span");
+      label.style.cssText = "font-size:11px;color:rgba(255,255,255,0.7);flex:1;";
+      label.textContent = `${entry.name} (${entry.yarnCost} yarn)`;
+
+      const btn = document.createElement("button");
+      btn.textContent = "Summon";
+      btn.style.cssText =
+        "padding:2px 8px;background:rgba(163,230,53,0.15);border:1px solid rgba(163,230,53,0.3);" +
+        "border-radius:4px;font-family:monospace;font-size:10px;color:rgba(163,230,53,0.9);cursor:pointer;";
+      btn.addEventListener("click", () => this.applyForceSummon(entry.type));
+
+      row.appendChild(label);
+      row.appendChild(btn);
+      container.appendChild(row);
+    }
+
+    // Divider
+    container.appendChild(this._divider());
+
+    // Yarn override (no upper cap — allows high-yarn testing)
+    container.appendChild(
+      this._row(
+        "Yarn",
+        this._buildNumberInput({
+          min: 0, max: 9999, step: 1,
+          value: this.gameState.get<number>("player.yarn"),
+          onChange: (v) => this.applyYarnOverride(v),
+          ref: () => {},
+        }),
+      ),
+    );
+
+    // Cat limit override
+    container.appendChild(
+      this._row(
+        "Cat limit",
+        this._buildNumberInput({
+          min: 1, max: 10, step: 1,
+          value: this.runtimeCfg.maxActiveCats,
+          onChange: (v) => this.applyCatLimitOverride(v),
+          ref: (el) => { this.catLimitInput = el; },
+        }),
+      ),
+    );
+
+    // Dismiss all
+    const dismissRow = document.createElement("div");
+    dismissRow.style.cssText = "display:flex;justify-content:flex-end;";
+    const dismissBtn = document.createElement("button");
+    dismissBtn.textContent = "Dismiss All";
+    dismissBtn.style.cssText =
+      "padding:3px 10px;background:rgba(255,100,100,0.12);border:1px solid rgba(255,100,100,0.3);" +
+      "border-radius:4px;font-family:monospace;font-size:11px;color:rgba(255,150,150,0.9);cursor:pointer;";
+    dismissBtn.addEventListener("click", () => this.applyDismissAll());
+    dismissRow.appendChild(dismissBtn);
+    container.appendChild(dismissRow);
+
+    // Active cats status display
+    container.appendChild(this._divider());
+    const statusHeader = document.createElement("div");
+    statusHeader.style.cssText =
+      "font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.35);margin-bottom:2px;";
+    statusHeader.textContent = "ACTIVE CATS";
+    container.appendChild(statusHeader);
+
+    const statusContainer = document.createElement("div");
+    statusContainer.style.cssText = "display:flex;flex-direction:column;gap:3px;min-height:18px;";
+    this._catStatusContainer = statusContainer;
+    container.appendChild(statusContainer);
+  }
+
   private _buildPlaceholderTab(container: HTMLElement, message: string): void {
     const msg = document.createElement("div");
     msg.style.cssText =
@@ -338,6 +521,12 @@ export class DebugMenu {
     row.appendChild(lbl);
     row.appendChild(control);
     return row;
+  }
+
+  private _divider(): HTMLElement {
+    const div = document.createElement("div");
+    div.style.cssText = "border-top:1px solid rgba(255,255,255,0.08);margin:2px 0;";
+    return div;
   }
 
   private _buildNumberInput(opts: {
