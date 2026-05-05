@@ -131,6 +131,17 @@ export class GatheringSystem {
       };
 
       if (this.gatherTimer >= activeNode.gatherTime) {
+        // Re-check capacity before committing — inventory may have changed mid-gather.
+        if (!this.gameState.hasInventorySpace(activeNode.yieldAmount)) {
+          activeNode.isBeingGathered = false;
+          activeNode.gatherProgress = 0;
+          this.activeNodeEntity = null;
+          this.gatherTimer = 0;
+          this._gatherState = null;
+          this._inventoryFullTimer = INVENTORY_FULL_DISPLAY_TIME;
+          return;
+        }
+
         // ── Complete ──────────────────────────────────────────────────────────
         this.gameState.addResource(activeNode.resourceType, activeNode.yieldAmount);
         this.eventBus.emit({
@@ -161,13 +172,15 @@ export class GatheringSystem {
 
     // ── 4. Start gathering on E press ─────────────────────────────────────────
     if (ePressed && nearestEntity !== null) {
-      if (!this.gameState.hasInventorySpace()) {
+      const candidateNode = world.getComponent<ResourceNode>(nearestEntity, "ResourceNode");
+      if (!candidateNode || candidateNode.cooldownRemaining > 0) return;
+
+      if (!this.gameState.hasInventorySpace(candidateNode.yieldAmount)) {
         this._inventoryFullTimer = INVENTORY_FULL_DISPLAY_TIME;
         return;
       }
 
-      const node = world.getComponent<ResourceNode>(nearestEntity, "ResourceNode");
-      if (!node || node.cooldownRemaining > 0) return;
+      const node = candidateNode;
 
       node.isBeingGathered = true;
       node.gatherProgress = 0;

@@ -110,7 +110,7 @@ describe("CuriositySystem", () => {
     const ht = world.getComponent<HiddenTerrain>(terrain, "HiddenTerrain")!;
     expect(ht.isRevealed).toBe(true);
 
-    for (let i = 0; i < 1200; i++) {
+    for (let i = 0; i < 1201; i++) {
       catAI.update(world, DT);
     }
 
@@ -188,8 +188,8 @@ describe("CuriositySystem", () => {
       const ht = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
       expect(ht.currentOpacity).toBe(1);
 
-      // Expire the cat
-      for (let i = 0; i < 1200; i++) {
+      // Expire the cat (1201 ticks to safely clear the 20s boundary)
+      for (let i = 0; i < 1201; i++) {
         catAI.update(world, DT);
       }
       expect(

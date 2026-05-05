@@ -16,7 +16,7 @@ import type { MapData, TerrainCell } from "./MapData";
 //   Hidden zone     rows 22–27, cols 22–27  →  SE area, same height as grass
 //   Grass platform  rows 12–14, cols 20–23  →  elevated 2 u
 //   Grass platform  rows 18–20, cols  8–11  →  elevated 3 u
-//   Pounce platform rows 14–15, cols  6– 7  →  X ∈ [−19,−15], Z ∈ [−1, 3], height 1 u
+//   Pounce platform rows 14–15, cols  6– 7  →  X ∈ [−18,−14], Z ∈ [−2, 2], height 1 u
 //   Spawn: player (0,0), cat (−10, 10), cat (10,−10)
 // ---------------------------------------------------------------------------
 
@@ -90,7 +90,7 @@ function buildTerrain(): TerrainCell[][] {
 
   // Pounce platform — 4 × 4 u, height 1 u (west of spawn).
   // Reachable by placing a Pounce cat on the flat ground beside it and stepping on.
-  // World coords: X ∈ [−19, −15], Z ∈ [−1, 3].
+  // World coords: X ∈ [−18, −14], Z ∈ [−2, 2].
   for (let r = 14; r <= 15; r++) {
     for (let c = 6; c <= 7; c++) {
       terrain[r]![c] = grass(1);

@@ -106,6 +106,28 @@ describe("PhysicsEngine", () => {
       expect(vel.y).toBe(0);
     });
 
+    it("does not ground noGravity bodies via the flat-floor fallback", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(handle, { x: 0, y: 0.2, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: -1, z: 0 });
+      physics.setGravityEnabled(handle, false);
+
+      physics.step(1 / 60);
+
+      expect(physics.isBodyGrounded(handle)).toBe(false);
+      const pos = physics.getPosition(handle)!;
+      expect(pos.y).toBeLessThan(0.4);
+      const vel = physics.getVelocity(handle)!;
+      expect(vel.y).toBe(-1);
+    });
+
     it("grounds bodies at y=0 floor", () => {
       const handle = physics.addBody(1, {
         shape: "circle",
@@ -234,6 +256,90 @@ describe("PhysicsEngine", () => {
       expect(physics.isBodyGrounded(playerHandle)).toBe(true);
       const pos = physics.getPosition(playerHandle)!;
       expect(pos.y).toBeCloseTo(0.75 + 0.4, 1);
+    });
+
+    it("allows jumping off a static box (loaf scenario)", () => {
+      // Loaf-sized box: 1.2×0.75×1.2, center at y=0.375
+      const boxHandle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(boxHandle, { x: 0, y: 0.375, z: 0 });
+
+      const playerHandle = physics.addBody(2, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      // Player grounded on loaf: center at boxTop(0.75) + radius(0.4) = 1.15
+      physics.setPosition(playerHandle, { x: 0, y: 1.15, z: 0 });
+      physics.setVelocity(playerHandle, { x: 0, y: 0, z: 0 });
+
+      // Confirm grounded on loaf
+      physics.step(1 / 60);
+      expect(physics.isBodyGrounded(playerHandle)).toBe(true);
+
+      // Jump: apply upward velocity (typical jumpImpulse ≈ 4.85)
+      physics.setVelocity(playerHandle, { x: 0, y: 4.85, z: 0 });
+      physics.step(1 / 60);
+
+      // Player should NOT be re-grounded — the jump must escape the surface
+      expect(physics.isBodyGrounded(playerHandle)).toBe(false);
+      const jumpPos = physics.getPosition(playerHandle)!;
+      expect(jumpPos.y).toBeGreaterThan(1.15);
+
+      // Several more frames: player should keep rising
+      for (let i = 0; i < 5; i++) {
+        physics.step(1 / 60);
+        expect(physics.isBodyGrounded(playerHandle)).toBe(false);
+      }
+      expect(physics.getPosition(playerHandle)!.y).toBeGreaterThan(1.3);
+    });
+
+    it("re-grounds on the box after jump apex (falling back down)", () => {
+      const boxHandle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(boxHandle, { x: 0, y: 0.375, z: 0 });
+
+      const playerHandle = physics.addBody(2, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(playerHandle, { x: 0, y: 1.15, z: 0 });
+      physics.setVelocity(playerHandle, { x: 0, y: 4.85, z: 0 });
+
+      // Step through jump arc until player returns to grounded
+      let grounded = false;
+      for (let i = 0; i < 120; i++) {
+        physics.step(1 / 60);
+        if (physics.isBodyGrounded(playerHandle)) {
+          grounded = true;
+          break;
+        }
+      }
+
+      expect(grounded).toBe(true);
+      const pos = physics.getPosition(playerHandle)!;
+      expect(pos.y).toBeCloseTo(1.15, 1);
     });
   });
 

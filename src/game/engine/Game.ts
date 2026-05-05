@@ -341,6 +341,9 @@ export class Game {
     this.sceneManager.dispose();
     this.eventBus.clear();
     this.mapManager.unloadMap();
+    if (typeof window !== "undefined") {
+      delete (window as unknown as Record<string, unknown>).__catHerderDebug;
+    }
   }
 
   /**

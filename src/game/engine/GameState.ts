@@ -36,6 +36,7 @@ export class GameState {
 
   /** Add yarn and notify subscribers. */
   addYarn(amount: number): void {
+    if (!Number.isFinite(amount) || amount <= 0) return;
     this._yarn += amount;
     this.notifyYarn();
   }
@@ -45,6 +46,7 @@ export class GameState {
    * Returns true on success, false if there is not enough yarn.
    */
   deductYarn(amount: number): boolean {
+    if (!Number.isFinite(amount) || amount <= 0) return false;
     if (this._yarn < amount) return false;
     this._yarn -= amount;
     this.notifyYarn();
@@ -80,6 +82,7 @@ export class GameState {
    * should check hasInventorySpace() before calling.
    */
   addResource(resourceType: ResourceType, amount = 1): void {
+    if (!Number.isFinite(amount) || amount <= 0) return;
     const stack = this.inventory.find((s) => s.resourceType === resourceType);
     if (stack) {
       stack.quantity += amount;

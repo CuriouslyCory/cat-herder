@@ -20,5 +20,8 @@ export function createSpeedBoost(
   multiplier: number,
   sourceEntity: Entity,
 ): SpeedBoost {
+  if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    throw new RangeError(`SpeedBoost multiplier must be a finite positive number, got ${multiplier}`);
+  }
   return { type: "SpeedBoost", multiplier, sourceEntity };
 }
