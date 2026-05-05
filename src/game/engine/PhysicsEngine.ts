@@ -187,6 +187,20 @@ export class PhysicsEngine {
     return closest;
   }
 
+  /**
+   * Returns the Y coordinate of the highest static surface at the given XZ
+   * position, or 0 if no static body covers that point.
+   */
+  getHighestSurfaceY(x: number, z: number): number {
+    const RAY_CEILING = 50;
+    const hit = this.raycast(
+      { x, y: RAY_CEILING, z },
+      { x: 0, y: -1, z: 0 },
+      RAY_CEILING,
+    );
+    return hit ? hit.point.y : 0;
+  }
+
   // --- Simulation step ---
 
   /** Advance the simulation by dt seconds. */
@@ -287,16 +301,28 @@ export class PhysicsEngine {
     return closest;
   }
 
-  /** Push `newPos` out of any static solid it overlaps (XZ plane only). */
+  /** Push `newPos` out of any static solid it overlaps in both XZ and Y. */
   private resolveHorizontalCollisions(
     body: PhysicsBody,
     newPos: Vec3,
     skinWidth: number,
   ): void {
+    const bodyBottom = newPos.y - body.config.size;
+    const bodyTop = newPos.y + body.config.size;
+
     for (const other of this.bodies.values()) {
       if (other === body) continue;
       if (!other.config.isStatic || other.config.isTrigger) continue;
       if (!(other.config.collisionLayer & body.config.collisionMask)) continue;
+
+      // Y-overlap guard: skip when the bodies are vertically separated.
+      // Epsilon avoids false positives from float rounding (e.g. 0.75+0.4−0.4 ≠ 0.75).
+      const Y_EPSILON = 1e-4;
+      const otherHalf = PhysicsEngine.boxHalf(other);
+      const otherBottom = other.position.y - otherHalf.y;
+      const otherTop = other.position.y + otherHalf.y;
+      if (bodyBottom >= otherTop - Y_EPSILON || bodyTop <= otherBottom + Y_EPSILON)
+        continue;
 
       if (body.config.shape === "circle" && other.config.shape === "circle") {
         this.resolveCircleCircle(body.config.size + skinWidth, other, newPos);

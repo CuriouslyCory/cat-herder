@@ -13,10 +13,13 @@ export const PounceDefinition: CatDefinition = {
   effectType: "launch",
   meshConfig: {
     geometry: "box",
-    dims: [1.8, 0.5, 1.8],  // wide and low
-    color: "#e74c3c",        // red
+    dims: [1.8, 0.5, 1.8],
+    color: "#e74c3c",
     castShadow: true,
     receiveShadow: true,
+    emissive: "#e74c3c",
+    emissiveIntensity: 0.25,
+    outlineCategory: "cat",
   },
   behavior: {
     // No duration — stays until dismissed.

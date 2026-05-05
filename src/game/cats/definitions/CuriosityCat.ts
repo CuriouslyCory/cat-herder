@@ -14,9 +14,12 @@ export const CuriosityCatDefinition: CatDefinition = {
   meshConfig: {
     geometry: "sphere",
     size: 0.5,
-    color: "#9b59b6", // purple
+    color: "#9b59b6",
     castShadow: false,
     receiveShadow: false,
+    emissive: "#9b59b6",
+    emissiveIntensity: 0.3,
+    outlineCategory: "cat",
   },
   behavior: {
     duration: 20,

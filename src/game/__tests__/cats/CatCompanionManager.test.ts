@@ -9,6 +9,8 @@ import { createMockMapManager } from "../helpers/mockMapManager";
 import { CatType, TerrainType } from "~/game/types";
 import type { Entity } from "~/game/ecs/Entity";
 import type { CatBehavior } from "~/game/ecs/components/CatBehavior";
+import type { Transform } from "~/game/ecs/components/Transform";
+import type { Collider } from "~/game/ecs/components/Collider";
 
 describe("CatCompanionManager", () => {
   let world: World;
@@ -127,6 +129,60 @@ describe("CatCompanionManager", () => {
       const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
       manager.dismiss(entity);
       expect(world.isAlive(entity)).toBe(false);
+    });
+  });
+
+  describe("loaf stacking", () => {
+    it("second Loaf at same XZ stacks on top of first", () => {
+      const e1 = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
+      const e2 = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
+
+      const t1 = world.getComponent<Transform>(e1, "Transform")!;
+      const t2 = world.getComponent<Transform>(e2, "Transform")!;
+
+      // First loaf: halfHeight = 0.375, centerY = 0 + 0.375
+      expect(t1.y).toBeCloseTo(0.375, 2);
+      // Second loaf: surfaceY = 0.75 (first top), centerY = 0.75 + 0.375
+      expect(t2.y).toBeCloseTo(1.125, 2);
+    });
+
+    it("Loaf at different XZ does not stack", () => {
+      manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
+      const e2 = manager.summon(CatType.Loaf, { x: 10, y: 0, z: 10 })!;
+
+      const t2 = world.getComponent<Transform>(e2, "Transform")!;
+      expect(t2.y).toBeCloseTo(0.375, 2);
+    });
+
+    it("third Loaf stacks on top of two", () => {
+      manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
+      manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
+      const e3 = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
+
+      const t3 = world.getComponent<Transform>(e3, "Transform")!;
+      // Third loaf: surfaceY = 1.5, centerY = 1.5 + 0.375
+      expect(t3.y).toBeCloseTo(1.875, 2);
+    });
+  });
+
+  describe("terrain cat collider config", () => {
+    it("Loaf ECS Collider is a trigger (PhysicsEngine handles collision)", () => {
+      const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
+      const collider = world.getComponent<Collider>(entity, "Collider")!;
+      expect(collider.isTrigger).toBe(true);
+      expect(collider.isStatic).toBe(true);
+    });
+
+    it("Pounce ECS Collider is a trigger (PhysicsEngine handles collision)", () => {
+      const entity = manager.summon(CatType.Pounce, { x: 3, y: 0, z: 3 })!;
+      const collider = world.getComponent<Collider>(entity, "Collider")!;
+      expect(collider.isTrigger).toBe(true);
+    });
+
+    it("Zoomies ECS Collider is NOT a trigger (no PhysicsEngine body)", () => {
+      const entity = manager.summon(CatType.Zoomies, { x: 3, y: 0, z: 3 })!;
+      const collider = world.getComponent<Collider>(entity, "Collider")!;
+      expect(collider.isTrigger).toBe(false);
     });
   });
 

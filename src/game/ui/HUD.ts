@@ -110,8 +110,9 @@ export class HUD {
     inventoryFull = false,
     insufficientYarn = false,
     activeCompanions: ActiveCatInfo[] = [],
+    playerPosition: { x: number; y: number; z: number } | null = null,
   ): void {
-    this.updateFps(dt);
+    this.updateFps(dt, playerPosition);
     this.setOxygen(oxygenPercent);
     this.setHealth(health, maxHealth);
     this.setCatBar(yarn, selectedCatType);
@@ -207,7 +208,7 @@ export class HUD {
       "font-family:monospace;font-size:12px;" +
       "color:rgba(255,255,255,0.8);background:rgba(0,0,0,0.4);" +
       "padding:2px 6px;border-radius:3px;" +
-      "pointer-events:none;user-select:none;";
+      "pointer-events:none;user-select:none;white-space:pre;";
     el.textContent = "FPS: --";
     this.fpsEl = el;
     container.appendChild(el);
@@ -275,7 +276,10 @@ export class HUD {
     }
   }
 
-  private updateFps(dt: number): void {
+  private updateFps(
+    dt: number,
+    playerPosition: { x: number; y: number; z: number } | null,
+  ): void {
     if (!this.fpsEl) return;
 
     this.frameTimes.push(dt);
@@ -287,7 +291,10 @@ export class HUD {
       const avg =
         this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
       const fps = avg > 0 ? Math.round(1 / avg) : 0;
-      this.fpsEl.textContent = `FPS: ${fps}`;
+      const pos = playerPosition
+        ? `\nX: ${playerPosition.x.toFixed(1)}  Y: ${playerPosition.y.toFixed(1)}  Z: ${playerPosition.z.toFixed(1)}`
+        : "";
+      this.fpsEl.textContent = `FPS: ${fps}${pos}`;
     }
   }
 

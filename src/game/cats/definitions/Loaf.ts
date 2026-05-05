@@ -13,16 +13,19 @@ export const LoafDefinition: CatDefinition = {
   effectType: "terrain",
   meshConfig: {
     geometry: "box",
-    dims: [1.2, 1.5, 1.2],
-    color: "#e07a30", // warm orange
+    dims: [1.2, 0.75, 1.2],
+    color: "#e07a30",
     castShadow: true,
     receiveShadow: true,
+    emissive: "#e07a30",
+    emissiveIntensity: 0.25,
+    outlineCategory: "cat",
   },
   behavior: {
     // No duration — stays until dismissed.
     params: {
       colliderWidth: 1.2,
-      colliderHeight: 1.5,
+      colliderHeight: 0.75,
       colliderDepth: 1.2,
     },
   },

@@ -239,6 +239,7 @@ export class MapManager {
           isTrigger: true,
           collisionLayer: 1,
           collisionMask: 1,
+          halfExtents: { x: width / 2, z: depth / 2 },
         }),
       );
       // Tag so WaterSystem can identify this as a water zone.
@@ -253,6 +254,7 @@ export class MapManager {
           isTrigger: false,
           collisionLayer: 2,
           collisionMask,
+          halfExtents: { x: width / 2, z: depth / 2 },
         }),
       );
     }
@@ -294,6 +296,7 @@ export class MapManager {
           isStatic: true,
           collisionLayer: 1,
           collisionMask: 1,
+          halfExtents: { x: w / 2, z: d / 2 },
         }),
       );
       this.terrainEntities.push(entity);

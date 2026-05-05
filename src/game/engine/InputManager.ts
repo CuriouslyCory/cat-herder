@@ -192,6 +192,11 @@ export class InputManager {
     return this.sceneManager.screenToWorld(this.mouseX, this.mouseY);
   }
 
+  /** Returns the current mouse position in canvas-local pixels. */
+  getMouseScreenPosition(): { x: number; y: number } {
+    return { x: this.mouseX, y: this.mouseY };
+  }
+
   /** True if the left mouse button was clicked since the last poll(). */
   wasLeftClickThisFrame(): boolean {
     return this.leftClickThisFrame;

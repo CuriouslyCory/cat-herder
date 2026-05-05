@@ -5,6 +5,7 @@ export interface MockInputManager {
   isActionHeld(action: GameAction): boolean;
   getMovementIntent(): Vec2;
   getMouseWorldPosition(): { x: number; y: number; z: number } | null;
+  getMouseScreenPosition(): { x: number; y: number };
   pressAction(action: GameAction): void;
   holdAction(action: GameAction): void;
   releaseAction(action: GameAction): void;
@@ -29,6 +30,9 @@ export function createMockInputManager(): MockInputManager {
     },
     getMouseWorldPosition() {
       return null;
+    },
+    getMouseScreenPosition() {
+      return { x: 0, y: 0 };
     },
     pressAction(action: GameAction) {
       pressed.add(action);

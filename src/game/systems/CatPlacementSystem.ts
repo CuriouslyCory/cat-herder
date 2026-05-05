@@ -147,10 +147,18 @@ export class CatPlacementSystem {
   // Private — ghost preview
   // ---------------------------------------------------------------------------
 
+  private getWorldPosExcludingGhost(): Vec3 | null {
+    const screen = this.inputManager.getMouseScreenPosition();
+    const exclude = this.ghostHandle
+      ? new Set([this.ghostHandle])
+      : undefined;
+    return this.sceneManager.screenToWorld(screen.x, screen.y, exclude);
+  }
+
   private updateGhost(): void {
     if (this.selectedCatType === null || this.ghostHandle === null) return;
 
-    const mousePos = this.inputManager.getMouseWorldPosition();
+    const mousePos = this.getWorldPosExcludingGhost();
     if (!mousePos) {
       this._insufficientYarn = false;
       return;
@@ -198,17 +206,16 @@ export class CatPlacementSystem {
     if (!this.inputManager.wasLeftClickThisFrame()) return;
     if (this.selectedCatType === null) return;
 
-    const mousePos = this.inputManager.getMouseWorldPosition();
+    const mousePos = this.getWorldPosExcludingGhost();
     if (!mousePos) return;
 
     this.catCompanionManager.summon(this.selectedCatType, mousePos);
-    // Keep the same cat type selected so the player can place multiple.
   }
 
   private handleRightClick(): void {
     if (!this.inputManager.wasRightClickThisFrame()) return;
 
-    const mousePos = this.inputManager.getMouseWorldPosition();
+    const mousePos = this.getWorldPosExcludingGhost();
     if (!mousePos) return;
 
     const nearest = this.findNearestCompanion(mousePos);

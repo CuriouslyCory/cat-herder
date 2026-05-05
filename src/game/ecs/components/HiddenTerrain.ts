@@ -18,6 +18,10 @@ export interface HiddenTerrain extends Component {
    * Terrain is shown while revealCount > 0, hidden when it returns to 0.
    */
   revealCount: number;
+  /** Current rendered opacity [0-1]. Animated toward targetOpacity each tick. */
+  currentOpacity: number;
+  /** Desired opacity [0-1]. Set by CuriositySystem on reveal/hide. */
+  targetOpacity: number;
 }
 
 export function createHiddenTerrain(): HiddenTerrain {
@@ -25,5 +29,7 @@ export function createHiddenTerrain(): HiddenTerrain {
     type: "HiddenTerrain",
     isRevealed: false,
     revealCount: 0,
+    currentOpacity: 0,
+    targetOpacity: 0,
   };
 }

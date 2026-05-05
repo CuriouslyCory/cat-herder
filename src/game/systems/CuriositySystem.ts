@@ -12,16 +12,20 @@ import type { CuriosityReveal } from "../ecs/components/CuriosityReveal";
 import { CAT_REGISTRY } from "../cats/definitions";
 import { CatType } from "../types";
 
+const FADE_SPEED = 2.0; // 1/seconds → full fade in 0.5s
+
 /**
  * CuriositySystem — drives Curiosity Cat behavior each fixed physics tick.
  *
  * Responsibilities:
  *  1. On the first Active tick (detected by revealedEntities.length === 0):
- *     scan for HiddenTerrain entities within the reveal radius, make them
- *     visible, enable their colliders, increment revealCount, and emit
- *     `hidden:terrain:revealed`.
- *  2. Detect Expired state (set by CatAISystem) and clean up revealed terrain
- *     before calling dismiss() (yarn consumed — not returned).
+ *     scan for HiddenTerrain entities within the reveal radius, mark them
+ *     for reveal (targetOpacity = 1), enable their colliders, increment
+ *     revealCount, and emit `hidden:terrain:revealed`.
+ *  2. Detect Expired state (set by CatAISystem) and mark revealed terrain
+ *     for fade-out (targetOpacity = 0). Dismiss is deferred until the
+ *     fade-out animation completes.
+ *  3. Animate currentOpacity toward targetOpacity each tick (~0.5s ease).
  *
  * State management (Idle→Active, timer, Expired marking) is handled centrally
  * by CatAISystem which runs before this system each fixed tick.
@@ -30,13 +34,15 @@ import { CatType } from "../types";
  * crossing the Three.js isolation boundary elsewhere.
  */
 export class CuriositySystem {
+  private readonly pendingDismiss = new Set<Entity>();
+
   constructor(
     private readonly sceneManager: SceneManager,
     private readonly catCompanionManager: CatCompanionManager,
     private readonly eventBus: EventBus,
   ) {}
 
-  update(world: World, _dt: number): void {
+  update(world: World, dt: number): void {
     const catDef = CAT_REGISTRY.get(CatType.CuriosityCat);
     const defaultRadius =
       typeof catDef?.behavior.params?.revealRadius === "number"
@@ -53,37 +59,28 @@ export class CuriositySystem {
       const transform = world.getComponent<Transform>(catEntity, "Transform")!;
       const reveal = world.getComponent<CuriosityReveal>(catEntity, "CuriosityReveal")!;
 
-      // Guard: only process Curiosity cats (CuriosityReveal is cat-specific but
-      // guard against accidental component reuse in future cat types).
       if (behavior.catType !== CatType.CuriosityCat) continue;
 
-      if (behavior.state === "Expired") {
-        // CatAISystem already marked Expired — hide terrain then dismiss.
-        // dismiss() skips yarn refund because state !== "Active".
-        this.hideRevealedTerrain(world, reveal);
-        this.catCompanionManager.dismiss(catEntity);
+      if (behavior.state === "Expired" && !this.pendingDismiss.has(catEntity)) {
+        this.beginHideRevealedTerrain(world, reveal);
+        this.pendingDismiss.add(catEntity);
         continue;
       }
 
       if (behavior.state === "Active" && reveal.revealedEntities.length === 0) {
-        // First Active tick: reveal nearby hidden terrain.
-        // CatAISystem transitioned Idle→Active this same frame, so revealedEntities
-        // is guaranteed empty until we populate it here.
         const radius = reveal.revealRadius > 0 ? reveal.revealRadius : defaultRadius;
         this.revealNearbyTerrain(world, catEntity, transform, reveal, radius);
       }
     }
+
+    this.animateOpacity(world, dt);
+    this.flushDismissals(world);
   }
 
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  /**
-   * Reveals all HiddenTerrain entities within the given radius of the cat's
-   * world position.  Increments revealCount on each affected entity so
-   * multiple overlapping Curiosity cats are handled correctly.
-   */
   private revealNearbyTerrain(
     world: World,
     catEntity: Entity,
@@ -96,10 +93,15 @@ export class CuriositySystem {
 
     for (const entity of hiddenEntities) {
       const tf = world.getComponent<Transform>(entity, "Transform")!;
-      const dx = tf.x - catTransform.x;
-      const dz = tf.z - catTransform.z;
 
-      // Use XZ distance only — Y does not affect reveal radius.
+      const collider = world.getComponent<Collider>(entity, "Collider");
+      const halfX = collider?.halfExtents?.x ?? collider?.size ?? 0;
+      const halfZ = collider?.halfExtents?.z ?? collider?.size ?? 0;
+      const closestX = Math.max(tf.x - halfX, Math.min(catTransform.x, tf.x + halfX));
+      const closestZ = Math.max(tf.z - halfZ, Math.min(catTransform.z, tf.z + halfZ));
+      const dx = closestX - catTransform.x;
+      const dz = closestZ - catTransform.z;
+
       if (dx * dx + dz * dz > radius * radius) continue;
 
       const hiddenTerrain = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
@@ -107,14 +109,9 @@ export class CuriositySystem {
       revealedIds.push(entity);
 
       if (hiddenTerrain.revealCount === 1) {
-        // First reveal: switch the mesh from invisible to visible.
-        const renderable = world.getComponent<Renderable>(entity, "Renderable")!;
-        if (renderable.sceneHandle !== null) {
-          this.sceneManager.setMeshOpacity(renderable.sceneHandle, 1);
-        }
-        // Enable the collider so CollisionSystem can interact with it.
-        const collider = world.getComponent<Collider>(entity, "Collider");
-        if (collider) collider.collisionMask = 1;
+        hiddenTerrain.targetOpacity = 1;
+        const col = world.getComponent<Collider>(entity, "Collider");
+        if (col) col.collisionMask = 1;
         hiddenTerrain.isRevealed = true;
       }
 
@@ -131,11 +128,11 @@ export class CuriositySystem {
   }
 
   /**
-   * Decrements revealCount on each terrain entity this cat revealed.
-   * Hides entities whose count drops back to zero.
-   * Called before dismiss() so the terrain state is correct when the cat leaves.
+   * Marks revealed terrain for fade-out by decrementing revealCount and
+   * setting targetOpacity = 0 where appropriate. Actual dismiss is deferred
+   * until the animation finishes (see flushDismissals).
    */
-  private hideRevealedTerrain(world: World, reveal: CuriosityReveal): void {
+  private beginHideRevealedTerrain(world: World, reveal: CuriosityReveal): void {
     for (const entity of reveal.revealedEntities) {
       if (!world.isAlive(entity)) continue;
 
@@ -145,18 +142,69 @@ export class CuriositySystem {
       hiddenTerrain.revealCount = Math.max(0, hiddenTerrain.revealCount - 1);
 
       if (hiddenTerrain.revealCount === 0) {
-        // Last reveal removed: hide the mesh again.
-        const renderable = world.getComponent<Renderable>(entity, "Renderable");
-        if (renderable?.sceneHandle !== null && renderable?.sceneHandle !== undefined) {
-          this.sceneManager.setMeshOpacity(renderable.sceneHandle, 0);
-        }
-        // Disable the collider.
+        hiddenTerrain.targetOpacity = 0;
         const collider = world.getComponent<Collider>(entity, "Collider");
         if (collider) collider.collisionMask = 0;
         hiddenTerrain.isRevealed = false;
       }
     }
+  }
 
-    reveal.revealedEntities = [];
+  /**
+   * Ticks currentOpacity toward targetOpacity for all HiddenTerrain entities,
+   * updating the scene mesh each frame.
+   */
+  private animateOpacity(world: World, dt: number): void {
+    const entities = world.query("HiddenTerrain", "Renderable");
+
+    for (const entity of entities) {
+      const ht = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
+
+      if (ht.currentOpacity === ht.targetOpacity) continue;
+
+      const delta = FADE_SPEED * dt;
+      if (ht.currentOpacity < ht.targetOpacity) {
+        ht.currentOpacity = Math.min(ht.currentOpacity + delta, ht.targetOpacity);
+      } else {
+        ht.currentOpacity = Math.max(ht.currentOpacity - delta, ht.targetOpacity);
+      }
+
+      const renderable = world.getComponent<Renderable>(entity, "Renderable")!;
+      if (renderable.sceneHandle !== null) {
+        this.sceneManager.setMeshOpacity(renderable.sceneHandle, ht.currentOpacity);
+      }
+    }
+  }
+
+  /**
+   * Dismisses expired cats whose revealed terrain has finished fading out
+   * (all currentOpacity === 0 or entities dead).
+   */
+  private flushDismissals(world: World): void {
+    for (const catEntity of this.pendingDismiss) {
+      if (!world.isAlive(catEntity)) {
+        this.pendingDismiss.delete(catEntity);
+        continue;
+      }
+
+      const reveal = world.getComponent<CuriosityReveal>(catEntity, "CuriosityReveal");
+      if (!reveal) {
+        this.pendingDismiss.delete(catEntity);
+        continue;
+      }
+
+      const stillFading = reveal.revealedEntities.some((e) => {
+        if (!world.isAlive(e)) return false;
+        const ht = world.getComponent<HiddenTerrain>(e, "HiddenTerrain");
+        if (!ht) return false;
+        return ht.currentOpacity > 0;
+      });
+
+      if (!stillFading) {
+        reveal.revealedEntities = [];
+        this.catCompanionManager.dismiss(catEntity);
+        this.pendingDismiss.delete(catEntity);
+      }
+    }
   }
 }

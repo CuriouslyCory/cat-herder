@@ -112,7 +112,9 @@ export class CatCompanionManager {
     // 4. Deduct yarn and build the entity
     this.gameState.deductYarn(def.yarnCost);
 
-    const surfaceY = this.mapManager.getHeightAt(position.x, position.z);
+    const terrainY = this.mapManager.getHeightAt(position.x, position.z);
+    const physicsY = this.physics.getHighestSurfaceY(position.x, position.z);
+    const surfaceY = Math.max(terrainY, physicsY);
     const halfHeight = getCatHalfHeight(def);
     const centerY = surfaceY + halfHeight;
     const owner = this.getPlayerEntity() ?? 0;
@@ -129,14 +131,22 @@ export class CatCompanionManager {
 
     // XZ collision collider for CollisionSystem (horizontal push / trigger detection).
     // Size is the XZ half-extent derived from the cat definition params or defaults.
+    //
+    // Terrain and launch cats also register a PhysicsEngine body (below) which
+    // handles ground detection AND horizontal collision resolution.  Their ECS
+    // Collider is set to isTrigger so CollisionSystem emits overlap events
+    // without applying a second physics push — avoiding a dual-push desync
+    // between PhysicsEngine body positions and ECS Transform positions.
     const xzHalfExtent = getXZHalfExtent(def);
+    const hasPhysicsBody = def.effectType === "terrain" || def.effectType === "launch";
     this.world.addComponent(
       entity,
       createCollider("box", xzHalfExtent, {
         isStatic: true,
-        isTrigger: false,
+        isTrigger: hasPhysicsBody,
         collisionLayer: 1,
         collisionMask: 1,
+        halfHeight,
       }),
     );
 

@@ -39,6 +39,8 @@ export interface HUDState {
   insufficientYarn?: boolean;
   /** Currently summoned companion cats for the active cat bar. */
   activeCompanions?: ActiveCatInfo[];
+  /** Player world position for the debug overlay (dev builds only). */
+  playerPosition?: { x: number; y: number; z: number } | null;
 }
 
 /**
@@ -83,6 +85,7 @@ export class UIManager {
       state?.inventoryFull ?? false,
       state?.insufficientYarn ?? false,
       state?.activeCompanions ?? [],
+      state?.playerPosition ?? null,
     );
   }
 

@@ -205,6 +205,150 @@ describe("PhysicsEngine", () => {
     });
   });
 
+  describe("ground detection on elevated surfaces", () => {
+    it("grounds a dynamic body on top of a static box", () => {
+      const boxHandle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(boxHandle, { x: 0, y: 0.375, z: 0 });
+
+      const playerHandle = physics.addBody(2, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(playerHandle, { x: 0, y: 1.2, z: 0 });
+      physics.setVelocity(playerHandle, { x: 0, y: -2, z: 0 });
+
+      for (let i = 0; i < 30; i++) physics.step(1 / 60);
+
+      expect(physics.isBodyGrounded(playerHandle)).toBe(true);
+      const pos = physics.getPosition(playerHandle)!;
+      expect(pos.y).toBeCloseTo(0.75 + 0.4, 1);
+    });
+  });
+
+  describe("Y-overlap guard for horizontal collisions", () => {
+    it("does not push player horizontally when standing above a box", () => {
+      const boxHandle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(boxHandle, { x: 0, y: 0.375, z: 0 });
+
+      const playerHandle = physics.addBody(2, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      // Player standing on top: center at boxTop + radius = 0.75 + 0.4
+      physics.setPosition(playerHandle, { x: 0, y: 1.15, z: 0 });
+      physics.setVelocity(playerHandle, { x: 0, y: 0, z: 0 });
+
+      physics.step(1 / 60);
+
+      const pos = physics.getPosition(playerHandle)!;
+      expect(pos.x).toBeCloseTo(0, 2);
+      expect(pos.z).toBeCloseTo(0, 2);
+    });
+
+    it("pushes player horizontally when overlapping a box in Y", () => {
+      const boxHandle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(boxHandle, { x: 0, y: 0.375, z: 0 });
+
+      const playerHandle = physics.addBody(2, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      // Player at same height as box center — Y ranges overlap
+      physics.setPosition(playerHandle, { x: 0.3, y: 0.4, z: 0 });
+      physics.setVelocity(playerHandle, { x: 0, y: 0, z: 0 });
+
+      physics.step(1 / 60);
+
+      const pos = physics.getPosition(playerHandle)!;
+      expect(Math.abs(pos.x)).toBeGreaterThan(0.3);
+    });
+  });
+
+  describe("getHighestSurfaceY", () => {
+    it("returns 0 when no bodies are present", () => {
+      expect(physics.getHighestSurfaceY(0, 0)).toBe(0);
+    });
+
+    it("returns top of a static box", () => {
+      const handle = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(handle, { x: 0, y: 0.375, z: 0 });
+
+      const y = physics.getHighestSurfaceY(0, 0);
+      expect(y).toBeCloseTo(0.75, 2);
+    });
+
+    it("returns highest of two stacked boxes", () => {
+      const h1 = physics.addBody(1, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(h1, { x: 0, y: 0.375, z: 0 });
+
+      const h2 = physics.addBody(2, {
+        shape: "box",
+        size: 0.6,
+        halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+        isStatic: true,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(h2, { x: 0, y: 1.125, z: 0 });
+
+      const y = physics.getHighestSurfaceY(0, 0);
+      expect(y).toBeCloseTo(1.5, 2);
+    });
+  });
+
   describe("raycast", () => {
     it("hits a sphere body", () => {
       physics.addBody(1, {

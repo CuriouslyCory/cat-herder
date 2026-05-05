@@ -16,6 +16,7 @@ import { PounceSystem } from "../systems/PounceSystem";
 import { CatAISystem } from "../systems/CatAISystem";
 import { GatheringSystem } from "../systems/GatheringSystem";
 import { YarnPickupSystem } from "../systems/YarnPickupSystem";
+import { VisualEffectsSystem } from "../systems/VisualEffectsSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
@@ -134,6 +135,7 @@ export class Game {
   private readonly gatheringSystem: GatheringSystem;
   private readonly yarnPickupSystem: YarnPickupSystem;
   private readonly renderSystem: RenderSystem;
+  private readonly visualEffectsSystem: VisualEffectsSystem;
 
   // ── Loop state ───────────────────────────────────────────────────────────────
   private rafId: number | null = null;
@@ -154,7 +156,7 @@ export class Game {
     this.eventBus = new EventBus();
 
     // 2. SceneManager — Three.js isolation boundary
-    this.sceneManager = new SceneManager(canvas);
+    this.sceneManager = new SceneManager(canvas, runtimeConfig.visual);
 
     // 3. InputManager — keyboard + mouse (needs SceneManager for screenToWorld)
     this.inputManager = new InputManager(canvas, this.sceneManager);
@@ -176,6 +178,7 @@ export class Game {
     // OxygenSystem runs after WaterSystem (needs OxygenState + SwimmingState set up)
     this.oxygenSystem = new OxygenSystem(this.eventBus);
     this.renderSystem = new RenderSystem(this.sceneManager);
+    this.visualEffectsSystem = new VisualEffectsSystem(this.sceneManager);
 
     // 8. CameraController — installs OrthographicCamera into SceneManager
     this.cameraController = new CameraController(
@@ -183,6 +186,10 @@ export class Game {
       this.sceneManager,
       this.world,
     );
+
+    // 8a. Post-processing — must init after CameraController sets the real camera
+    this.sceneManager.initPostProcessing();
+    this.sceneManager.syncPostProcessingCamera();
 
     // 9. MapManager — builds terrain entities in the ECS world
     this.mapManager = new MapManager(this.world, this.eventBus);
@@ -384,10 +391,16 @@ export class Game {
     this.world.addComponent(
       entity,
       createRenderable({
-        geometry: shape, // "box" | "sphere" | "cylinder" are valid GeometryKinds
+        geometry: shape,
         size: 0.5 * s,
         color,
         castShadow: true,
+        emissive: color,
+        emissiveIntensity: 0.15,
+        rimLight: runtimeConfig.visual.rimLighting
+          ? { color: 0xffffff, power: 2.0, intensity: 0.5 }
+          : undefined,
+        outlineCategory: "player",
       }),
     );
     this.world.addComponent(
@@ -478,6 +491,9 @@ export class Game {
           size: 0.4,
           color,
           castShadow: true,
+          emissive: color,
+          emissiveIntensity: 0.2,
+          outlineCategory: "resource",
         }),
       );
       // Trigger collider — same layer as player so CollisionSystem can detect
@@ -534,8 +550,11 @@ export class Game {
         createRenderable({
           geometry: "sphere",
           size: 0.3,
-          color: "#ffd700", // golden yellow — distinct from resource nodes
+          color: "#ffd700",
           castShadow: true,
+          emissive: "#ffd700",
+          emissiveIntensity: 0.5,
+          outlineCategory: "pickup",
         }),
       );
       this.world.addComponent(entity, createYarnPickup(YARN_AMOUNT));
@@ -590,6 +609,7 @@ export class Game {
     // CatPlacementSystem: processes clicks + updates ghost (once per render frame)
     this.catPlacementSystem.update(realDt);
     this.renderSystem.update(this.world, realDt);
+    this.visualEffectsSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
     this.sceneManager.render();
 
@@ -652,6 +672,7 @@ export class Game {
 
     const player = this.world.getComponent<PlayerControlled>(entity, "PlayerControlled");
     const oxygen = this.world.getComponent<OxygenState>(entity, "OxygenState");
+    const transform = this.world.getComponent<Transform>(entity, "Transform");
 
     return {
       oxygenPercent: oxygen ? oxygen.oxygenPercent : null,
@@ -665,6 +686,7 @@ export class Game {
       inventoryFull: this.gatheringSystem.isInventoryFull(),
       insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
       activeCompanions,
+      playerPosition: transform ? { x: transform.x, y: transform.y, z: transform.z } : null,
     };
   }
 

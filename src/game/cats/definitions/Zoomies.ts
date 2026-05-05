@@ -14,9 +14,12 @@ export const ZoomiesDefinition: CatDefinition = {
   meshConfig: {
     geometry: "cylinder",
     dims: [0.3, 0.3, 0.8],
-    color: "#ffe066", // bright yellow-gold
+    color: "#ffe066",
     castShadow: false,
     receiveShadow: false,
+    emissive: "#ffe066",
+    emissiveIntensity: 0.3,
+    outlineCategory: "cat",
   },
   behavior: {
     duration: 8,

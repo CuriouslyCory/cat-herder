@@ -5,6 +5,20 @@
 // exclusively by the debug menu so live tweaks never pollute the base values.
 // ---------------------------------------------------------------------------
 
+export interface VisualConfig {
+  postProcessing: boolean;
+  edgeDetection: boolean;
+  outlines: boolean;
+  bloom: boolean;
+  bloomStrength: number;
+  bloomThreshold: number;
+  bloomRadius: number;
+  outlineThickness: number;
+  outlineStrength: number;
+  outlineGlow: number;
+  rimLighting: boolean;
+}
+
 export interface GameConfig {
   // Movement
   walkSpeed: number; // units/second
@@ -18,7 +32,8 @@ export interface GameConfig {
   airControlFactor: number; // fraction of normal horizontal control while airborne
 
   // Jump
-  jumpImpulse: number; // initial upward velocity (u/s)
+  /** Derived from jumpApex and gravity: sqrt(2 * |gravity| * jumpApex). Do not set manually. */
+  jumpImpulse: number;
   jumpApex: number; // apex height (u)
   coyoteFrames: number; // frames of coyote time after walking off edge
   jumpBufferFrames: number; // frames of jump buffering before landing
@@ -47,6 +62,9 @@ export interface GameConfig {
 
   // Persistence
   autoSaveIntervalMs: number; // milliseconds between auto-saves
+
+  // Visual effects
+  visual: VisualConfig;
 }
 
 const BASE_CONFIG: GameConfig = {
@@ -62,7 +80,7 @@ const BASE_CONFIG: GameConfig = {
   airControlFactor: 0.7,
 
   // Jump
-  jumpImpulse: 3.5,
+  jumpImpulse: 0, // derived below from jumpApex + gravity
   jumpApex: 1.2,
   coyoteFrames: 5,
   jumpBufferFrames: 5,
@@ -91,10 +109,36 @@ const BASE_CONFIG: GameConfig = {
 
   // Persistence
   autoSaveIntervalMs: 30_000,
+
+  // Visual effects
+  visual: {
+    postProcessing: true,
+    edgeDetection: true,
+    outlines: true,
+    bloom: true,
+    bloomStrength: 0.05,
+    bloomThreshold: 0.85,
+    bloomRadius: 0.4,
+    outlineThickness: 1.0,
+    outlineStrength: 3.0,
+    outlineGlow: 0.08,
+    rimLighting: true,
+  },
 };
+
+BASE_CONFIG.jumpImpulse = Math.sqrt(
+  2 * Math.abs(BASE_CONFIG.gravity) * BASE_CONFIG.jumpApex,
+);
 
 /** Immutable production config. Import this for all production game logic. */
 export const CONFIG: Readonly<GameConfig> = Object.freeze({ ...BASE_CONFIG });
 
 /** Mutable deep copy of CONFIG — used exclusively by the debug menu. */
 export const runtimeConfig: GameConfig = { ...BASE_CONFIG };
+
+/** Recompute derived fields after the debug menu mutates runtimeConfig. */
+export function recalcDerivedConfig(): void {
+  runtimeConfig.jumpImpulse = Math.sqrt(
+    2 * Math.abs(runtimeConfig.gravity) * runtimeConfig.jumpApex,
+  );
+}
