@@ -82,10 +82,40 @@ Only update CLAUDE.md if you have **genuinely reusable knowledge** that would he
 
 ## Quality Requirements
 
-- ALL commits must pass your project's quality checks (typecheck, lint, test)
+- ALL commits must pass your project's quality checks: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns
+
+## Testing Requirements (MANDATORY)
+
+Every story implementation MUST include tests. A story is NOT complete without them.
+
+### How to write tests
+
+1. **Check the PRD's `testingDirectives` section** — it describes which test patterns to use for that story type.
+2. **Use existing test helpers** — never import Three.js or DOM in tests:
+   - `src/game/__tests__/helpers/entityFactories.ts` — `spawnPlayer()`, `spawnCat()`, `spawnResourceNode()`, etc.
+   - `src/game/__tests__/helpers/mockInputManager.ts` — stub with `pressAction()`, `holdAction()`, `setMovementIntent()`
+   - `src/game/__tests__/helpers/mockSceneManager.ts` — stub with `setMeshOpacity()`, `createHandle()`
+   - `src/game/__tests__/helpers/mockMapManager.ts` — stub with `getTerrainAt()`, `getHeightAt()`
+3. **Place tests in the matching directory**: `src/game/__tests__/{ecs,engine,systems,cats,integration}/`
+4. **Run `pnpm test` before committing** — if tests fail, fix the implementation, not the tests.
+
+### What to test
+
+- **New modules**: all public API methods, edge cases, error paths
+- **State changes**: verify reactive callbacks fire, invalid inputs rejected
+- **Systems**: create entities with required components, call `system.update(world, dt)`, assert state changes
+- **Cross-system**: put in `integration/` — instantiate multiple real systems sharing a World
+- **Config changes**: write regression tests proving the new value produces expected outcomes
+
+### Anti-patterns (DO NOT)
+
+- Do NOT mark a story as `passes: true` without `pnpm test` succeeding
+- Do NOT write tests that require a browser, canvas, or Three.js — use the mock helpers
+- Do NOT disable or skip tests to make CI green
+- Do NOT write tests that test private implementation details — test behavior through public APIs
 
 ## Browser Testing (If Available)
 

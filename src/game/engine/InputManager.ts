@@ -12,8 +12,13 @@ import type { SceneManager } from "./SceneManager";
  * Listeners are scoped to the canvas element so they never fire while the
  * player is interacting with DOM UI (React overlays, menus, etc.).
  *
- * Call poll() once per frame BEFORE any system reads input — it flushes the
- * single-frame "pressed" state.
+ * Call poll() once per frame at the END of the frame, AFTER all systems have
+ * read input — it flushes the single-frame "pressed" state so it does not
+ * leak into subsequent frames.
+ *
+ * Why end-of-frame: DOM keydown/mousedown events fire between RAF callbacks,
+ * so they populate pressedThisFrame *before* the next RAF runs. Clearing at
+ * the start of the frame would drop those events before any system sees them.
  */
 export class InputManager {
   private readonly canvas: HTMLCanvasElement;
@@ -28,10 +33,16 @@ export class InputManager {
   private mouseX = 0;
   private mouseY = 0;
 
+  /** Mouse button clicks registered since the last poll(). */
+  private leftClickThisFrame = false;
+  private rightClickThisFrame = false;
+
   // Bound handlers — kept as fields so removeEventListener works correctly.
   private readonly onKeyDown: (e: KeyboardEvent) => void;
   private readonly onKeyUp: (e: KeyboardEvent) => void;
   private readonly onMouseMove: (e: MouseEvent) => void;
+  private readonly onMouseDown: (e: MouseEvent) => void;
+  private readonly onContextMenu: (e: MouseEvent) => void;
 
   /**
    * Maps each GameAction to the key code(s) that trigger it.
@@ -45,6 +56,7 @@ export class InputManager {
       [GameAction.ToggleMap]: ["KeyM"],
       [GameAction.ToggleDebug]: ["CtrlD"], // synthetic key — handled in onKeyDown
       [GameAction.Pause]: ["Escape"],
+      [GameAction.Dive]: ["ShiftLeft", "ShiftRight"],
     };
 
   constructor(canvas: HTMLCanvasElement, sceneManager: SceneManager) {
@@ -91,9 +103,21 @@ export class InputManager {
       this.mouseY = e.clientY - rect.top;
     };
 
+    this.onMouseDown = (e: MouseEvent) => {
+      if (e.button === 0) this.leftClickThisFrame = true;
+      if (e.button === 2) this.rightClickThisFrame = true;
+    };
+
+    // Suppress the browser context menu so right-click can be used for dismissal.
+    this.onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
     canvas.addEventListener("keydown", this.onKeyDown);
     canvas.addEventListener("keyup", this.onKeyUp);
     canvas.addEventListener("mousemove", this.onMouseMove);
+    canvas.addEventListener("mousedown", this.onMouseDown);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
   }
 
   // ---------------------------------------------------------------------------
@@ -101,11 +125,14 @@ export class InputManager {
   // ---------------------------------------------------------------------------
 
   /**
-   * Call once per frame, before systems read input.
-   * Clears the single-frame "pressed" state so isActionPressed() resets each frame.
+   * Call once per frame at the END of the frame, after all systems have read
+   * input. Clears the single-frame "pressed" state so it doesn't leak into the
+   * next frame. See class docstring for why this must run end-of-frame.
    */
   poll(): void {
     this.pressedThisFrame.clear();
+    this.leftClickThisFrame = false;
+    this.rightClickThisFrame = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -165,6 +192,33 @@ export class InputManager {
     return this.sceneManager.screenToWorld(this.mouseX, this.mouseY);
   }
 
+  /** Returns the current mouse position in canvas-local pixels. */
+  getMouseScreenPosition(): { x: number; y: number } {
+    return { x: this.mouseX, y: this.mouseY };
+  }
+
+  /** True if the left mouse button was clicked since the last poll(). */
+  wasLeftClickThisFrame(): boolean {
+    return this.leftClickThisFrame;
+  }
+
+  /** True if the right mouse button was clicked since the last poll(). */
+  wasRightClickThisFrame(): boolean {
+    return this.rightClickThisFrame;
+  }
+
+  /**
+   * Returns 1–4 if Digit1–Digit4 was pressed this frame, null otherwise.
+   * Used by CatPlacementSystem to map number keys to cat slots.
+   */
+  getPressedCatSlot(): 1 | 2 | 3 | 4 | null {
+    if (this.pressedThisFrame.has("Digit1")) return 1;
+    if (this.pressedThisFrame.has("Digit2")) return 2;
+    if (this.pressedThisFrame.has("Digit3")) return 3;
+    if (this.pressedThisFrame.has("Digit4")) return 4;
+    return null;
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -174,5 +228,7 @@ export class InputManager {
     this.canvas.removeEventListener("keydown", this.onKeyDown);
     this.canvas.removeEventListener("keyup", this.onKeyUp);
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
+    this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
   }
 }

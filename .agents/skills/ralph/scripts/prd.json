@@ -1,325 +1,263 @@
 {
   "project": "Cat Herder",
-  "branchName": "feat/engine-foundation-v2",
-  "description": "Engine Foundation & Player — Three.js + ECS engine mounted at /play inside the existing Next.js 16 + T3 + WorkOS AuthKit + Drizzle/Neon foundation. Adds movement, isometric camera, character creation, the game-table Drizzle schema, and the gameRouter tRPC endpoints. Auth, env validation, tRPC bootstrap, and the Drizzle/Neon client are already in place — do NOT redo them.",
+  "branchName": "feat/core-gameplay-v2",
+  "description": "Phase 2: Core gameplay loop on top of Phase 1 engine — water/swimming, oxygen, 4 cat types (Loaf, Zoomies, Curiosity, Pounce), resource gathering, inventory, yarn economy, enhanced HUD. Depends on PRD-01.",
   "userStories": [
     {
-      "id": "US-001",
-      "title": "Install Three.js & mount the game canvas at /play",
-      "description": "As a developer, I need Three.js installed and a client-only canvas component mounted inside the protected /play route so the engine can run in the browser without breaking SSR.",
+      "id": "US-101",
+      "title": "Water Mechanics",
+      "description": "As a player, I want to enter water and swim so that underwater zones add traversal variety.",
       "acceptanceCriteria": [
-        "three and @types/three installed (pnpm add three && pnpm add -D @types/three)",
-        "src/app/play/_components/GameCanvas.tsx is a 'use client' component that owns a <canvas> element, sizes it to its parent, and instantiates the Game orchestrator (US-017) on mount",
-        "src/app/play/page.tsx imports GameCanvas via next/dynamic(() => import('./_components/GameCanvas'), { ssr: false }) so Three.js never executes during server rendering",
-        "GameCanvas calls game.destroy() on unmount — no leaked WebGL contexts during HMR or route changes",
-        "/play page still uses withAuth({ ensureSignedIn: true }) and passes a safe subset of the WorkOS user (e.g. { id, firstName, email }) down as a prop",
-        "pnpm dev renders a Three.js scene (colored box on a ground plane) inside /play for an authenticated user",
-        "pnpm typecheck and pnpm build pass"
+        "Water zones (terrain type) defined in MapData as trigger volumes.",
+        "src/game/ecs/components/SwimmingState.ts component added when player overlaps a water trigger; removed on exit.",
+        "On water entry: player transitions to swimming (different movement physics) without a position pop at the water boundary.",
+        "Surface speed: 3.2 u/s (vs 4.5 u/s walk on land), reduced acceleration.",
+        "Dive input: Shift held while in water => isDiving = true, movement drops to 2.0 u/s.",
+        "Ascend: release Shift => isDiving = false, rise at 2.5 u/s toward surface.",
+        "Buoyancy: natural float on water surface while not diving.",
+        "Water boundary smooth-transitions over 0.5u (no hard edge).",
+        "MovementSystem checks for SwimmingState component and applies different physics — no state machine needed.",
+        "pnpm typecheck passes."
       ],
       "priority": 1,
       "passes": true,
-      "notes": "next/dynamic with ssr:false must live in a 'use client' component in Next.js 16+; added GameLoader.tsx as the client wrapper."
+      "notes": "Implemented via SwimmingState/WaterTrigger components, WaterSystem (event-driven lifecycle), and MovementSystem swimming branch."
     },
     {
-      "id": "US-002",
-      "title": "Core engine types and centralized config",
-      "description": "As a developer, I need shared type definitions, game event types, and a centralized config file so all modules reference a single source of truth for game constants.",
+      "id": "US-102",
+      "title": "Oxygen System",
+      "description": "As a player, I want to manage oxygen while diving so underwater exploration requires strategy and risk-reward.",
       "acceptanceCriteria": [
-        "src/game/types.ts defines: GameAction enum (Jump, Interact, ToggleMap, ToggleDebug, Pause), CatType enum (Loaf, Zoomies, CuriosityCat, Pounce), TerrainType enum, GameEvent discriminated union, Vector3-compatible types",
-        "src/game/config.ts contains all GDD constants: walk speed 4.5 u/s, jump impulse 3.5u, gravity -12 u/s^2, coyote time 5 frames, jump buffer 5 frames, collision radius 0.4u, accel 0.3s, decel 0.2s, swimming speeds, oxygen rates, camera angles (45deg azimuth, 60deg elevation), auto-save interval 30s",
-        "Config exported as frozen CONFIG plus a mutable runtimeConfig deep-copy for the debug menu",
-        "All game source lives under src/game/ (engine, ecs, systems, ui, maps subfolders) — kept cleanly separate from src/app/, src/server/, src/trpc/",
-        "pnpm typecheck passes"
+        "Oxygen starts at 100 when submerged, drains at 1% per 0.3s (3.33/s) while isDiving === true.",
+        "Oxygen does NOT drain on the water surface.",
+        "Oxygen HUD gauge: circular/bar element appears at top-center while submerged, hidden on land.",
+        "Warning: pulsing red visual effect at 20% oxygen remaining.",
+        "Depletion: when oxygen hits 0, player loses 1 health per second.",
+        "Surfacing: oxygen refills at 5%/s on the water surface.",
+        "Exiting water: oxygen resets to 100, gauge hides.",
+        "Events emitted via EventBus: OXYGEN_WARNING at 20%, OXYGEN_DEPLETED at 0%.",
+        "pnpm typecheck passes."
       ],
       "priority": 2,
       "passes": true,
-      "notes": "GameAction, CatType, TerrainType enums; Vec2/Vec3 interfaces; GameEvent discriminated union in types.ts. CONFIG frozen + runtimeConfig mutable copy in config.ts."
+      "notes": "Implemented via OxygenState component (managed by WaterSystem), OxygenSystem (drain/refill/events/health drain), HUD oxygen gauge (top-center, pulsing red at 20%), and health fields added to PlayerControlled."
     },
     {
-      "id": "US-003",
-      "title": "EventBus typed pub/sub system",
-      "description": "As a developer, I need a typed event bus so modules communicate without direct coupling.",
+      "id": "US-103",
+      "title": "Cat Definition Data Structure",
+      "description": "As a developer, I need a data-driven cat definition system so adding a new cat type requires only a definition file and an enum entry.",
       "acceptanceCriteria": [
-        "src/game/engine/EventBus.ts implements emit<T>(event), on<T>(type, handler): Unsubscribe, off(type, handler)",
-        "Events typed against the GameEvent discriminated union from US-002",
-        "Multiple listeners per event type supported",
-        "Unsubscribe returned by on() removes that specific listener",
-        "Destroyed modules can clean up subscriptions (no leaks across HMR cycles)",
-        "pnpm typecheck passes"
+        "src/game/cats/CatDefinition.ts defines the CatDefinition interface: type (CatType enum), yarnCost, name, description, behavior config (idle animation, active effect, duration, cooldown), meshConfig (shape, color, size for the primitive), effectType ('terrain' | 'movement' | 'utility' | 'launch').",
+        "src/game/cats/definitions/ contains one file per cat type, each exporting a CatDefinition.",
+        "src/game/cats/definitions/index.ts barrel exports a registry Map<CatType, CatDefinition>.",
+        "Registry is iterable — CatCompanionManager reads it to build the catalog.",
+        "Adding a new cat = one new definition file + one CatType enum entry + barrel export.",
+        "pnpm typecheck passes."
       ],
       "priority": 3,
       "passes": true,
-      "notes": "EventBus uses Map<string, Set<AnyHandler>>. Internal storage uses (event: GameEvent) => void with unknown-cast boundary to satisfy TS strict contravariance. clear() enables leak-free teardown across HMR."
+      "notes": "Implemented via CatDefinition interface (CatDefinition.ts), four definition files (Loaf/Zoomies/CuriosityCat/Pounce), and CAT_REGISTRY Map exported from definitions/index.ts."
     },
     {
-      "id": "US-004",
-      "title": "SceneManager — Three.js isolation boundary",
-      "description": "As a developer, I need Three.js isolated behind a single module so no game logic ever imports three directly.",
+      "id": "US-104",
+      "title": "CatCompanionManager",
+      "description": "As a player, I want to summon and dismiss cat companions using yarn so I can solve puzzles and traverse the world.",
       "acceptanceCriteria": [
-        "src/game/engine/SceneManager.ts exposes constructor(canvas), addMesh(config): SceneHandle, removeMesh(handle), updateTransform(handle, position, rotation, scale), render(), resize(width, height), screenToWorld(screenX, screenY): Vector3 | null, dispose()",
-        "MeshConfig supports geometries box, sphere, cylinder, plane plus size, color (hex string), castShadow, receiveShadow",
-        "Internally creates THREE.Scene, THREE.WebGLRenderer, THREE.AmbientLight, THREE.DirectionalLight",
-        "Handles ResizeObserver / window resize events and device pixel ratio",
-        "SceneHandle is opaque — callers cannot reach the underlying THREE.Object3D",
-        "Only SceneManager and CameraController may import from three (enforced by ESLint no-restricted-imports in US-019)",
-        "dispose() releases all GPU resources — required for clean HMR / route changes",
-        "pnpm typecheck passes"
+        "src/game/cats/CatCompanionManager.ts exposes summon(catType, position): Entity | null, dismiss(entity), getCatalog(): CatCatalogEntry[], getActiveCompanions(): Entity[].",
+        "summon() validates enough yarn, under cat limit (3 active for MVP — sourced from runtimeConfig), position not inside collision geometry.",
+        "On valid summon: deducts yarn from GameState, creates cat entity with Transform, Renderable, Collider, CatBehavior; emits CAT_SUMMONED.",
+        "On invalid summon: returns null, surfaces feedback (insufficient yarn / invalid position).",
+        "dismiss(): removes cat entity, returns yarn to GameState (only if not yet expired), emits CAT_DISMISSED.",
+        "getCatalog(): returns all defined cats with type, name, yarn cost, description, unlocked status.",
+        "Cat limit: if summon exceeds limit, oldest cat auto-dismisses with visual feedback.",
+        "pnpm typecheck passes."
       ],
       "priority": 4,
       "passes": true,
-      "notes": "SceneHandle is a Symbol (opaque). MeshConfig supports box/sphere/cylinder/plane. camera is a public settable field so CameraController can install an OrthographicCamera. screenToWorld() uses Raycaster against scene meshes. dispose() removes ResizeObserver + all mesh GPU resources."
+      "notes": "Implemented via GameState (yarn tracking), CatBehavior ECS component, and CatCompanionManager (summon/dismiss/getCatalog/getActiveCompanions). cat:summoned and cat:dismissed events added to GameEvent. maxActiveCats added to GameConfig/runtimeConfig."
     },
     {
-      "id": "US-005",
-      "title": "ECS World, Entity, Component, and System base types",
-      "description": "As a developer, I need an Entity-Component-System foundation so all game objects are data-driven and systems operate on component queries.",
+      "id": "US-105",
+      "title": "Cat Placement UI",
+      "description": "As a player, I want to aim and place cats with my mouse so positioning is intuitive and precise.",
       "acceptanceCriteria": [
-        "src/game/ecs/Entity.ts — Entity is a numeric ID type alias (not a class)",
-        "src/game/ecs/Component.ts — base component interface with a static type tag for identification",
-        "src/game/ecs/System.ts — System interface with update(world, dt)",
-        "src/game/ecs/World.ts implements createEntity(): Entity, destroyEntity(entity), addComponent<T>(entity, component), removeComponent<T>(entity, type), getComponent<T>(entity, type): T | null, query(...types): Entity[]",
-        "query() results cached; second call with same component types is O(1). Cache invalidates on add/remove.",
-        "pnpm typecheck passes"
+        "Cat selection: number keys 1-4 select cat type from roster (active type shown in HUD).",
+        "When a cat type is selected: ghost preview (semi-transparent colored primitive) follows the mouse world position.",
+        "Ghost preview snaps to valid ground positions (not inside walls, not in void).",
+        "Ghost shows red when position is invalid.",
+        "Left-click at valid position: summon selected cat type there.",
+        "Right-click on an active cat: dismiss it (yarn returned per US-104 rules).",
+        "Cat selection bar in HUD shows all 4 types with yarn cost and current yarn count.",
+        "pnpm typecheck passes."
       ],
       "priority": 5,
       "passes": true,
-      "notes": "Entity is a numeric type alias. Component is an interface with a `type: string` tag. System interface has update(world, dt). World uses Map<Entity, Map<ComponentType, Component>> with a sorted-key query cache that invalidates on any structural change."
+      "notes": "Implemented via CatPlacementSystem (ghost preview, number-key selection, left-click summon, right-click dismiss), SceneManager (opacity + setMeshColor/setMeshOpacity), InputManager (click + slot key tracking), HUD (cat selection bar + yarn count), UIManager (HUDState extended), and Game.ts (GameState, CatCompanionManager, CatPlacementSystem wired in)."
     },
     {
-      "id": "US-006",
-      "title": "ECS core components — Transform, Renderable, Velocity, Collider, PlayerControlled",
-      "description": "As a developer, I need core ECS components so entities can have position, visuals, physics, and player control.",
+      "id": "US-106",
+      "title": "Loaf Cat Implementation",
+      "description": "As a player, I want to summon a Loaf cat that becomes a solid platform so I can reach elevated areas by stacking.",
       "acceptanceCriteria": [
-        "src/game/ecs/components/Transform.ts — position (x,y,z), rotation (y-axis radians), scale (x,y,z)",
-        "src/game/ecs/components/Renderable.ts — meshConfig (from SceneManager), sceneHandle (nullable, set by RenderSystem)",
-        "src/game/ecs/components/Velocity.ts — dx, dy, dz (units per second)",
-        "src/game/ecs/components/Collider.ts — shape, size, isStatic, isTrigger, collisionLayer, collisionMask",
-        "src/game/ecs/components/PlayerControlled.ts — marker with isGrounded, coyoteTimer, jumpBufferTimer",
-        "pnpm typecheck passes"
+        "src/game/cats/definitions/Loaf.ts defines type=Loaf, yarnCost=1, effectType='terrain'.",
+        "On summon: cat entity created with static Collider (box, ~1.5u tall).",
+        "Player can walk on top of the Loaf (solid terrain).",
+        "Multiple Loafs stackable to reach higher.",
+        "Loaf is immovable (static body).",
+        "Visual: box-shaped colored primitive (warm orange).",
+        "On dismiss: collider removed, entity destroyed, player falls if standing on it.",
+        "pnpm typecheck passes."
       ],
       "priority": 6,
       "passes": true,
-      "notes": "Five component files under src/game/ecs/components/. Transform (position/rotationY/scale), Velocity (dx/dy/dz), PlayerControlled (isGrounded/coyoteTimer/jumpBufferTimer), Collider (shape/size/isStatic/isTrigger/layer/mask), Renderable (meshConfig + nullable sceneHandle). Each exports a factory function. Renderable imports MeshConfig and SceneHandle from SceneManager (no THREE leak)."
+      "notes": "Implemented via: PhysicsEngine flat-floor fallback (y≥0), CatCompanionManager PhysicsEngine static body registration for terrain/launch cats, correct Y placement (surfaceY + halfHeight), physics body cleanup on dismiss. getCatHalfHeight()/getXZHalfExtent() helpers derive extents from MeshConfig without per-cat logic."
     },
     {
-      "id": "US-007",
-      "title": "RenderSystem — ECS-to-Three.js bridge",
-      "description": "As a developer, I need a system that synchronizes ECS entity transforms to Three.js scene objects each frame.",
+      "id": "US-107",
+      "title": "Zoomies Cat Implementation",
+      "description": "As a player, I want to summon a Zoomies cat that creates a speed trail so I can move faster through an area.",
       "acceptanceCriteria": [
-        "src/game/systems/RenderSystem.ts implements System",
-        "Each frame: queries Transform + Renderable. New entities → sceneManager.addMesh(), store handle. Existing → sceneManager.updateTransform(). Destroyed → sceneManager.removeMesh().",
-        "No game logic — pure data sync",
-        "pnpm typecheck passes"
+        "src/game/cats/definitions/Zoomies.ts defines type=Zoomies, yarnCost=2, effectType='movement', duration=8s, speedMultiplier=2.0.",
+        "On summon: cat spawns at target position; immediately creates a 6u-long trigger trail in the player's facing direction.",
+        "Player overlap with the trail trigger applies a 2x speed multiplier.",
+        "Speed buff applies only inside the trail zone.",
+        "Trail persists 8s, then auto-destroys (yarn NOT returned — consumed).",
+        "Visual: elongated bright glowing zone showing the trail path.",
+        "Right-click dismiss before expiry returns yarn.",
+        "pnpm typecheck passes."
       ],
       "priority": 7,
       "passes": true,
-      "notes": "RenderSystem maintains a local Map<Entity, SceneHandle> as the source of truth for registered meshes. On each frame: new entities are addMesh()'d and handles stored; existing entities get updateTransform(); stale entities (destroyed or lost a component) are removeMesh()'d using the cached handle — no dependency on world.getComponent() for cleanup. Pure data sync, no game logic."
+      "notes": "Implemented via SpeedBoost component, ZoomiesTrail component, ZoomiesSystem (timer/auto-dismiss/overlap check), CatCompanionManager (trail entity creation/cleanup), and MovementSystem (speed multiplier). Trail uses oriented AABB overlap check instead of PhysicsEngine triggers for correct 6u×1.5u rectangle detection."
     },
     {
-      "id": "US-008",
-      "title": "InputManager — keyboard and mouse input",
-      "description": "As a player, I want responsive keyboard and mouse input so my character reacts immediately to WASD movement, jumping, and other actions.",
+      "id": "US-108",
+      "title": "Curiosity Cat Implementation",
+      "description": "As a player, I want to summon a Curiosity Cat that reveals hidden terrain so I can discover secret paths and areas.",
       "acceptanceCriteria": [
-        "src/game/engine/InputManager.ts exposes getMovementIntent(): {x, z} (normalized), isActionPressed(action) (single-frame), isActionHeld(action), getMouseWorldPosition(): Vector3 | null, poll(), dispose()",
-        "WASD and Arrow Keys produce 8-direction intent; diagonals normalized",
-        "Spacebar = Jump (single press), E = Interact, M = Map, Ctrl+D = Debug",
-        "Mouse position raycast through SceneManager.screenToWorld()",
-        "Browser arrow-key scrolling prevented via e.preventDefault() on the scoped target",
-        "Listeners attach to the <canvas> element (not window) so they don't fire when the user is interacting with DOM UI; dispose() removes them on unmount",
-        "pnpm typecheck passes"
+        "src/game/cats/definitions/CuriosityCat.ts defines type=CuriosityCat, yarnCost=2, effectType='utility', revealRadius=5u, revealDuration=20s.",
+        "Hidden terrain zones defined in MapData as entities with Renderable (initially invisible) + Collider (initially disabled).",
+        "On summon: all hidden terrain entities within 5u become visible (shimmer/fade-in) and their colliders activate (walkable).",
+        "Revealed terrain persists 20s, then fades back to hidden.",
+        "Event emitted: HIDDEN_TERRAIN_REVEALED with affected terrain IDs.",
+        "Cat remains at summon position during reveal.",
+        "Auto-dismiss after 20s (yarn consumed); right-click before expiry returns yarn.",
+        "Test map includes at least one hidden terrain zone (bridge or platform) bridging otherwise inaccessible areas.",
+        "pnpm typecheck passes."
       ],
       "priority": 8,
       "passes": true,
-      "notes": "Canvas gets tabIndex=0 so it can receive keyboard events. Ctrl+D stored as synthetic 'CtrlD' key to avoid conflicting with movement 'D'. Arrow-key and Space scrolling prevented via e.preventDefault(). Listeners on canvas (not window) so DOM UI interactions don't bleed into game input. poll() clears pressedThisFrame each frame."
+      "notes": "Implemented via HiddenTerrain component (tag + revealCount), CuriosityReveal component (radius + revealedEntities list), CuriositySystem (Idle→Active reveal, timer, Expired hide+dismiss), MapManager (opacity:0 + HiddenTerrain tag for Hidden-type terrain), CatCompanionManager (CuriosityReveal attached for effectType=utility). hidden:terrain:revealed event added to GameEvent."
     },
     {
-      "id": "US-009",
-      "title": "PhysicsEngine — gravity, ground detection, collision",
-      "description": "As a developer, I need a lightweight physics engine for gravity, ground detection, and collision.",
+      "id": "US-109",
+      "title": "Pounce Cat Implementation",
+      "description": "As a player, I want to summon a Pounce cat that launches me upward so I can reach high platforms in one move.",
       "acceptanceCriteria": [
-        "src/game/engine/PhysicsEngine.ts exposes addBody(entity, config): BodyHandle, removeBody(handle), raycast(origin, direction, maxDist): RaycastHit | null, step(dt)",
-        "BodyConfig: shape, size, isStatic, isTrigger, collisionLayer, collisionMask",
-        "Gravity -12 u/s^2 on non-static, non-grounded bodies",
-        "Ground detection via downward raycast with 0.05u snap tolerance",
-        "Circle collision (0.4u radius, 0.1u skin width) with wall-sliding",
-        "Triggers detect overlap and emit events via EventBus; static bodies never move",
-        "pnpm typecheck passes"
+        "src/game/cats/definitions/Pounce.ts defines type=Pounce, yarnCost=3, effectType='launch', launchImpulse=3.5u.",
+        "On summon: cat entity created with an upward-facing trigger zone on top.",
+        "Player walking onto the trigger applies a 3.5u upward impulse to player velocity (matches jump impulse — reaches High tier per spec).",
+        "Launch occurs once per landing — must leave and re-enter to launch again.",
+        "Pounce cat persists until dismissed (not consumed on use).",
+        "Right-click dismiss returns yarn.",
+        "Visual: low wide box with distinct color.",
+        "Player retains 70% air control during launch.",
+        "Test map includes elevated platforms reachable via Pounce (~3.5u above the cat's resting height).",
+        "pnpm typecheck passes."
       ],
       "priority": 9,
       "passes": true,
-      "notes": "Self-contained physics engine with internal body state. BodyHandle is a Symbol. Slab-method AABB raycast for ground detection. Circle-vs-box collision resolves via closest-point-on-box push (wall-sliding). Trigger overlaps tracked with 'entity:entity' key set; enter/exit events emitted via EventBus. Additional accessors (getPosition, setPosition, getVelocity, setVelocity, isBodyGrounded, getHandleByEntity) provided for MovementSystem integration."
+      "notes": "Implemented via PounceSystem (XZ footprint overlap + physics isBodyGrounded check, launchedCats Set for once-per-landing, reads params from CAT_REGISTRY). Physics body already registered by CatCompanionManager for effectType='launch'. Air control (70%) already global in runtimeConfig.airControlFactor. Test map adds a height=1 grass platform at X∈[-19,-15], Z∈[-1,3] reachable via Pounce launch from flat ground beside it."
     },
     {
-      "id": "US-010",
-      "title": "MovementSystem — walk + jump with coyote and buffer",
-      "description": "As a player, I want smooth walking and responsive jumping so controlling my character feels satisfying.",
+      "id": "US-110",
+      "title": "CatAISystem",
+      "description": "As a developer, I need a generic system that drives all cat behaviors from their definitions so behavior stays data-driven.",
       "acceptanceCriteria": [
-        "src/game/systems/MovementSystem.ts implements System",
-        "Walk speed 4.5 u/s, accel 0.3s, decel 0.2s — sourced from runtimeConfig",
-        "Jump: 3.5u upward impulse on press, 1.2u apex",
-        "Air control: 70% horizontal retention",
-        "Coyote time 5 frames (~83ms) after walking off edges",
-        "Jump buffer 5 frames before landing",
-        "Mesh rotates to face 8-direction movement",
-        "Reads only from InputManager — no direct keyboard access",
-        "pnpm typecheck passes"
+        "src/game/ecs/components/CatBehavior.ts component: catType, state (Idle | Active | Cooldown | Expired), stateTimer, ownerId.",
+        "src/game/systems/CatAISystem.ts implements System.",
+        "Each frame: queries CatBehavior + Transform.",
+        "State machine per cat: Idle (just placed) -> Active (effect running) -> Expired (duration elapsed -> auto-dismiss).",
+        "Terrain cats (Loaf, Pounce): stay Active until manually dismissed.",
+        "Duration cats (Zoomies 8s, Curiosity 20s): timer counts down, auto-dismiss on expiry.",
+        "System reads behavior config from CatDefinition — no cat-specific logic hardcoded in the system.",
+        "pnpm typecheck passes."
       ],
       "priority": 10,
       "passes": true,
-      "notes": "MovementSystem queries Transform+Velocity+PlayerControlled. Syncs transform from physics body (prev-frame result) at start. Coyote timer armed on grounded→airborne transition, ticked each airborne frame. Jump buffer armed on Jump press, consumed when canJump (grounded or coyote>0). Horizontal: per-axis accel/decel rates (walkSpeed/accel|decel time), target scaled by airControlFactor when airborne. Velocity written to physics body each frame; Y is owned by physics except on jump frames. Facing: atan2(intent.x, intent.z) → rotationY. moveToward() helper avoids float jitter at rest."
+      "notes": "CatAISystem (src/game/systems/CatAISystem.ts) reads duration from CAT_REGISTRY and drives Idle→Active→Expired transitions. Permanent cats (Loaf, Pounce) have no duration and stay Active. ZoomiesSystem/CuriositySystem/PounceSystem de-coupled from state management — they now react to states set by CatAISystem. CatAISystem runs first in the fixed-step loop before all per-cat systems."
     },
     {
-      "id": "US-011",
-      "title": "CameraController — isometric follow with lead",
-      "description": "As a player, I want an isometric camera that smoothly follows my character with a slight lead in my movement direction.",
+      "id": "US-111",
+      "title": "Resource Nodes & Gathering",
+      "description": "As a player, I want to gather resources from nodes on the map so I feel productive and have materials to progress.",
       "acceptanceCriteria": [
-        "src/game/engine/CameraController.ts exposes follow(target: Entity), setMode('follow' | 'free'), update(dt), dispose()",
-        "Three.js OrthographicCamera at 45deg azimuth, 60deg elevation",
-        "Dynamic 2-3u offset in player facing direction (lerped)",
-        "Smooth follow with damping; scroll-wheel zoom",
-        "Clamps to map boundaries",
-        "free mode: WASD pans camera (used by Phase 4 map editor)",
-        "pnpm typecheck passes"
+        "Resource node entities: Transform, Renderable (distinct shape/color per type), Collider (trigger zone for interaction range), ResourceNode component (resourceType, gatherTime, yieldAmount, respawnTime, cooldownRemaining, isBeingGathered).",
+        "ResourceNode.type: Grass | Sticks | Water. Per-GDD: gatherTime 1.5s/1.5s/2.0s; yieldAmount 1; respawnTime 30s/45s/60s.",
+        "Player presses E near a ready node -> gathering starts (HUD progress bar).",
+        "Movement or another E press during gather cancels (no penalty).",
+        "Gather complete -> resource added to inventory, node enters cooldown (visual: dim/fade), '+1 [Resource]' floats up from node.",
+        "After cooldown -> node restores (visual + gatherable).",
+        "Test map populated with 8-12 Grass (scattered), 3-5 Sticks (forest zone), 1-2 Water (near water zone).",
+        "pnpm typecheck passes."
       ],
       "priority": 11,
       "passes": true,
-      "notes": "OrthographicCamera at 45° azimuth, 60° elevation sourced from runtimeConfig. follow()/setMode()/update(dt)/dispose() implemented. Smooth follow with configurable damping (5 units/s convergence). Lead offset lerped each frame via runtimeConfig.cameraLeadLerp toward player facing. Scroll-wheel zoom (minZoom=5, maxZoom=25). setMapBounds() clamps focusX/Z. panBy() enables free-mode WASD panning from Game orchestrator. Camera installed into SceneManager.camera on construction."
+      "notes": "Implemented via ResourceType enum (types.ts), ResourceNode component (isBeingGathered, gatherProgress, cooldownRemaining), GatheringSystem (E-key start, movement/E cancel, progress tick, complete→inventory+cooldown, dim mesh), GameState.addResource()/hasInventorySpace(), HUD gather progress bar (bottom-center, hidden when not gathering), and 15 resource node entities created in Game.spawnTestMapResourceNodes() after map load (9 Grass, 4 Sticks, 2 Water). resource:gathered event emitted on complete."
     },
     {
-      "id": "US-012",
-      "title": "CollisionSystem — broad and narrow phase",
-      "description": "As a developer, I need per-frame collision detection so entities interact physically with terrain and each other.",
+      "id": "US-112",
+      "title": "Inventory System",
+      "description": "As a player, I want an inventory that holds gathered resources with a capacity limit so I make strategic choices about what to carry.",
       "acceptanceCriteria": [
-        "src/game/systems/CollisionSystem.ts implements System",
-        "Queries Transform + Collider",
-        "Broad phase: AABB overlap. Narrow phase: circle-circle / circle-box",
-        "Pushes non-static bodies apart with skin-width sliding",
-        "Trigger overlaps emit events via EventBus (no physics response)",
-        "Layers/masks respected",
-        "pnpm typecheck passes"
+        "GameState (PRD-03) tracks player.inventory as an array of { resourceType, quantity } stacks plus maxCapacity (default 10).",
+        "When gathering: if inventory has space -> add resource. If full -> 'Inventory Full' feedback; gathering does not start.",
+        "Same-type resources stack (not per-slot).",
+        "Capacity counts total items across all stacks (10 Grass + 5 Sticks = 15 -> exceeds cap).",
+        "HUD inventory display: resource icons with quantities, capacity bar (e.g., '7/10').",
+        "HUD updates reactively via GameState.onChange('player.inventory', ...).",
+        "pnpm typecheck passes."
       ],
       "priority": 12,
       "passes": true,
-      "notes": "CollisionSystem implements System. Broad phase: AABB overlap in XZ plane. Narrow phase: circle-circle (push apart by overlap+skinWidth, shared equally or one-sided) and circle-box (closest-point-on-AABB push). Trigger pairs tracked with pairKey (smaller entity first); trigger:enter/exit emitted via EventBus. Solid collision:enter/exit also emitted. Layers/masks filter: (A.layer & B.mask) !== 0 && (B.layer & A.mask) !== 0. Non-static bodies have Transform mutated in-place."
+      "notes": "Implemented via: GameState.onInventoryChange() reactive listener + notifyInventory() on addResource(); GatheringSystem._inventoryFullTimer (2s display) + isInventoryFull() getter; HUDState extended with inventory/maxInventoryCapacity/inventoryFull; HUD inventory panel (top-left) with capacity bar, per-stack icon rows (🌿/🪵/💧), color-coded fill bar, and 'Inventory Full!' notification; Game.buildHUDState() passes all three fields."
     },
     {
-      "id": "US-013",
-      "title": "Drizzle schema for game tables (characters, gameSaves, debugOverrides)",
-      "description": "As a developer, I need the game's persistence tables defined in Drizzle so character, save, and debug data has a typed home.",
+      "id": "US-113",
+      "title": "Yarn Economy & HUD",
+      "description": "As a player, I need a yarn counter in the HUD so I know how many cats I can afford to summon.",
       "acceptanceCriteria": [
-        "src/server/db/schema.ts adds three tables using the existing createTable factory so the cat-herder_ prefix is preserved",
-        "characters: userId (varchar 256, primary key — one character per WorkOS user for MVP), shape (varchar — box/sphere/cylinder), colorHex (varchar 7), sizeScale (real), createdAt, updatedAt",
-        "gameSaves: userId (varchar 256, primary key), version (varchar — '0.1'), saveData (jsonb), createdAt, updatedAt",
-        "debugOverrides: userId (varchar 256, primary key), overrides (jsonb), updatedAt — reserved for PRD-03, never auto-applied on load",
-        "No RLS / pg_session_jwt / PostgREST setup. Authorization is enforced inside tRPC protectedProcedure by scoping every query to ctx.user.id.",
-        "userId matches the WorkOS user.id shape (user_01XXXXXXXXXXXXXXXXXXXXXXXX)",
-        "pnpm db:push runs cleanly against the Neon dev database",
-        "pnpm typecheck passes"
+        "GameState tracks player.yarn (number, starts at 10 for testing).",
+        "Summoning a cat deducts yarn cost; dismissing returns it (per US-104 rules).",
+        "HUD shows yarn count with a yarn ball icon.",
+        "Insufficient yarn for selected cat: ghost preview red, 'Not enough yarn' tooltip.",
+        "Yarn updates reactively when state changes.",
+        "Test map includes 2-3 yarn pickups that add +3 yarn when player walks over them.",
+        "pnpm typecheck passes."
       ],
       "priority": 13,
       "passes": true,
-      "notes": "Three tables added to schema.ts using createTable factory: characters (userId PK, shape, colorHex, sizeScale, timestamps), gameSaves (userId PK, version, saveData jsonb, timestamps), debugOverrides (userId PK, overrides jsonb, updatedAt). pnpm typecheck and pnpm build pass. pnpm db:push requires live Neon credentials — run manually to push to dev DB."
+      "notes": "Implemented via: CatCompanionManager.canAfford(); CatPlacementSystem._insufficientYarn flag + getInsufficientYarn() (ghost turns red when yarn < cost); HUD yarn warning tooltip (bottom:155px, hidden by default, shows '🧶 Not enough yarn!' when insufficientYarn=true); YarnPickup component + YarnPickupSystem (proximity auto-collect, 1u radius); 3 golden-sphere yarn pickup entities (+3 each) spawned in Game.spawnTestMapYarnPickups(); insufficientYarn threaded through HUDState → UIManager → HUD."
     },
     {
-      "id": "US-014",
-      "title": "game tRPC router (getCharacter / upsertCharacter / getSave / upsertSave / deleteSave)",
-      "description": "As a developer, I need a game tRPC router so the browser engine can read/write character, save, and debug data without ever touching Postgres directly.",
+      "id": "US-114",
+      "title": "Enhanced HUD",
+      "description": "As a player, I need a complete HUD showing health, yarn, inventory, oxygen, and active cats so I have full situational awareness.",
       "acceptanceCriteria": [
-        "src/server/api/routers/game.ts exports a gameRouter registered in appRouter (src/server/api/root.ts)",
-        "All procedures use protectedProcedure. Every query/mutation filters by ctx.user.id — never trust a userId from input.",
-        "getCharacter() returns the caller's character or null",
-        "upsertCharacter(input: { shape, colorHex, sizeScale }) validated by Zod (shape enum, colorHex hex regex, sizeScale 0.5-2.0); upserts row",
-        "getSave() returns { version, saveData } | null",
-        "upsertSave(input: { version, saveData }) upserts; saveData validated as a generic JSON object (concrete shape lives in PRD-03)",
-        "deleteSave() deletes the caller's save row (used by debug menu in PRD-03)",
-        "Each procedure validates inputs with Zod and returns typed results to the client",
-        "pnpm typecheck passes; manual round-trip from /play confirms read/write"
+        "Health: hearts or health bar (5 hearts default per GDD).",
+        "Yarn: yarn ball icon + number.",
+        "Inventory: resource icons with quantities + capacity indicator.",
+        "Oxygen gauge: visible only while submerged.",
+        "Active cat bar: icons of summoned cats with right-click dismiss hint.",
+        "Cat selection: 4 cat types with yarn costs; selected type highlighted.",
+        "Gather progress: bar appears during gathering, disappears on complete/cancel.",
+        "All elements at screen edges, not obstructing center gameplay.",
+        "All elements update reactively via GameState.onChange().",
+        "pnpm typecheck passes."
       ],
       "priority": 14,
       "passes": true,
-      "notes": "gameRouter with getCharacter, upsertCharacter (Zod: shape enum, colorHex hex regex, sizeScale 0.5-2.0), getSave, upsertSave (saveData: z.record(z.string(), z.unknown()) for Zod v4), deleteSave, plus getDebugOverrides/upsertDebugOverrides for PRD-03. All protectedProcedure, all scoped to ctx.user.id. Drizzle upsert via onConflictDoUpdate. Registered as appRouter.game."
-    },
-    {
-      "id": "US-015",
-      "title": "Character Creator UI (React overlay) backed by tRPC",
-      "description": "As a new player, I want to customize my character's shape, color, and size so my avatar feels personal.",
-      "acceptanceCriteria": [
-        "src/app/play/_components/CharacterCreator.tsx is a client component (React) that renders an HTML overlay",
-        "Shape picker: Block, Sphere, Cylinder with visual previews",
-        "Color picker: hex input + 8 preset swatches",
-        "Size slider: Small (0.8), Medium (1.0), Large (1.2)",
-        "Start Game button",
-        "On submit: calls api.game.upsertCharacter.useMutation() (tRPC), then dismisses the overlay and signals the engine to spawn the player entity with matching Renderable (shape/color/size) at the map spawn point",
-        "On /play mount: api.game.getCharacter.useQuery() decides whether to render the creator (no character) or hand control to the engine (character exists)",
-        "Character renders in scene as the chosen colored primitive",
-        "pnpm typecheck passes"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "CharacterCreator.tsx: React overlay with shape picker (box/sphere/cylinder + SVG previews), 8 color swatches + custom color input, 3 size options (0.8/1.0/1.2). Uses api.game.upsertCharacter.useMutation(); calls onComplete(config) on success. GameCanvas.tsx updated: api.game.getCharacter.useQuery() hydrates character state; showCreator=true when not loading and no character; game starts once character is set (passed to Game constructor). Game.ts updated: PlayerCharacterConfig interface added; spawnPlayer() replaces player mesh with correct geometry+color+size; GameOpts accepts optional character."
-    },
-    {
-      "id": "US-016",
-      "title": "MapManager and 60x60 test map",
-      "description": "As a player, I want to spawn on a test map with varied terrain so I have a world to explore.",
-      "acceptanceCriteria": [
-        "src/game/maps/MapData.ts defines MapData: name, size (width/depth), terrain grid (2D TerrainCell array), water zones, spawn points, hidden terrain zones",
-        "TerrainCell: type (grass/dirt/stone/water), height, navigable",
-        "src/game/maps/MapManager.ts exposes loadMap(data), getTerrainAt(x, z), getHeightAt(x, z), getSpawnPoints()",
-        "loadMap() creates terrain entities (Transform + Renderable + Collider) rendered as colored planes/boxes per terrain type",
-        "src/game/maps/TestMap.ts defines a 60x60 unit map with grass (green), dirt (brown), stone (gray), a ~15x15u water zone (blue), 2-3u elevated platforms, player spawn at center, 2 cat spawn points, one hidden terrain area, and boundary walls",
-        "Player spawns at the player spawn point",
-        "pnpm typecheck passes"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": "MapData.ts: TerrainCell (type/height/navigable), SpawnPoint (x/z/role), MapData (name/size/terrain[][]/cellSize/spawnPoints). MapManager.ts: greedy-rectangle zone grouping (right-then-down expansion) creates one ECS entity per maximal same-type-same-height rectangle; flat terrain gets thin slab (0.2u) below y=0; elevated terrain box from 0 to height; boundary walls as 4 static box entities. TestMap.ts: 30×30 grid (cellSize=2) = 60×60u world; water zone, dirt path, stone platform (2u), hidden zone, two elevated grass platforms (2u and 3u), player spawn at (0,0,0). pnpm typecheck and pnpm build pass."
-    },
-    {
-      "id": "US-017",
-      "title": "Game orchestrator with fixed-timestep loop and destroy()",
-      "description": "As a developer, I need a top-level Game class that bootstraps all modules and runs the game loop inside the canvas.",
-      "acceptanceCriteria": [
-        "src/game/engine/Game.ts exposes constructor(canvas: HTMLCanvasElement, opts: { user: { id: string; firstName?: string }, trpc: GameTrpcAdapter }), start(): Promise<void>, pause(), resume(), destroy()",
-        "start() initializes modules in order: EventBus → SceneManager → InputManager → PhysicsEngine → World → Systems → CameraController → MapManager → UIManager",
-        "Fixed timestep (1/60s physics) with accumulator; rendering interpolates between physics states",
-        "Frame order: InputManager.poll() → MovementSystem → PhysicsEngine.step() → CollisionSystem → CameraController.update() → RenderSystem → UIManager.update() → SceneManager.render()",
-        "destroy() cancels the rAF loop, disposes SceneManager / InputManager / CameraController, and detaches every listener — required so React StrictMode and HMR don't leak WebGL contexts",
-        "GameTrpcAdapter is a small interface the orchestrator uses to call the game router; the engine never imports from ~/trpc/* directly. GameCanvas constructs the adapter (closing over api.game.* mutations) and injects it.",
-        "Maintains 60 FPS on a dev machine with the test map loaded",
-        "pnpm typecheck passes"
-      ],
-      "priority": 17,
-      "passes": true,
-      "notes": "Game.ts fully rewritten: GameTrpcAdapter interface (upsertSave only for MVP auto-save); GameOpts adds trpc field; all modules init in order (EventBus→SceneManager→InputManager→PhysicsEngine→World→Systems→CameraController→MapManager→UIManager); fixed-timestep accumulator at FIXED_DT=1/60s with MAX_ACCUMULATOR=0.1s cap; frame order: poll→MovementSystem→PhysicsEngine.step→CollisionSystem→CameraController.update→RenderSystem→UIManager.update→SceneManager.render; spawnPlayer() creates ECS entity (Transform+Velocity+PlayerControlled+Renderable+Collider) + PhysicsEngine body; first call uses map spawn point, subsequent calls keep current position; triggerAutoSave() saves player position every CONFIG.autoSaveIntervalMs ms; destroy() cancels rAF, disposes all modules, clears EventBus. UIManager.ts stub created (US-018 fills it). GameCanvas.tsx updated: api.game.upsertSave.useMutation() wrapped in stable trpcAdapter via ref pattern; adapter injected into GameOpts."
-    },
-    {
-      "id": "US-018",
-      "title": "Basic HUD shell — health and FPS",
-      "description": "As a player, I need a minimal HUD showing my basic status so I have feedback during gameplay.",
-      "acceptanceCriteria": [
-        "src/game/ui/UIManager.ts mounts/unmounts plain DOM panels positioned over the canvas (no React inside the engine — keeps the loop framework-agnostic)",
-        "src/game/ui/HUD.ts renders placeholder hearts and an FPS counter (top-right, only when process.env.NODE_ENV === 'development')",
-        "HUD elements positioned to not obstruct gameplay",
-        "pnpm typecheck passes"
-      ],
-      "priority": 18,
-      "passes": true,
-      "notes": "UIManager creates an overlay div (position:absolute;inset:0) appended to canvas.parentElement; sets parent to position:relative if static. HUD builds hearts panel (bottom-left, 3 × ♥) and FPS counter (top-right, only when process.env.NODE_ENV==='development'). FPS computed via 60-sample rolling average of dt values. dispose() removes overlay from DOM."
-    },
-    {
-      "id": "US-019",
-      "title": "ESLint config and pnpm lint quality gate",
-      "description": "As a developer, I need pnpm lint working so the CLAUDE.md quality gate passes and architectural rules can be enforced statically.",
-      "acceptanceCriteria": [
-        "ESLint installed with the Next.js config (pnpm add -D eslint eslint-config-next @typescript-eslint/parser @typescript-eslint/eslint-plugin) and a flat eslint.config.js (or compat shim) at the repo root",
-        "lint script added to package.json (next lint or equivalent)",
-        "no-restricted-imports rule blocks importing from three outside src/game/engine/SceneManager.ts and src/game/engine/CameraController.ts",
-        "pnpm lint passes against the current codebase"
-      ],
-      "priority": 19,
-      "passes": true,
-      "notes": "eslint@9 + eslint-config-next@16 (flat config array) + @typescript-eslint/parser+plugin. eslint.config.js uses createRequire to load CJS eslint-config-next from ESM module. no-restricted-imports blocks `three` everywhere except SceneManager.ts and CameraController.ts via config-level ignores. GameCanvas.tsx fixed: upsertSaveRef synced via useEffect (not render body), savedCharacterConfig derived via useMemo instead of setState-in-effect. ESLint 9 required — v10 breaks eslint-plugin-react@7.37.5 (bundled in eslint-config-next) with contextOrFilename.getFilename API change."
+      "notes": "Implemented active cat bar (right:16px, vertically centered) with per-companion colored indicator, name, state badge, and right-click dismiss hint. ActiveCatInfo interface added to UIManager.ts; buildActiveCompanions() in Game.ts maps ECS entities via CatBehavior component each render frame. All other HUD elements (hearts, oxygen, inventory, yarn, cat selection, gather progress) were complete from prior stories."
     }
   ]
 }

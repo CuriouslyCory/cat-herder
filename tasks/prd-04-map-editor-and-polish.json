@@ -2,6 +2,36 @@
   "project": "Cat Herder",
   "branchName": "feat/map-editor-and-polish-v2",
   "description": "Phase 4: Developer-facing map editor (gated to NODE_ENV=development, tree-shaken from production), 2D map overlay, balance tuning passes, edge case hardening, visual polish, and final quality gate (pnpm lint/typecheck/build). Depends on PRD-01, PRD-02, PRD-03.",
+  "testingDirectives": {
+    "framework": "Vitest (already configured at vitest.config.ts, run via `pnpm test`)",
+    "requirements": [
+      "Every new system or module MUST have a co-located test file. Story is not complete without tests.",
+      "Unit tests are the minimum quality bar. `pnpm test` must pass before committing.",
+      "The full verification command is: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`.",
+      "Balance pass stories (US-307 through US-309): write regression tests that assert the tuned values produce expected outcomes (e.g., jump impulse reaches expected height, gather completes in expected time).",
+      "Edge case stories (US-310): each edge case MUST have a dedicated test proving the fix (e.g., player can't clip through terrain, oxygen respawn works correctly)."
+    ],
+    "testPatterns": {
+      "mapEditor": "Test MapEditor.enable()/disable() state transitions. Test getMapData()/loadMapData() round-trip serialization. Mock SceneManager for rendering calls.",
+      "navigationOverlay": "Test overlay toggle (M key), test that game input is consumed while open. Use mockInputManager.",
+      "balancePasses": "Write parametric tests verifying config values produce expected physics outcomes (e.g., with jumpImpulse=3.5 and gravity=-12, player reaches apex of ~1.02u). These tests catch accidental config regressions.",
+      "edgeCases": "Each edge case in US-310 should be a test: spawn player at bounds → verify push-back, dismiss cat under player → verify safe fall, oxygen → 0 → health → 0 → verify respawn."
+    },
+    "existingHelpers": {
+      "entityFactories": "src/game/__tests__/helpers/entityFactories.ts — spawnPlayer(), spawnCat(), spawnResourceNode(), spawnHiddenTerrain(), etc.",
+      "mockInputManager": "src/game/__tests__/helpers/mockInputManager.ts — stub for InputManager with pressAction/holdAction/setMovementIntent",
+      "mockSceneManager": "src/game/__tests__/helpers/mockSceneManager.ts — stub for SceneManager.setMeshOpacity/createHandle",
+      "mockMapManager": "src/game/__tests__/helpers/mockMapManager.ts — stub for MapManager.getTerrainAt/getHeightAt/setTerrain"
+    },
+    "debugBridge": "window.__catHerderDebug is exposed in dev mode (Game.ts). It provides: world, gameState, eventBus, physicsEngine, getPlayerEntity(), getActiveCats(), tick(n) for deterministic physics stepping. E2E scripts can use this via dev-browser for browser-based validation.",
+    "e2eTesting": "For UI-dependent stories (map editor, overlay, visual polish), use `dev-browser` CLI to automate browser interaction. Pattern: navigate to /play, await window.__catHerderDebug, simulate input, assert state via page.evaluate().",
+    "antiPatterns": [
+      "Do NOT mark a story as passing without `pnpm test` succeeding.",
+      "Do NOT write tests that import Three.js or require DOM — use mocks for SceneManager/InputManager.",
+      "Do NOT skip edge case tests — each acceptance criterion in US-310 maps to a test case.",
+      "Do NOT adjust config values without a test proving the old value was wrong and the new value is correct."
+    ]
+  },
   "userStories": [
     {
       "id": "US-301",

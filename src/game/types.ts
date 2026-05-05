@@ -8,6 +8,7 @@ export enum GameAction {
   ToggleMap = "ToggleMap",
   ToggleDebug = "ToggleDebug",
   Pause = "Pause",
+  Dive = "Dive",
 }
 
 export enum CatType {
@@ -23,6 +24,12 @@ export enum TerrainType {
   Stone = "Stone",
   Water = "Water",
   Hidden = "Hidden",
+}
+
+export enum ResourceType {
+  Grass = "Grass",
+  Sticks = "Sticks",
+  Water = "Water",
 }
 
 // ---------------------------------------------------------------------------
@@ -58,4 +65,10 @@ export type GameEvent =
   | { type: "save:complete" }
   | { type: "debug:toggled"; visible: boolean }
   | { type: "game:paused" }
-  | { type: "game:resumed" };
+  | { type: "game:resumed" }
+  | { type: "oxygen:warning"; entity: number }
+  | { type: "oxygen:depleted"; entity: number }
+  | { type: "cat:summoned"; entity: number; catType: CatType; position: Vec3 }
+  | { type: "cat:dismissed"; entity: number; catType: CatType }
+  | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] }
+  | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number };

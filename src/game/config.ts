@@ -5,17 +5,35 @@
 // exclusively by the debug menu so live tweaks never pollute the base values.
 // ---------------------------------------------------------------------------
 
+export interface VisualConfig {
+  postProcessing: boolean;
+  edgeDetection: boolean;
+  outlines: boolean;
+  bloom: boolean;
+  bloomStrength: number;
+  bloomThreshold: number;
+  bloomRadius: number;
+  outlineThickness: number;
+  outlineStrength: number;
+  outlineGlow: number;
+  rimLighting: boolean;
+}
+
 export interface GameConfig {
   // Movement
   walkSpeed: number; // units/second
-  swimSpeed: number; // units/second
-  swimSpeedVertical: number; // units/second
+  swimSpeedSurface: number; // units/second horizontal while on water surface
+  swimSpeedDive: number; // units/second horizontal while diving (Shift held)
+  swimSpeedAscend: number; // units/second upward when rising to surface
+  swimSpeedVertical: number; // units/second downward while diving
+  swimAcceleration: number; // seconds to reach full swim speed
   acceleration: number; // seconds to reach full speed
   deceleration: number; // seconds to stop from full speed
   airControlFactor: number; // fraction of normal horizontal control while airborne
 
   // Jump
-  jumpImpulse: number; // initial upward velocity (u/s)
+  /** Derived from jumpApex and gravity: sqrt(2 * |gravity| * jumpApex). Do not set manually. */
+  jumpImpulse: number;
   jumpApex: number; // apex height (u)
   coyoteFrames: number; // frames of coyote time after walking off edge
   jumpBufferFrames: number; // frames of jump buffering before landing
@@ -27,9 +45,11 @@ export interface GameConfig {
   groundSnapTolerance: number; // downward snap distance for ground detection (u)
 
   // Oxygen (swimming)
-  oxygenMax: number; // seconds of air
-  oxygenDrainRate: number; // seconds lost per second underwater
-  oxygenRefillRate: number; // seconds recovered per second on surface
+  oxygenMax: number; // percentage (100 = full)
+  oxygenDrainRate: number; // percent/s lost while diving (isDiving===true)
+  oxygenRefillRate: number; // percent/s recovered on water surface (not diving)
+  oxygenHealthDrainRate: number; // hp/s lost when oxygen reaches 0
+  oxygenWarningThreshold: number; // percent at which OXYGEN_WARNING event fires
 
   // Camera
   cameraAzimuth: number; // degrees — isometric horizontal angle
@@ -37,21 +57,30 @@ export interface GameConfig {
   cameraLeadDistance: number; // units of camera lead ahead of player
   cameraLeadLerp: number; // lead lerp factor (0-1 per frame @60fps)
 
+  // Cat companions
+  maxActiveCats: number; // max number of simultaneously summoned cats
+
   // Persistence
   autoSaveIntervalMs: number; // milliseconds between auto-saves
+
+  // Visual effects
+  visual: VisualConfig;
 }
 
 const BASE_CONFIG: GameConfig = {
   // Movement
   walkSpeed: 4.5,
-  swimSpeed: 2.5,
+  swimSpeedSurface: 3.2,
+  swimSpeedDive: 2.0,
+  swimSpeedAscend: 2.5,
   swimSpeedVertical: 1.5,
+  swimAcceleration: 0.5,
   acceleration: 0.3,
   deceleration: 0.2,
   airControlFactor: 0.7,
 
   // Jump
-  jumpImpulse: 3.5,
+  jumpImpulse: 0, // derived below from jumpApex + gravity
   jumpApex: 1.2,
   coyoteFrames: 5,
   jumpBufferFrames: 5,
@@ -60,12 +89,14 @@ const BASE_CONFIG: GameConfig = {
   gravity: -12,
   collisionRadius: 0.4,
   skinWidth: 0.1,
-  groundSnapTolerance: 0.05,
+  groundSnapTolerance: 0.15,
 
   // Oxygen
-  oxygenMax: 15,
-  oxygenDrainRate: 1,
-  oxygenRefillRate: 3,
+  oxygenMax: 100,            // 100% max
+  oxygenDrainRate: 3.33,     // 1% per 0.3s = 3.33%/s while diving
+  oxygenRefillRate: 5,       // 5%/s when floating at surface
+  oxygenHealthDrainRate: 1,  // 1 hp/s when oxygen depleted
+  oxygenWarningThreshold: 20, // fire warning at 20%
 
   // Camera
   cameraAzimuth: 45,
@@ -73,12 +104,41 @@ const BASE_CONFIG: GameConfig = {
   cameraLeadDistance: 2.5,
   cameraLeadLerp: 0.08,
 
+  // Cat companions
+  maxActiveCats: 3,
+
   // Persistence
   autoSaveIntervalMs: 30_000,
+
+  // Visual effects
+  visual: {
+    postProcessing: true,
+    edgeDetection: true,
+    outlines: true,
+    bloom: true,
+    bloomStrength: 0.05,
+    bloomThreshold: 0.85,
+    bloomRadius: 0.4,
+    outlineThickness: 1.0,
+    outlineStrength: 3.0,
+    outlineGlow: 0.08,
+    rimLighting: true,
+  },
 };
+
+BASE_CONFIG.jumpImpulse = Math.sqrt(
+  2 * Math.abs(BASE_CONFIG.gravity) * BASE_CONFIG.jumpApex,
+);
 
 /** Immutable production config. Import this for all production game logic. */
 export const CONFIG: Readonly<GameConfig> = Object.freeze({ ...BASE_CONFIG });
 
 /** Mutable deep copy of CONFIG — used exclusively by the debug menu. */
 export const runtimeConfig: GameConfig = { ...BASE_CONFIG };
+
+/** Recompute derived fields after the debug menu mutates runtimeConfig. */
+export function recalcDerivedConfig(): void {
+  runtimeConfig.jumpImpulse = Math.sqrt(
+    2 * Math.abs(runtimeConfig.gravity) * runtimeConfig.jumpApex,
+  );
+}

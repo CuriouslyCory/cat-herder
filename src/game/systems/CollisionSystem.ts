@@ -62,11 +62,13 @@ export class CollisionSystem implements System {
         }
 
         // Broad phase: AABB — work in XZ plane (top-down 2D collision)
-        const halfA = cA.size;
-        const halfB = cB.size;
+        const halfAx = cA.halfExtents?.x ?? cA.size;
+        const halfAz = cA.halfExtents?.z ?? cA.size;
+        const halfBx = cB.halfExtents?.x ?? cB.size;
+        const halfBz = cB.halfExtents?.z ?? cB.size;
         const dx = Math.abs(tA.x - tB.x);
         const dz = Math.abs(tA.z - tB.z);
-        if (dx > halfA + halfB || dz > halfA + halfB) {
+        if (dx > halfAx + halfBx || dz > halfAz + halfBz) {
           continue; // No AABB overlap
         }
 
@@ -190,6 +192,10 @@ function resolveCircleCircle(
   cB: Collider,
   isTrigger: boolean,
 ): number | null {
+  const Y_EPSILON = 1e-4;
+  if (tA.y - cA.halfHeight >= tB.y + cB.halfHeight - Y_EPSILON ||
+      tA.y + cA.halfHeight <= tB.y - cB.halfHeight + Y_EPSILON) return null;
+
   const dx = tA.x - tB.x;
   const dz = tA.z - tB.z;
   const distSq = dx * dx + dz * dz;
@@ -234,9 +240,15 @@ function resolveCircleBox(
   cBox: Collider,
   isTrigger: boolean,
 ): number | null {
-  // Closest point on box (AABB) to circle center
-  const closestX = Math.max(tBox.x - cBox.size, Math.min(tCircle.x, tBox.x + cBox.size));
-  const closestZ = Math.max(tBox.z - cBox.size, Math.min(tCircle.z, tBox.z + cBox.size));
+  const Y_EPSILON = 1e-4;
+  if (tCircle.y - cCircle.halfHeight >= tBox.y + cBox.halfHeight - Y_EPSILON ||
+      tCircle.y + cCircle.halfHeight <= tBox.y - cBox.halfHeight + Y_EPSILON) return null;
+
+  // Closest point on box (AABB) to circle center — use per-axis extents when available
+  const boxHalfX = cBox.halfExtents?.x ?? cBox.size;
+  const boxHalfZ = cBox.halfExtents?.z ?? cBox.size;
+  const closestX = Math.max(tBox.x - boxHalfX, Math.min(tCircle.x, tBox.x + boxHalfX));
+  const closestZ = Math.max(tBox.z - boxHalfZ, Math.min(tCircle.z, tBox.z + boxHalfZ));
 
   const dx = tCircle.x - closestX;
   const dz = tCircle.z - closestZ;

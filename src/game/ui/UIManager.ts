@@ -1,4 +1,47 @@
 import { HUD } from "./HUD";
+import type { CatType } from "../types";
+import type { CatCatalogEntry } from "../cats/CatCompanionManager";
+import type { GatherState } from "../systems/GatheringSystem";
+import type { InventoryStack } from "../engine/GameState";
+
+/** Minimal info for one summoned companion shown in the active cat bar. */
+export interface ActiveCatInfo {
+  catType: CatType;
+  name: string;
+  /** CatBehavior.state ("Idle" | "Active" | "Expired"). */
+  state: string;
+}
+
+/**
+ * HUD frame state passed from the game loop each render tick.
+ * All fields are optional — UIManager uses sensible defaults when absent.
+ */
+export interface HUDState {
+  /** Current oxygen [0-100] while submerged; null hides the gauge. */
+  oxygenPercent: number | null;
+  /** Player current health (integer hp). */
+  health: number;
+  /** Player max health (integer hp). */
+  maxHealth: number;
+  /** Current yarn count for the yarn display in the cat selection bar. */
+  yarn?: number;
+  /** Currently selected cat type for placement highlighting, or null. */
+  selectedCatType?: CatType | null;
+  /** Active gather progress and label, or null when not gathering. */
+  gatherState?: GatherState | null;
+  /** Current inventory stacks for the inventory panel. */
+  inventory?: InventoryStack[];
+  /** Maximum inventory capacity. */
+  maxInventoryCapacity?: number;
+  /** True while the "Inventory Full" notification should be shown. */
+  inventoryFull?: boolean;
+  /** True when a cat type is selected but the player cannot afford the yarn cost. */
+  insufficientYarn?: boolean;
+  /** Currently summoned companion cats for the active cat bar. */
+  activeCompanions?: ActiveCatInfo[];
+  /** Player world position for the debug overlay (dev builds only). */
+  playerPosition?: { x: number; y: number; z: number } | null;
+}
 
 /**
  * UIManager — mounts and manages plain DOM panels over the game canvas.
@@ -28,8 +71,27 @@ export class UIManager {
   }
 
   /** Called once per render frame by the game loop. */
-  update(dt: number): void {
-    this.hud.update(dt);
+  update(dt: number, state?: Partial<HUDState>): void {
+    this.hud.update(
+      dt,
+      state?.oxygenPercent ?? null,
+      state?.health ?? 5,
+      state?.maxHealth ?? 5,
+      state?.yarn ?? 0,
+      state?.selectedCatType ?? null,
+      state?.gatherState ?? null,
+      state?.inventory ?? [],
+      state?.maxInventoryCapacity ?? 10,
+      state?.inventoryFull ?? false,
+      state?.insufficientYarn ?? false,
+      state?.activeCompanions ?? [],
+      state?.playerPosition ?? null,
+    );
+  }
+
+  /** Pass the cat catalog to the HUD so it can render the selection bar. */
+  setCatCatalog(catalog: CatCatalogEntry[]): void {
+    this.hud.setCatalog(catalog);
   }
 
   /** Remove all mounted DOM panels and listeners. */

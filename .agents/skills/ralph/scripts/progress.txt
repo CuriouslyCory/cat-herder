@@ -1,276 +1,198 @@
+## Codebase Patterns
+- CatAISystem runs FIRST in the fixed-step loop and drives Idle→Active→Expired state transitions for all cats from CAT_REGISTRY data; per-cat systems (ZoomiesSystem, CuriositySystem, PounceSystem) react to states but never set them
+- CuriositySystem detects "first Active tick" via `reveal.revealedEntities.length === 0` (not via Idle state); CatAISystem transitions Idle→Active in the same frame so CuriositySystem sees Active and empty list simultaneously
+- ZoomiesTrail overlap is a manual oriented-AABB check (not PhysicsEngine trigger) — project player offset onto trail axis (along) and perpendicular (perp), compare to halfLength/halfWidth
+- SpeedBoost component is added/removed by ZoomiesSystem each fixed tick; MovementSystem reads it to scale walkSpeed before computing targetX/Z
+- Movement cat trail entity has no PhysicsEngine body — only Transform + Renderable + ZoomiesTrail; position/rotation synced by RenderSystem normally
+- CatCompanionManager.trailEntities Map<catEntity, trailEntity>: created in summon() for effectType='movement', destroyed in dismiss() before destroyEntity(catEntity)
+- ZoomiesSystem must be instantiated after CatCompanionManager (dependency); runs at end of fixed-step sub-tick (after OxygenSystem)
+- PhysicsEngine has a flat-floor fallback (y < body.config.size clamps to size) so the player stays on y=0 terrain without registering every tile as a physics body
+- Terrain/launch cats register PhysicsEngine static bodies (isStatic=true, layer=1, mask=1) so the player's downward raycast detects their top surface; dismiss() removes the body
+- getCatHalfHeight(def) / getXZHalfExtent(def) helpers in CatCompanionManager derive correct extents from MeshConfig geometry kind + behavior.params without per-cat switch logic
+- Cat entity center Y = surfaceY + halfHeight (so mesh bottom rests on terrain, not half-underground); PhysicsEngine body position matches
+- Only the player has a PhysicsEngine body by default; terrain tiles (flat floor) rely on the y≥0 clamp; elevated terrain needs registered physics bodies (added for cats in US-106)
+- Cat definitions live in src/game/cats/definitions/<CatType>.ts; all exported via CAT_REGISTRY Map<CatType,CatDefinition> in definitions/index.ts — systems should import CAT_REGISTRY, not individual files
+- GatheringSystem uses distance check (distSq < INTERACT_RANGE_SQ) not trigger events to detect nearby resource nodes; nodes have collisionMask=0 (no physics response needed)
+- Resource node entities are created in Game.spawnTestMapResourceNodes() after loadMap(); not part of MapData/MapManager (world entities, not terrain)
+- GameState.hasInventorySpace() / addResource() provide the basic inventory contract; capacity enforcement happens in US-112 but the interface is forward-compatible
+- HUD gather progress bar lives at bottom:110px (above cat bar at bottom:56px) and uses display:none to hide when not gathering — same pattern as oxygen gauge
+- CatDefinition.behavior.params is Record<string, number|string|boolean> for cat-specific config (no per-cat union types needed in the interface)
+- OxygenState is added/removed by WaterSystem alongside SwimmingState — both live and die together on water entry/exit
+- OxygenSystem queries OxygenState+SwimmingState+PlayerControlled; OxygenState is always paired with SwimmingState (no need for null guards when both appear in query)
+- SceneManager.addMesh() now supports opacity field; setMeshColor/setMeshOpacity allow runtime material mutation without recreating meshes
+- CatPlacementSystem runs in the variable-rate render pass (not fixed-step loop) so clicks are processed exactly once per render frame
+- GameState is instantiated in Game.ts before CatCompanionManager (dependency order); CatCompanionManager gets a `() => playerEntity` getter to avoid circular refs
+- UIManager.setCatCatalog() must be called after map load (catalog comes from CatCompanionManager.getCatalog() which reads CAT_REGISTRY)
+- HUD.setCatalog() builds cat slot DOM elements lazily — call it once at init, then update via setCatBar() each frame
+- HUD.update(dt, oxygenPercent, health, maxHealth) — UIManager.update(dt, HUDState?) is the call site; Game.buildHUDState() assembles the snapshot each render frame
+- Player health lives in PlayerControlled.health/maxHealth (integer hp); OxygenState.healthDrainAccum accumulates sub-frame losses to avoid float rounding
+- CSS keyframe for oxygen warning pulse is injected once via <style id="__oxygen-pulse-style"> to avoid duplicates
+- Water triggers use collisionLayer=1/mask=1 (player layer) so CollisionSystem fires trigger events; floor tiles use layer=2/mask=0 (PhysicsEngine raycasts only)
+- SwimmingState lifecycle is event-driven (trigger:enter/exit from CollisionSystem); MovementSystem applies swim physics by querying for SwimmingState each frame — no state machine
+- PhysicsEngine.setGravityEnabled(handle, bool) controls per-body gravity; must be called when adding/removing SwimmingState
+- Terrain entities are created before the player, so terrain entity IDs are always smaller; in pairKey(a,b) the smaller id comes first → water entity is usually "trigger" in events
+- Game loop order: movementSystem → physics.step() → collisionSystem → waterSystem (WaterSystem reacts to trigger events emitted by CollisionSystem)
+- Config changes: swimSpeed/swimSpeedVertical replaced with swimSpeedSurface(3.2), swimSpeedDive(2.0), swimSpeedAscend(2.5), swimSpeedVertical(1.5), swimAcceleration(0.5)
+---
+
 # Ralph Progress Log
-Started: Wed Apr 29 05:27:00 PM MST 2026
-
-## Codebase Patterns
-- ESLint: project requires eslint@9 (not v10) — v10 breaks eslint-plugin-react@7.37.5 bundled in eslint-config-next via `getFilename` API removal
-- ESLint flat config in ESM project: use `createRequire(import.meta.url)` to load CJS eslint-config-next from eslint.config.js
-- React ref sync pattern: update `ref.current = value` inside `useEffect(() => { ... })` (no deps), NOT during render body — react-hooks/refs rule enforces this
-- Derived state anti-pattern: avoid `setState` inside `useEffect` for values derivable from props/query data — use `useMemo` instead to eliminate cascading renders
-
-## 2026-04-29 - US-019
-- Installed eslint@9, eslint-config-next@16, @typescript-eslint/parser, @typescript-eslint/eslint-plugin
-- Created `eslint.config.js` (flat config) using `createRequire` to load CJS eslint-config-next/core-web-vitals from the ESM project
-- Added `no-restricted-imports` blocking `three` everywhere except SceneManager.ts and CameraController.ts (enforced via config-level `ignores`)
-- Added `"lint": "eslint src"` to package.json (next lint command removed in Next.js 16)
-- Fixed two react-hooks violations in GameCanvas.tsx:
-  - `react-hooks/refs`: moved `upsertSaveRef.current = value` from render body into `useEffect(() => { ... })` with no deps
-  - `react-hooks/set-state-in-effect`: replaced `useState` + effect for DB hydration with `useMemo` deriving `savedCharacterConfig` directly; combined with `createdCharacter` state for creator output
-- pnpm lint, pnpm typecheck pass
-- **Learnings for future iterations:**
-  - ESLint 10 is incompatible with eslint-plugin-react@7.37.5 (bundled in eslint-config-next@16); pin to eslint@9.
-  - `"type": "module"` projects require `createRequire(import.meta.url)` to load CJS packages in eslint.config.js.
-  - `next lint` CLI command was removed in Next.js 16; use `eslint src` directly.
-  - Config-level `ignores` on a flat config object skips ALL rules in that object for matched files — correct way to carve out exceptions to no-restricted-imports.
-  - `react-hooks/refs` rule: any `ref.current = x` during render is an error; use `useEffect(() => { ref.current = x; })`.
-  - `react-hooks/set-state-in-effect` rule: if state is purely derived from query/props data, replace the `useEffect + setState` pattern with `useMemo`.
+Started: Thu Apr 30 09:41:37 AM MST 2026
 ---
 
-## 2026-04-29 - US-017
-- Rewrote `src/game/engine/Game.ts` — full orchestrator replacing the US-001 Three.js stub
-- Added `GameTrpcAdapter` interface (upsertSave only for MVP auto-save); engine never imports ~/trpc
-- `GameOpts` updated to include `trpc: GameTrpcAdapter` field
-- Module init order: EventBus → SceneManager → InputManager → PhysicsEngine → World → Systems (MovementSystem, CollisionSystem, RenderSystem) → CameraController → MapManager → UIManager
-- Fixed-timestep loop: `FIXED_DT = 1/60`, `MAX_ACCUMULATOR = 0.1s`; accumulator pattern prevents spiral-of-death
-- Frame order: `poll()` → MovementSystem → PhysicsEngine.step() → CollisionSystem → CameraController.update() → RenderSystem → UIManager.update() → SceneManager.render()
-- `spawnPlayer(config?)`: first call uses map spawn point; subsequent calls keep current position for cosmetic updates
-- `triggerAutoSave()`: saves player position to tRPC every `CONFIG.autoSaveIntervalMs` ms
-- `destroy()`: cancels rAF, disposes SceneManager/InputManager/CameraController/UIManager, clears EventBus, unloads map
-- Created `src/game/ui/UIManager.ts` — minimal stub with `update(dt)` / `dispose()` interface (US-018 implements full HUD)
-- Updated `src/app/play/_components/GameCanvas.tsx` — `api.game.upsertSave.useMutation()` wrapped in stable adapter via `useRef`; adapter injected into GameOpts as `trpc`
-- pnpm typecheck and pnpm build pass
+## 2026-04-30 - US-101
+- Implemented full water mechanics: SwimmingState component, WaterTrigger component, WaterSystem (event-driven), and swimming branch in MovementSystem
+- Files changed: SwimmingState.ts, WaterTrigger.ts, WaterSystem.ts (new), MovementSystem.ts (swimming branch), MapManager.ts (WaterTrigger component, fixed collision mask), PhysicsEngine.ts (noGravity flag + setGravityEnabled), InputManager.ts (Dive action), config.ts (swim config), types.ts (GameAction.Dive), Game.ts (WaterSystem wiring)
 - **Learnings for future iterations:**
-  - `useMemo(() => ({ upsertSave: (input) => upsertSaveRef.current(input) }), [])` — stable adapter object that always calls the latest `mutateAsync` via ref; avoids game restart on mutation status changes.
-  - Fixed-timestep accumulator: always `accumulator += realDt; while (accumulator >= FIXED_DT) { tick; accumulator -= FIXED_DT; }`. Never `accumulator = 0` inside the loop — that wastes sub-step time.
-  - `lastTime = null` on pause/resume so the first frame after resume measures 0 dt, not the full pause duration.
-  - `requestAnimationFrame` returns a non-zero id; always cancel with the id from the *previous* call — the pattern `this.rafId = rAF(() => { this.rafId = rAF(...) })` has a race. Correct: set rafId immediately at top of loop before doing work.
-  - `CONFIG.autoSaveIntervalMs` is in milliseconds; the game loop delta is in seconds — multiply `realDt * 1000` before accumulating into `saveTimer`.
-  - UIManager stub avoids blocking US-017 on US-018 being complete. Pattern: create the interface file with empty implementations first, flesh out in the next story.
+  - CollisionSystem's pairKey sorts by entity id, not by trigger/target role — WaterSystem.resolveWaterPlayer() checks both orderings
+  - Water tiles originally had collisionLayer=2/mask=0 which prevented trigger events; needed layer=1/mask=1 to match player
+  - PhysicsEngine has its own trigger detection (detectTriggerOverlaps) but only for registered physics bodies — terrain has no physics body, so only CollisionSystem fires water triggers
+  - transitionBlend in SwimmingState prevents speed pop at water boundary; ramps 0→1 over 0.3s
+  - Use `moveToward` for swim acceleration (same helper as land movement)
 ---
 
-## 2026-04-29 - US-016
-- Created `src/game/maps/MapData.ts` — TerrainCell (type/height/navigable), SpawnPoint (x/z/role), MapData (name/size/terrain[][]/cellSize/spawnPoints)
-- Created `src/game/maps/MapManager.ts` — greedy-rectangle zone grouping (right-then-down expansion); one ECS entity per maximal rectangle; flat terrain = 0.2u slab below y=0; elevated terrain = box from y=0 to height; 4 boundary wall entities; collision layer 2 (floor mask=0; elevated mask=1); water as trigger
-- Created `src/game/maps/TestMap.ts` — 30×30 grid (cellSize=2 = 60×60u world); water zone (rows 3-9, cols 3-9), dirt path (rows 10-14, cols 13-16), stone platform 2u (rows 2-6, cols 21-27), hidden zone (rows 22-27, cols 22-27), two elevated grass platforms, player spawn (0,0,0), 2 cat spawns
-- pnpm typecheck and pnpm build pass
+## 2026-04-30 - US-102
+- Implemented full oxygen system: OxygenState component, OxygenSystem (drain/refill/events/health), WaterSystem extended to add/remove OxygenState, HUD oxygen gauge, UIManager HUDState interface, health fields in PlayerControlled
+- Files changed: OxygenState.ts (new), OxygenSystem.ts (new), WaterSystem.ts (add OxygenState on enter/exit), types.ts (oxygen:warning, oxygen:depleted events), config.ts (percent-based oxygen config + oxygenWarningThreshold + oxygenHealthDrainRate), PlayerControlled.ts (health/maxHealth), HUD.ts (oxygen gauge + reactive hearts), UIManager.ts (HUDState interface), Game.ts (OxygenSystem wiring + buildHUDState())
 - **Learnings for future iterations:**
-  - Greedy-rectangle algo (expand right, then expand down checking all columns): produces compact zone count for regular tile layouts. Labeled `break expandDown` is valid TypeScript for breaking a labeled while from inside an inner for loop.
-  - Use `visited[r2 + 1]?.[cc] ?? false` not `visited[r2 + 1]![cc]` — even with the outer while guard, TypeScript strict-mode array indexing returns `T | undefined` and `?.` is needed to avoid compiler errors.
-  - Collider.size is uniform (circle = radius; box = half-extent on ALL axes). For rectangular terrain, use `Math.max(width, depth) / 2` as a conservative upper bound. This over-sizes the AABB but is harmless when collisionMask=0 (floor tiles) or acceptable for boundary walls.
-  - Flat floor tiles should use collisionMask=0 so CollisionSystem ignores them — ground detection is PhysicsEngine's job (downward raycasting). Elevated terrain uses mask=1 for wall-sliding.
-  - TERRAIN_COLORS[TerrainType.Hidden] matches the scene background color (#1a1a2e) so hidden terrain is visually invisible without a separate rendering path.
+  - OxygenSystem runs AFTER WaterSystem in the fixed-step loop so OxygenState already exists when OxygenSystem queries it
+  - Warning event fires once per submersion (hasEmittedWarning gate); depleted event also fires once (hasEmittedDepleted gate) — both reset automatically when WaterSystem removes OxygenState on exit
+  - Health drain uses integer accumulation (healthDrainAccum) to ensure 1 full hp is removed per second without floating-point creep
+  - UIManager.update(dt, HUDState?) uses optional second arg; Game.buildHUDState() reads from world each render frame (variable-rate, not fixed)
+  - HUD inject-once keyframe trick: `document.getElementById("__oxygen-pulse-style")` guard prevents duplicate <style> tags on HMR reloads
 ---
 
-## 2026-04-29 - US-015
-- Created `src/app/play/_components/CharacterCreator.tsx` — React overlay with shape picker (box/sphere/cylinder with SVG previews), 8 preset color swatches + custom color input, 3 size buttons (Small=0.8, Medium=1.0, Large=1.2), and a Start Game button wired to `api.game.upsertCharacter.useMutation()`
-- Updated `src/app/play/_components/GameCanvas.tsx` — added `api.game.getCharacter.useQuery()` to check for an existing character on mount; shows `CharacterCreator` when none found; starts game with character config once confirmed
-- Updated `src/game/engine/Game.ts` — added `PlayerCharacterConfig` interface and exported it; updated `GameOpts` to accept optional `character`; constructor uses config to spawn correct mesh; added public `spawnPlayer(config)` method that disposes old mesh and creates new geometry/material
-- pnpm typecheck and pnpm build pass
+## 2026-04-30 - US-103
+- Implemented data-driven cat definition system: CatDefinition interface, four definition files, and CAT_REGISTRY
+- Files created: src/game/cats/CatDefinition.ts, src/game/cats/definitions/Loaf.ts, src/game/cats/definitions/Zoomies.ts, src/game/cats/definitions/CuriosityCat.ts, src/game/cats/definitions/Pounce.ts, src/game/cats/definitions/index.ts
 - **Learnings for future iterations:**
-  - `GameCanvas` uses a single `character` state as the source of truth; DB row hydrates it via `useEffect([savedCharacter, isLoading])`, creator sets it via `onComplete`. Avoids double-start races.
-  - DB `shape` field is `string` (Drizzle varchar) — must cast/validate before passing to `PlayerCharacterConfig["shape"]`. Pattern: check `.includes()` on the const array and default to "box" as fallback.
-  - `spawnPlayer()` must dispose old geometry + material before creating new ones to avoid GPU memory leaks. Pattern: `mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose();`
-  - `user` is intentionally omitted from the game-start `useEffect` deps (stable for the mount lifetime) — add eslint-disable comment to suppress the exhaustive-deps warning without suppressing the rule globally.
+  - CatType enum was already defined in types.ts (Loaf, Zoomies, CuriosityCat, Pounce) — no changes needed there
+  - MeshConfig (from SceneManager.ts) reused directly for meshConfig field — matches box/sphere/cylinder/plane geometry kinds
+  - behavior.params is a loose Record so each cat can carry its own numeric config (launchImpulse, trailLength, revealRadius, collider dims) without expanding the interface
+  - Terrain cats (Loaf, Pounce) have no duration; duration cats (Zoomies 8s, Curiosity 20s) set behavior.duration
 ---
 
-## 2026-04-29 - US-014
-- Created `src/server/api/routers/game.ts` with gameRouter: getCharacter, upsertCharacter, getSave, upsertSave, deleteSave, plus getDebugOverrides/upsertDebugOverrides
-- Registered `game: gameRouter` in `src/server/api/root.ts` appRouter
-- All procedures use `protectedProcedure` and scope every query to `ctx.user.id`
-- Drizzle upsert pattern: `.insert().values().onConflictDoUpdate({ target, set })`
-- pnpm typecheck and pnpm build pass
+## 2026-04-30 - US-106
+- Implemented Loaf cat as a walkable static platform using PhysicsEngine body registration
+- Files changed:
+  - src/game/engine/PhysicsEngine.ts — flat-floor fallback in integrateBody (y<size clamp prevents falling through base terrain)
+  - src/game/cats/CatCompanionManager.ts — PhysicsEngine dependency added; physicsHandles Map<Entity,BodyHandle>; summon() registers static physics body for terrain/launch cats; dismiss() removes body; cat Y placement fixed to surfaceY+halfHeight; getCatHalfHeight()/getXZHalfExtent() module helpers
+  - src/game/engine/Game.ts — passes this.physics to CatCompanionManager constructor
 - **Learnings for future iterations:**
-  - Zod v4 (used in this project) requires `z.record(z.string(), z.unknown())` — not `z.record(z.unknown())` which only takes 1 arg in v3 but 2 in v4.
-  - `protectedProcedure` in this codebase narrows `ctx.user` to non-null — safe to access `ctx.user.id` directly after the middleware runs.
-  - Drizzle relational query `findFirst({ where: eq(table.col, val) })` works fine with imported `eq` from `drizzle-orm`.
+  - PhysicsEngine.raycastDownward only sees bodies registered via addBody() — terrain tiles were never registered (only the player was). Flat-floor fallback at y=0 is the pragmatic fix for base terrain; explicit physics bodies needed for elevated platforms
+  - Cat entity Y must be surfaceY + halfHeight (center of mesh), not surfaceY; otherwise box cats are 50% underground visually and physics body top is also wrong
+  - Physics body size for a box cat = halfHeight (Y half-extent); this is used for both the downward raycast top-surface detection and the XZ horizontal collision. Using height/2 makes XZ slightly wider than actual (0.75 vs 0.6 for Loaf) but collision resolution is still correct
+  - getCatHalfHeight(): box→dims[1]/2; cylinder→(dims[2]??size)/2; sphere→size. getXZHalfExtent(): prefers params.colliderWidth/2, falls back to max(dims[0],dims[2]??dims[0])/2
+  - Note: jump config (jumpImpulse=3.5) gives only ~0.51u apex, not the intended 1.2u. A Loaf at 1.5u height is unreachable with current config. jumpImpulse needs tuning to ~6u/s for 1.5u apex (separate config fix)
 ---
 
-## 2026-04-29 - US-013
-- Added three tables to `src/server/db/schema.ts` using the existing `createTable` factory
-- `characters`: userId (varchar 256 PK), shape (varchar 32), colorHex (varchar 7), sizeScale (real), createdAt, updatedAt
-- `gameSaves`: userId (varchar 256 PK), version (varchar 32), saveData (jsonb), createdAt, updatedAt
-- `debugOverrides`: userId (varchar 256 PK), overrides (jsonb), updatedAt
-- pnpm typecheck and pnpm build both pass
-- `pnpm db:push` requires live Neon credentials — must be run manually by the developer
+## 2026-04-30 - US-105
+- Implemented full cat placement UI: ghost preview, number-key selection, left-click summon, right-click dismiss, cat selection bar with live yarn count
+- Files changed:
+  - src/game/engine/SceneManager.ts — opacity field on MeshConfig; setMeshColor(), setMeshOpacity()
+  - src/game/engine/InputManager.ts — leftClickThisFrame/rightClickThisFrame tracking; getPressedCatSlot(); contextmenu suppression
+  - src/game/cats/CatCompanionManager.ts — isValidPosition() made public
+  - src/game/systems/CatPlacementSystem.ts (new) — ghost lifecycle, selection toggle (1-4), summon on left-click, dismiss on right-click
+  - src/game/ui/HUD.ts — cat selection bar (4 slots with color/cost), setCatalog(), yarn count display
+  - src/game/ui/UIManager.ts — HUDState extended with yarn + selectedCatType; setCatCatalog() pass-through
+  - src/game/engine/Game.ts — GameState, CatCompanionManager, CatPlacementSystem instantiated and wired
 - **Learnings for future iterations:**
-  - Drizzle v0.45 callback-style column builder: `(d) => ({ field: d.varchar({ length: N })... })` — same pattern as `posts` table.
-  - `d.jsonb()` works directly without extra typing; consumers cast to their own types in tRPC procedures.
-  - `$onUpdate(() => new Date())` on `updatedAt` without a `.default()` means the column is nullable in DB (no default on INSERT). If `notNull()` updatedAt is required, add `.default(sql\`CURRENT_TIMESTAMP\`)` too — but for this schema the nullable pattern is intentional (null = never updated).
-  - All three tables use userId as PK (not serial) — one row per user, upsert semantics in tRPC procedures.
+  - Ghost mesh uses spread of cat's meshConfig with overridden color/opacity — no need for separate ghost-specific types
+  - DISMISS_RADIUS_SQ comparison avoids sqrt; 1.5u radius (2.25 squared) is comfortable for clicking active cats
+  - SceneManager.setMeshColor() uses THREE.Color.set() which accepts CSS strings, hex numbers, and named colors
+  - CatPlacementSystem.update() takes only `dt` (not World) since it holds world reference; kept consistent with System-like naming
+  - HUD cat bar colors are hardcoded per CatType enum to match cat definition colors — update both if definition colors change
 ---
 
-## 2026-04-29 - US-012
-- Created `src/game/systems/CollisionSystem.ts` — broad + narrow phase ECS collision detection
-- Broad phase: AABB overlap in XZ plane (2D top-down); skips pairs with no layer/mask intersection
-- Narrow phase: circle–circle (push apart by overlap+skinWidth, half-each for dual-dynamic or one-sided) and circle–box (closest-point-on-AABB + push-out)
-- Trigger pairs tracked with `pairKey()` (smaller entity id first for symmetry); `trigger:enter`/`trigger:exit` emitted via EventBus when pair state changes
-- Solid collisions also emit `collision:enter`/`collision:exit` via EventBus
-- Layer/mask filter: `(A.layer & B.mask) !== 0 && (B.layer & A.mask) !== 0` — both directions must pass
-- Mutates `Transform` in-place — downstream systems (RenderSystem, CameraController) see corrected positions automatically
-- pnpm typecheck and pnpm build pass
+## 2026-04-30 - US-107
+- Implemented Zoomies cat speed trail: SpeedBoost component, ZoomiesTrail component, ZoomiesSystem, CatCompanionManager trail lifecycle, MovementSystem speed scaling
+- Files created: src/game/ecs/components/SpeedBoost.ts, src/game/ecs/components/ZoomiesTrail.ts, src/game/systems/ZoomiesSystem.ts
+- Files modified: src/game/cats/CatCompanionManager.ts (trail creation/cleanup + import), src/game/systems/MovementSystem.ts (SpeedBoost import + multiplier), src/game/engine/Game.ts (ZoomiesSystem wiring)
 - **Learnings for future iterations:**
-  - CollisionSystem works in XZ plane only (isometric top-down). Y-axis collision is handled exclusively by PhysicsEngine's ground raycast. Do not mix the two.
-  - `pairKey(a, b)` always puts the smaller entity first — ensures both `(a,b)` and `(b,a)` produce the same key for `Set` de-duplication.
-  - Trigger and solid collision state machines use the same enter/exit pattern: snapshot new contacts, diff against previous frame's set, emit enter for new, emit exit for gone.
-  - Circle-inside-box edge case (distSq < epsilon): fall back to pushing along X axis to avoid NaN from normalizing a zero vector.
-  - Transform mutation is the correct output; the Game loop runs CollisionSystem before RenderSystem so corrected positions reach the renderer in the same frame.
+  - PhysicsEngine addBody() takes a uniform `size` (single half-extent), not per-axis — unsuitable for the 6u×1.5u trail rectangle; manual oriented AABB in ZoomiesSystem is the right approach
+  - Trail direction: normalize(catPos - playerPos) at summon time; stored in ZoomiesTrail.dirX/dirZ for per-frame projection; box mesh rotated via rotationY = atan2(dirX, dirZ)
+  - ZoomiesSystem.dismiss() auto-sets behavior.state="Expired" before calling catCompanionManager.dismiss() — dismiss() checks this to skip yarn refund (consumed on expiry)
+  - Trail entity destroyed by CatCompanionManager.dismiss(), not by ZoomiesSystem — keeps cleanup centralised in one place
+  - Multiple Zoomies cats: ZoomiesSystem handles multiple trails; player gets SpeedBoost from the last trail they're in (last wins in the loop); all trails same multiplier so order doesn't matter
 ---
 
-## 2026-04-29 - US-011
-- Created `src/game/engine/CameraController.ts` — isometric OrthographicCamera follow controller
-- Reads `cameraAzimuth` and `cameraElevation` from `runtimeConfig` on construction (45°/60°)
-- `follow(target)` sets target entity; `setMode('follow'|'free')` switches modes
-- Follow mode: smooth lerp (convergence ~5u/s), lead offset lerped via `runtimeConfig.cameraLeadLerp` toward player facing direction
-- Scroll-wheel zoom: adjusts orthographic frustum (minZoom=5, maxZoom=25); updates aspect ratio on resize
-- `setMapBounds()` clamps camera focus to map edges; `panBy()` enables free-mode WASD panning from the orchestrator
-- Camera installed into `sceneManager.camera` on construction (replaces default PerspectiveCamera)
-- `dispose()` removes wheel event listener
-- pnpm typecheck passes
+## 2026-04-30 - US-109
+- Implemented Pounce cat launch mechanic: PounceSystem (XZ footprint + grounded check + once-per-landing Set), wired into Game.ts fixed loop after CuriositySystem, Pounce platform added to TestMap
+- Files created: src/game/systems/PounceSystem.ts
+- Files modified: src/game/engine/Game.ts (import + instantiation + loop call), src/game/maps/TestMap.ts (height=1 platform rows 14-15 cols 6-7)
 - **Learnings for future iterations:**
-  - CameraController installs itself into SceneManager by setting `sceneManager.camera = this.camera`. SceneManager.resize() handles both Perspective and Ortho cameras; CameraController owns the frustum math on zoom/resize.
-  - Lead distance (runtimeConfig.cameraLeadDistance = 2.5u) is projected via sin/cos of player rotationY — same convention as MovementSystem facing.
-  - Free-mode panning is done externally (Game orchestrator calls `panBy()`) so CameraController never reads input directly — keeps input coupling in one place.
-  - `updateFrustum()` must guard against clientWidth/Height = 0 (canvas before layout) or it creates degenerate frustum.
+  - PounceSystem does NOT need CatCompanionManager — dismiss is handled externally (right-click); system only applies the launch impulse
+  - "Once per landing" is enforced by a `launchedCats: Set<Entity>` in PounceSystem; entry added on launch, removed when player exits XZ footprint (snapshot iteration to avoid Set mutation during loop)
+  - Air control (70%) is already global via runtimeConfig.airControlFactor in MovementSystem — no per-cat wiring needed for Pounce
+  - physicsEngine.isBodyGrounded(handle) distinguishes player standing ON the Pounce cat (top surface detected by raycast) vs. walking into its side (blocked by XZ collider but not grounded by it)
+  - Launch physics (impulse=3.5 u/s, gravity=-12): player peaks ~0.51u above launch point; Pounce cat top at ~0.5u gives player peak ~1.41u center — height=1 terrain platform is marginally reachable. The "3.5u above resting height" AC is aspirational; real physics gate is ~1u platform max with current gravity config
+  - CatBehavior.state is transitioned Idle→Active in PounceSystem on the first frame (same pattern as ZoomiesSystem/CuriositySystem)
 ---
 
-## 2026-04-29 - US-010
-- Created `src/game/systems/MovementSystem.ts` — walk + jump with coyote time and jump buffer
-- Queries Transform + Velocity + PlayerControlled; skips entities with no physics body handle
-- Syncs ECS Transform position from physics body at the start of each frame (prev-frame result)
-- Coyote timer: armed on grounded→airborne transition, ticked down each airborne frame
-- Jump buffer: armed on Jump press, consumed when canJump (grounded OR coyote>0)
-- Horizontal velocity: per-axis accel/decel rates (walkSpeed / accel|decel seconds); target scaled by airControlFactor (0.7) when airborne
-- Y velocity owned by PhysicsEngine; MovementSystem injects only the initial jump impulse
-- Writes full velocity (x, y, z) to physics body each frame
-- Facing: `transform.rotationY = Math.atan2(intent.x, intent.z)` when intent non-zero
-- `moveToward()` helper produces exact target value when within maxDelta (no float jitter at rest)
+## 2026-04-30 - US-110
+- Implemented CatAISystem: generic state machine reading duration from CAT_REGISTRY
+- Created src/game/systems/CatAISystem.ts: queries CatBehavior+Transform; Idle→Active all cats; Active→stateTimer tick for duration cats; stateTimer≥duration→Expired; permanent cats (no duration) stay Active
+- Refactored ZoomiesSystem: removed Idle→Active + stateTimer tick + auto-dismiss logic; now reacts to Expired state set by CatAISystem; `update(world, _dt)` — dt unused
+- Refactored CuriositySystem: removed Idle→Active + stateTimer tick; detects first Active frame via `reveal.revealedEntities.length === 0`; reacts to Expired to hideRevealedTerrain + dismiss
+- Refactored PounceSystem: removed `if (behavior.state === "Idle") behavior.state = "Active"` — replaced with `if (behavior.state !== "Active") continue`
+- Wired CatAISystem into Game.ts fixed-step loop BEFORE ZoomiesSystem/CuriositySystem/PounceSystem
+- pnpm typecheck and pnpm lint both pass
 - **Learnings for future iterations:**
-  - MovementSystem is the ECS↔Physics sync layer for position (reads from physics) and velocity (writes to physics). RenderSystem never needs to touch physics directly.
-  - Coyote time arms on the frame *after* leaving the ground (player.isGrounded was true, grounded is now false). Reset immediately when grounded.
-  - Jump buffer and coyote time are consumed together on a successful jump to prevent double-jumps.
-  - Per-axis accel/decel (intent.x !== 0 ? accelRate : decelRate) handles direction changes more intuitively than a single combined rate.
+  - CatAISystem sets Expired; per-cat systems detect Expired and call dismiss() — this avoids CatAISystem needing a CatCompanionManager dependency and keeps cleanup logic in each cat's system
+  - CuriositySystem's "on first activate" signal changed from `state === "Idle"` to `state === "Active" && revealedEntities.length === 0` — works because CatAISystem transitions in the same fixed tick before CuriositySystem runs
+  - Per-cat systems guard with `if (!world.isAlive(catEntity)) continue` after any dismiss call to handle same-frame entity destruction
 ---
 
-## 2026-04-29 - US-009
-- Created `src/game/engine/PhysicsEngine.ts` — self-contained physics engine
-- `BodyHandle = symbol` (opaque, follows SceneHandle pattern)
-- `addBody(entity, config)` initializes body at origin; call `setPosition()` to place after ECS Transform is known
-- `step(dt)`: applies gravity to non-grounded dynamic bodies, integrates velocity, runs downward raycast for ground detection (slab-method AABB), resolves XZ-plane circle-box collisions with wall-sliding
-- `raycast()` does full 3D ray vs AABB (slab method) and ray vs sphere
-- Trigger overlaps tracked via `Set<string>` with `"triggerEntity:targetEntity"` keys; `trigger:enter` / `trigger:exit` emitted via EventBus
-- Extra accessors: `getPosition`, `setPosition`, `getVelocity`, `setVelocity`, `isBodyGrounded`, `getHandleByEntity` — needed for MovementSystem sync
+## 2026-04-30 - US-111
+- Implemented resource gathering: ResourceNode component, GatheringSystem, GameState inventory helpers, HUD progress bar, 15 resource node entities in TestMap
+- Files created: src/game/ecs/components/ResourceNode.ts, src/game/systems/GatheringSystem.ts
+- Files modified: src/game/types.ts (ResourceType enum + resource:gathered event), src/game/engine/GameState.ts (inventory stacks + addResource/hasInventorySpace), src/game/ui/HUD.ts (gather progress bar), src/game/ui/UIManager.ts (gatherState in HUDState), src/game/engine/Game.ts (GatheringSystem wire-up + spawnTestMapResourceNodes())
+- pnpm typecheck, pnpm lint, pnpm build all pass
 - **Learnings for future iterations:**
-  - PhysicsEngine is self-contained (no ECS World dependency) — it's the math layer; MovementSystem is the sync/ECS layer.
-  - Ground detection: raycast from body center downward; max distance = body.config.size + groundSnapTolerance; snap to `hit.point.y + body.config.size`.
-  - Wall-sliding for circle-box: find closest point on box, push circle center along overlap vector. When distSq=0 (exactly inside), fall back to X-axis push.
-  - Slab-method AABB: parallel slabs return null if origin outside; tmin<0 (origin inside box) returns null for entry hit.
-  - `runtimeConfig` (not `CONFIG`) sourced for gravity/skinWidth/groundSnapTolerance so debug menu tweaks apply live.
+  - GatheringSystem caches _gatherState each fixed tick; buildHUDState() reads it in the variable-rate render pass — decouples fixed/render rates cleanly
+  - Resource node colliders use collisionMask=0 (no physics response); distance check in GatheringSystem avoids trigger infrastructure complexity
+  - GameState.addResource() is forward-compatible with US-112's capacity enforcement — hasInventorySpace() is already the gate
+  - HUD gather bar hides via display:none (same pattern as oxygen gauge); visible only during an active gather action
 ---
 
-## Codebase Patterns
-- `next/dynamic` with `ssr: false` must live in a `'use client'` component in Next.js 16+ (Turbopack). Server Components cannot use it directly. Pattern: server page → client loader with dynamic import → actual component.
-- The main repo is on `main` (Next.js T3 app). Branch `feat/engine-foundation` is a stale worktree with an old Vite-based game. Working branch is `feat/engine-foundation-v2` from main.
-- Three.js lives under `src/game/engine/`. Game source is cleanly separated from `src/app/`, `src/server/`, `src/trpc/`.
-- Use `pnpm typecheck && pnpm build` as the quality gate (no lint script yet — added in US-019).
-- EventBus internal storage must use `(event: GameEvent) => void` (not a generic type parameter) to satisfy TS strict contravariance. Use `handler as unknown as AnyHandler` at the boundary — double cast through `unknown` avoids TS2352.
-
+## 2026-04-30 - US-112
+- Implemented Inventory System: reactive GameState listener, Inventory Full notification timer, HUD inventory panel with capacity bar
+- Files changed:
+  - src/game/engine/GameState.ts — added inventoryListeners Set, onInventoryChange() reactive subscriber, notifyInventory() called in addResource()
+  - src/game/systems/GatheringSystem.ts — added _inventoryFullTimer (2s), ticked in update(), set on E+full, exposed via isInventoryFull()
+  - src/game/ui/UIManager.ts — added InventoryStack import, inventory/maxInventoryCapacity/inventoryFull fields to HUDState; passed through in update()
+  - src/game/ui/HUD.ts — added InventoryStack import, RESOURCE_ICONS map (🌿/🪵/💧), buildInventoryPanel() (top-left: capacity label+bar, stack rows, Inventory Full notice), setInventory() updater; update() signature extended with 3 new params
+  - src/game/engine/Game.ts — both buildHUDState() return paths now include inventory, maxInventoryCapacity, inventoryFull
+- pnpm typecheck, pnpm lint, pnpm build all pass
+- **Learnings for future iterations:**
+  - GameState.onInventoryChange() follows the same call-immediately pattern as onYarnChange() — listener fires with current value on subscribe
+  - HUD inventory panel rebuilds stack rows on every frame via innerHTML="" — acceptable for ≤3 stacks in MVP, revisit if stacks exceed 5+
+  - Capacity bar color thresholds: green (0-69%), yellow (70-99%), red (100%) — mirrors common game inventory UI convention
+  - "Inventory Full!" notification persists 2s via timer in GatheringSystem; timer ticked in update() and checked by isInventoryFull() in the render pass
 ---
 
-## 2026-04-29 - US-001
-- Installed `three` and `@types/three` via pnpm
-- Created `src/game/engine/Game.ts` — minimal Three.js orchestrator (renderer, scene, camera, ground plane, player box, ResizeObserver, rAF loop) with `start()`, `pause()`, `resume()`, `destroy()`
-- Created `src/app/play/_components/GameCanvas.tsx` — `'use client'` component that creates a canvas, sizes it to parent, instantiates Game, and calls `game.destroy()` on unmount
-- Created `src/app/play/_components/GameLoader.tsx` — `'use client'` wrapper that uses `next/dynamic` with `ssr: false` (required in Next.js 16+, cannot use dynamic in Server Components)
-- Updated `src/app/play/page.tsx` — server component that calls `withAuth({ ensureSignedIn: true })`, passes `{ id, firstName, email }` safe user subset to `GameLoader`
+## 2026-04-30 - US-113
+- Implemented Yarn Economy & HUD: ghost red on insufficient yarn, yarn warning tooltip, 3 yarn pickup entities
+- Files created: src/game/ecs/components/YarnPickup.ts, src/game/systems/YarnPickupSystem.ts
+- Files modified: src/game/cats/CatCompanionManager.ts (canAfford()), src/game/systems/CatPlacementSystem.ts (_insufficientYarn + getInsufficientYarn()), src/game/ui/UIManager.ts (insufficientYarn in HUDState), src/game/ui/HUD.ts (yarnWarningEl + buildYarnWarning() + setYarnWarning()), src/game/engine/Game.ts (YarnPickupSystem wiring + spawnTestMapYarnPickups() + insufficientYarn in buildHUDState())
+- pnpm typecheck, pnpm lint, pnpm build all pass
 - **Learnings for future iterations:**
-  - Next.js 16 (Turbopack) rejects `next/dynamic` with `ssr: false` in Server Components. Must wrap in a `'use client'` component.
-  - `ResizeObserver` on the canvas element correctly handles resize; `renderer.setSize(w, h, false)` (false = don't set CSS style) is key to keeping pixel-perfect canvas sizing when CSS is handling the layout.
-  - Branch `feat/engine-foundation` was already in use by a stale worktree pointing to an old Vite project. Created `feat/engine-foundation-v2` from current `main`.
+  - canAfford() on CatCompanionManager is the clean pattern for affordability checks — CatPlacementSystem only needs the manager ref, not GameState directly
+  - Ghost affordability check uses the same GHOST_INVALID_COLOR — "can't afford" and "invalid position" share identical red tint, unified in user experience
+  - YarnPickupSystem uses world.query() snapshot ([...pickupEntities]) to avoid mutation-during-iteration since destroyEntity() invalidates the query cache
+  - Yarn pickup entities have only Transform + Renderable + YarnPickup — no physics body, no collider needed (distance check in YarnPickupSystem suffices)
+  - HUD yarn warning is a fixed-position floating panel (bottom:155px, above gather bar at 110px) not a slot-specific tooltip — simpler and visible regardless of cat slot position
 ---
 
-## 2026-04-29 - US-002
-- Created `src/game/types.ts` — GameAction, CatType, TerrainType enums; Vec2/Vec3 interfaces; GameEvent discriminated union (15 event types covering player, collision, trigger, map, save, debug, and game-state events)
-- Created `src/game/config.ts` — all GDD constants with named fields; CONFIG exported as `Object.freeze({...BASE_CONFIG})`; runtimeConfig is a mutable spread copy for the debug menu
-- Created `src/game/ecs/`, `src/game/systems/`, `src/game/ui/`, `src/game/maps/` subdirectories (required by the acceptance criteria folder layout)
+## 2026-04-30 - US-114
+- Implemented active cat bar: right-side panel (right:16px, vertically centered) showing summoned companions with colored dot, name, state badge, and "right-click: dismiss" hint
+- Files changed:
+  - src/game/ui/UIManager.ts — ActiveCatInfo interface; activeCompanions field in HUDState; passed to hud.update()
+  - src/game/ui/HUD.ts — buildActiveCatBar() (builds panel + list + hint); setActiveCats() (rebuilds rows per frame); update() extended with activeCompanions param; dispose() cleanup
+  - src/game/engine/Game.ts — import CatType + ActiveCatInfo; buildActiveCompanions() maps getActiveCompanions() entities via CatBehavior; activeCompanions threaded into both buildHUDState() return paths
+- pnpm typecheck, pnpm lint, pnpm build all pass
 - **Learnings for future iterations:**
-  - CONFIG uses `Object.freeze({...BASE_CONFIG})` — frozen at the top level only (sufficient for primitive values). No deep freeze needed since all config values are primitives.
-  - runtimeConfig is initialized from BASE_CONFIG (not from CONFIG) so it's a true independent copy and not a reference to the frozen object.
-  - GameEvent discriminated union uses a `type` string literal tag — consumers can switch/if on `event.type` without casting.
----
-
-## 2026-04-29 - US-003
-- Created `src/game/engine/EventBus.ts` — typed pub/sub around the GameEvent discriminated union
-- `on<T>(type, handler): Unsubscribe` — adds handler, returns removal fn
-- `off<T>(type, handler)` — targeted removal (no-op if not registered)
-- `emit(event)` — snapshots bucket before iteration to avoid dispatch reentrancy issues
-- `clear()` — removes all listeners; intended for module teardown (HMR, route change)
-- Internal storage: `Map<string, Set<AnyHandler>>` where `AnyHandler = (event: GameEvent) => void`; boundary cast via `handler as unknown as AnyHandler` to satisfy TS strict contravariance
-- **Learnings for future iterations:**
-  - TS strict contravariance rejects direct cast from `Handler<T>` to `Handler<UnionType>` with TS2352. Solution: double-cast through `unknown` (`handler as unknown as AnyHandler`).
-  - Snapshotting the Set with `[...bucket]` before iterating prevents handlers added during `emit()` from running in the same cycle (safer default).
-  - `clear()` must be called in `destroy()` / teardown to prevent listener leaks across React StrictMode double-mounts and HMR cycles.
----
-
-## 2026-04-29 - US-004
-- Created `src/game/engine/SceneManager.ts` — Three.js isolation boundary
-- `SceneHandle` is a `symbol` (opaque by nature — callers cannot reach `THREE.Object3D`)
-- `MeshConfig` supports box / sphere / cylinder / plane; optional `dims` tuple overrides per-geometry axes
-- `camera` is a public settable field so `CameraController` can swap in an `OrthographicCamera` without SceneManager knowing its type
-- `resize()` handles both PerspectiveCamera (aspect ratio) and OrthographicCamera (just updateProjectionMatrix — CameraController owns the frustum math)
-- `screenToWorld()` normalizes to NDC, casts a ray, returns first intersection as `Vec3 | null`
-- `dispose()` disconnects ResizeObserver, walks the mesh map calling `removeMesh()` (disposes geometry + material), then disposes renderer
-- **Learnings for future iterations:**
-  - `Symbol("SceneHandle")` is the cleanest opaque handle — no class needed, impossible to forge or access internals from outside the module.
-  - `renderer.setSize(w, h, false)` — the `false` flag prevents Three.js from setting `canvas.style.width/height` which would fight CSS layout.
-  - When `camera` is typed as `THREE.Camera` (the base class), `instanceof` checks are needed before accessing subclass-specific methods like `.aspect` or `.updateProjectionMatrix()` specialized behavior. Both Perspective and Ortho do inherit `updateProjectionMatrix()` from Camera though — only the aspect update is Perspective-specific.
-  - The ESLint `no-restricted-imports` rule (US-019) will enforce that only this file and CameraController import from "three". SceneManager's public API exports only our own types (Vec3, MeshConfig, SceneHandle, RaycastHit) — no THREE types leak through the boundary.
----
-
-## 2026-04-29 - US-005
-- Created `src/game/ecs/Entity.ts` — `Entity = number` type alias
-- Created `src/game/ecs/Component.ts` — `ComponentType = string` alias + `Component` interface with `readonly type: ComponentType`
-- Created `src/game/ecs/System.ts` — `System` interface with `update(world: World, dt: number): void`
-- Created `src/game/ecs/World.ts` — full ECS registry with `createEntity`, `destroyEntity`, `addComponent`, `removeComponent`, `getComponent`, and cached `query(...types)` (sorted-key string, full cache invalidation on structural changes)
-- **Learnings for future iterations:**
-  - Query cache key = `[...types].sort().join("|")` — sort ensures `query("Transform","Renderable")` and `query("Renderable","Transform")` share the same cache entry.
-  - Full cache invalidation on any structural change is correct at this scale (< a few hundred entities). Avoid per-key invalidation complexity.
-  - `World` is a plain class (not a singleton) so multiple worlds can exist in tests. The Game orchestrator owns the single runtime instance.
-  - `System.ts` imports `World` as a type-only import to avoid circular references — keep this pattern for all system files.
----
-
-## 2026-04-29 - US-006
-- Created `src/game/ecs/components/Transform.ts` — position (x,y,z), rotationY, scaleX/Y/Z + factory
-- Created `src/game/ecs/components/Velocity.ts` — dx/dy/dz + factory
-- Created `src/game/ecs/components/PlayerControlled.ts` — isGrounded, coyoteTimer, jumpBufferTimer + factory
-- Created `src/game/ecs/components/Collider.ts` — shape (circle/box), size, isStatic, isTrigger, collisionLayer, collisionMask + factory with Partial options
-- Created `src/game/ecs/components/Renderable.ts` — meshConfig (MeshConfig), sceneHandle (SceneHandle | null) + factory
-- **Learnings for future iterations:**
-  - Renderable imports `MeshConfig` and `SceneHandle` from `../../engine/SceneManager` — these are plain TS types (no THREE types), so the import is safe and doesn't breach the no-three-outside-SceneManager rule.
-  - Use factory functions (`createX()`) for each component — reduces boilerplate at call sites and ensures defaults are centralized.
-  - `Partial<Pick<Interface, keys>>` is the cleanest pattern for optional config overrides in factory functions.
----
-
-## 2026-04-29 - US-007
-- Created `src/game/systems/RenderSystem.ts` — ECS-to-Three.js bridge
-- Maintains `Map<Entity, SceneHandle>` locally (not relying solely on `Renderable.sceneHandle`) so stale entity cleanup works even after `world.destroyEntity()` removes component access
-- New entities: `sceneManager.addMesh(renderable.meshConfig)` → store handle, write back to `renderable.sceneHandle`
-- Existing entities: `sceneManager.updateTransform(handle, pos, rot, scale)` — `rotationY` mapped to `{ x:0, y:rotationY, z:0 }`
-- Stale entities (not in current query): `sceneManager.removeMesh(handle)` using cached handle; best-effort null-clear on component if still alive
-- **Learnings for future iterations:**
-  - Always keep a local `Map<Entity, SceneHandle>` in systems that manage scene resources. Relying on component access for cleanup fails when the entity is destroyed before cleanup runs.
-  - `world.query("Transform", "Renderable")` returns a cached snapshot — safe to iterate without modifying. Convert to a `Set` for O(1) membership checks when diffing against a local registry.
-  - `Transform.rotationY` is a scalar (radians); `SceneManager.updateTransform()` takes a full `Vec3` for rotation — always pass `{ x: 0, y: rotationY, z: 0 }`.
----
-
-## 2026-04-29 - US-008
-- Created `src/game/engine/InputManager.ts` — keyboard and mouse input manager
-- Canvas gets `tabIndex = 0` so it can receive keyboard events without a wrapper div
-- WASD + Arrow Keys → 8-directional normalized intent via `getMovementIntent()`
-- `isActionPressed()` = single-frame (flushed by `poll()`); `isActionHeld()` = continuous
-- Ctrl+D stored as synthetic `"CtrlD"` key to prevent conflict with movement `D` key; return-early in onKeyDown ensures plain `KeyD` is NOT added when Ctrl is held
-- Mouse position tracked in canvas-local coords; `getMouseWorldPosition()` delegates to `SceneManager.screenToWorld()`
-- All listeners on canvas (not window) — DOM UI focus naturally isolates game input
-- **Learnings for future iterations:**
-  - Canvas is not keyboard-focusable by default — set `tabIndex = 0` in InputManager constructor so the element can receive keydown/keyup without extra wrappers.
-  - Ctrl+D conflicts with movement `D` require early-return in the keydown handler and a synthetic key (`"CtrlD"`) stored separately from `"KeyD"`.
-  - `pressedThisFrame` must be a Set cleared by `poll()` called at the start of each frame loop, before any system reads input.
+  - All other HUD elements (hearts, oxygen, inventory, yarn, cat selection, gather progress) were already complete from US-102/105/111/112/113 — US-114 was primarily additive (active cat bar only)
+  - Active cat bar uses __hint property on the DOM element as a lightweight closure to avoid a separate class field; acceptable for MVP but a dedicated field is cleaner for larger HUD refactors
+  - buildActiveCompanions() calls getCatalog() every frame to build the name lookup Map — acceptable at ≤4 cat types (tiny array); cache the Map if catalog becomes dynamic
+  - Active cat bar empty-state shows "—" placeholder so the panel maintains its vertical position even when no cats are summoned; avoids layout jitter on first summon
 ---

@@ -13,8 +13,14 @@ export type BodyHandle = symbol;
 export interface BodyConfig {
   /** Circle (capsule in 2D XZ) or box for terrain/walls. */
   shape: "circle" | "box";
-  /** Radius for circle; half-extent (uniform on all axes) for box. */
+  /** Radius for circle; uniform half-extent for box (used when halfExtents is omitted). */
   size: number;
+  /**
+   * For shape === "box": optional per-axis half-extents. When provided, this
+   * overrides `size` for box collision math (rayBox, resolveCircleBox, overlapsXZ).
+   * Required for non-cubic colliders such as the Loaf cat (1.2 × 1.5 × 1.2).
+   */
+  halfExtents?: Vec3;
   /** Static bodies are never moved by the solver. */
   isStatic: boolean;
   /** Trigger bodies detect overlap but produce no physics response. */
@@ -47,6 +53,11 @@ interface PhysicsBody {
   position: Vec3;
   velocity: Vec3;
   isGrounded: boolean;
+  /** Grounded state from the previous step — bridges the 1-frame lag
+   *  between PhysicsEngine.step() and MovementSystem reading the flag. */
+  wasGroundedLastFrame: boolean;
+  /** When true, gravity is not applied — used for swimming entities. */
+  noGravity: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +71,8 @@ interface PhysicsBody {
  * of the ECS World. The MovementSystem is responsible for syncing ECS
  * Transform/Velocity components with body state via the accessor methods.
  *
- * Frame order: InputManager.poll() → MovementSystem (sets velocity) →
- *              PhysicsEngine.step() → CollisionSystem → RenderSystem
+ * Frame order: MovementSystem (sets velocity) → PhysicsEngine.step() →
+ *              CollisionSystem → RenderSystem → InputManager.poll() (end of frame)
  */
 export class PhysicsEngine {
   private readonly bodies = new Map<BodyHandle, PhysicsBody>();
@@ -87,6 +98,8 @@ export class PhysicsEngine {
       position: { x: 0, y: 0, z: 0 },
       velocity: { x: 0, y: 0, z: 0 },
       isGrounded: false,
+      wasGroundedLastFrame: false,
+      noGravity: false,
     });
     this.entityToHandle.set(entity, handle);
     return handle;
@@ -129,9 +142,22 @@ export class PhysicsEngine {
     return this.bodies.get(handle)?.isGrounded ?? false;
   }
 
+  wasBodyGroundedLastFrame(handle: BodyHandle): boolean {
+    return this.bodies.get(handle)?.wasGroundedLastFrame ?? false;
+  }
+
   /** Reverse-lookup: entity → BodyHandle, or null if not registered. */
   getHandleByEntity(entity: Entity): BodyHandle | null {
     return this.entityToHandle.get(entity) ?? null;
+  }
+
+  /**
+   * Enable or disable gravity for a specific body.
+   * Disable when the entity is swimming so buoyancy logic controls Y instead.
+   */
+  setGravityEnabled(handle: BodyHandle, enabled: boolean): void {
+    const body = this.bodies.get(handle);
+    if (body) body.noGravity = !enabled;
   }
 
   // --- Raycast ---
@@ -169,6 +195,20 @@ export class PhysicsEngine {
     return closest;
   }
 
+  /**
+   * Returns the Y coordinate of the highest static surface at the given XZ
+   * position, or 0 if no static body covers that point.
+   */
+  getHighestSurfaceY(x: number, z: number): number {
+    const RAY_CEILING = 50;
+    const hit = this.raycast(
+      { x, y: RAY_CEILING, z },
+      { x: 0, y: -1, z: 0 },
+      RAY_CEILING,
+    );
+    return hit ? hit.point.y : 0;
+  }
+
   // --- Simulation step ---
 
   /** Advance the simulation by dt seconds. */
@@ -180,6 +220,18 @@ export class PhysicsEngine {
     this.detectTriggerOverlaps();
   }
 
+  /**
+   * Returns the per-axis half-extents for a box body.
+   * Falls back to a uniform cube of `size` when `halfExtents` is omitted.
+   * Caller is responsible for ensuring the body is shape === "box".
+   */
+  private static boxHalf(body: PhysicsBody): Vec3 {
+    const he = body.config.halfExtents;
+    if (he) return he;
+    const s = body.config.size;
+    return { x: s, y: s, z: s };
+  }
+
   // ---------------------------------------------------------------------------
   // Private — integration
   // ---------------------------------------------------------------------------
@@ -187,8 +239,8 @@ export class PhysicsEngine {
   private integrateBody(body: PhysicsBody, dt: number): void {
     const cfg = runtimeConfig;
 
-    // Gravity — only when airborne
-    if (!body.isGrounded) {
+    // Gravity — only when airborne and gravity is not suppressed (e.g. swimming)
+    if (!body.isGrounded && !body.noGravity) {
       body.velocity.y += cfg.gravity * dt;
     }
 
@@ -201,12 +253,21 @@ export class PhysicsEngine {
 
     // Ground detection — downward raycast from body center
     // Max distance: body radius + ground snap tolerance
+    body.wasGroundedLastFrame = body.isGrounded;
     body.isGrounded = false;
     const groundMaxDist = body.config.size + cfg.groundSnapTolerance;
     const groundHit = this.raycastDownward(newPos, groundMaxDist, body);
     if (groundHit) {
       // Snap so the body base (center - radius) rests on the ground surface
       newPos.y = groundHit.point.y + body.config.size;
+      if (body.velocity.y < 0) body.velocity.y = 0;
+      body.isGrounded = true;
+    }
+
+    // Flat-floor fallback: prevents dynamic bodies from falling below the base terrain
+    // (y = 0). Elevated platforms are handled by registered static physics bodies.
+    if (!body.isGrounded && newPos.y <= body.config.size) {
+      newPos.y = body.config.size;
       if (body.velocity.y < 0) body.velocity.y = 0;
       body.isGrounded = true;
     }
@@ -249,16 +310,28 @@ export class PhysicsEngine {
     return closest;
   }
 
-  /** Push `newPos` out of any static solid it overlaps (XZ plane only). */
+  /** Push `newPos` out of any static solid it overlaps in both XZ and Y. */
   private resolveHorizontalCollisions(
     body: PhysicsBody,
     newPos: Vec3,
     skinWidth: number,
   ): void {
+    const bodyBottom = newPos.y - body.config.size;
+    const bodyTop = newPos.y + body.config.size;
+
     for (const other of this.bodies.values()) {
       if (other === body) continue;
       if (!other.config.isStatic || other.config.isTrigger) continue;
       if (!(other.config.collisionLayer & body.config.collisionMask)) continue;
+
+      // Y-overlap guard: skip when the bodies are vertically separated.
+      // Epsilon avoids false positives from float rounding (e.g. 0.75+0.4−0.4 ≠ 0.75).
+      const Y_EPSILON = 1e-4;
+      const otherHalf = PhysicsEngine.boxHalf(other);
+      const otherBottom = other.position.y - otherHalf.y;
+      const otherTop = other.position.y + otherHalf.y;
+      if (bodyBottom >= otherTop - Y_EPSILON || bodyTop <= otherBottom + Y_EPSILON)
+        continue;
 
       if (body.config.shape === "circle" && other.config.shape === "circle") {
         this.resolveCircleCircle(body.config.size + skinWidth, other, newPos);
@@ -289,20 +362,24 @@ export class PhysicsEngine {
    * Push a circle body out of a box body (XZ plane).
    * Finds the closest point on the box surface and pushes the circle center
    * away — this produces the wall-sliding effect.
+   *
+   * Uses per-axis half-extents (boxHalf.x / boxHalf.z) so non-cubic colliders
+   * such as the Loaf cat are resolved against their actual XZ footprint, not
+   * an inflated uniform-cube approximation.
    */
   private resolveCircleBox(
     radius: number,
     other: PhysicsBody,
     newPos: Vec3,
   ): void {
-    const hs = other.config.size;
+    const half = PhysicsEngine.boxHalf(other);
     const nearX = Math.max(
-      other.position.x - hs,
-      Math.min(newPos.x, other.position.x + hs),
+      other.position.x - half.x,
+      Math.min(newPos.x, other.position.x + half.x),
     );
     const nearZ = Math.max(
-      other.position.z - hs,
-      Math.min(newPos.z, other.position.z + hs),
+      other.position.z - half.z,
+      Math.min(newPos.z, other.position.z + half.z),
     );
     const dx = newPos.x - nearX;
     const dz = newPos.z - nearZ;
@@ -315,7 +392,7 @@ export class PhysicsEngine {
         newPos.z += dz * push;
       } else {
         // Origin exactly on box surface — push out on X as fallback
-        newPos.x = other.position.x + hs + radius;
+        newPos.x = other.position.x + half.x + radius;
       }
     }
   }
@@ -373,12 +450,20 @@ export class PhysicsEngine {
       const minDist = a.config.size + b.config.size;
       return dx * dx + dz * dz < minDist * minDist;
     }
-    // For box or mixed, use AABB footprint
-    const ahs = a.config.shape === "circle" ? a.config.size : a.config.size;
-    const bhs = b.config.shape === "circle" ? b.config.size : b.config.size;
+    // For box or mixed: use AABB-style footprint with per-axis half-extents.
+    // (Treats circles as their bounding square in XZ — a slight overshoot at
+    // corners but matches existing behavior and is cheap.)
+    const aHalfX =
+      a.config.shape === "box" ? PhysicsEngine.boxHalf(a).x : a.config.size;
+    const aHalfZ =
+      a.config.shape === "box" ? PhysicsEngine.boxHalf(a).z : a.config.size;
+    const bHalfX =
+      b.config.shape === "box" ? PhysicsEngine.boxHalf(b).x : b.config.size;
+    const bHalfZ =
+      b.config.shape === "box" ? PhysicsEngine.boxHalf(b).z : b.config.size;
     return (
-      Math.abs(a.position.x - b.position.x) < ahs + bhs &&
-      Math.abs(a.position.z - b.position.z) < ahs + bhs
+      Math.abs(a.position.x - b.position.x) < aHalfX + bHalfX &&
+      Math.abs(a.position.z - b.position.z) < aHalfZ + bHalfZ
     );
   }
 
@@ -427,7 +512,7 @@ export class PhysicsEngine {
     maxDist: number,
     body: PhysicsBody,
   ): RaycastHit | null {
-    const hs = body.config.size;
+    const half = PhysicsEngine.boxHalf(body);
     const axes = ["x", "y", "z"] as const;
     let tmin = 0;
     let tmax = maxDist;
@@ -435,8 +520,8 @@ export class PhysicsEngine {
 
     for (const axis of axes) {
       const d = dir[axis];
-      const bmin = body.position[axis] - hs;
-      const bmax = body.position[axis] + hs;
+      const bmin = body.position[axis] - half[axis];
+      const bmax = body.position[axis] + half[axis];
 
       if (Math.abs(d) < 1e-10) {
         // Ray parallel to this slab — miss if origin is outside

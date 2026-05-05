@@ -2,6 +2,33 @@
   "project": "Cat Herder",
   "branchName": "feat/persistence-and-debug-v2",
   "description": "Phase 3: Full game state persistence (save/load/auto-save) routed through tRPC gameRouter (no browser-direct DB), versioned save format with Zod validation and migrations, and a comprehensive debug menu gated to NODE_ENV=development. Depends on PRD-01 and PRD-02.",
+  "testingDirectives": {
+    "framework": "Vitest (already configured at vitest.config.ts, run via `pnpm test`)",
+    "requirements": [
+      "Every new module MUST have a co-located test file (e.g., GameState.ts → src/game/__tests__/engine/GameState.test.ts). Story is not complete without tests.",
+      "Unit tests are the minimum quality bar. `pnpm test` must pass before committing.",
+      "The full verification command is: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`."
+    ],
+    "testPatterns": {
+      "stateModules": "Test all public methods: get/set/serialize/restore. Verify onChange callbacks fire. Verify invalid inputs are rejected. Use the existing GameState.test.ts as a pattern.",
+      "persistence": "Mock the tRPC adapter (vi.fn()). Test save/load/migrate flows without network. Verify dirty tracking, auto-save timing, and error handling.",
+      "migrations": "Test each migration transform with fixture data. Verify unknown versions throw. Test full migration chain (0.1 → latest).",
+      "debugMenu": "Test that debug value changes propagate through GameState/runtimeConfig. Test that debug state is excluded from serialization."
+    },
+    "existingHelpers": {
+      "entityFactories": "src/game/__tests__/helpers/entityFactories.ts — spawnPlayer(), spawnCat(), spawnResourceNode(), etc.",
+      "mockInputManager": "src/game/__tests__/helpers/mockInputManager.ts — stub for InputManager with pressAction/holdAction/setMovementIntent",
+      "mockSceneManager": "src/game/__tests__/helpers/mockSceneManager.ts — stub for SceneManager.setMeshOpacity",
+      "mockMapManager": "src/game/__tests__/helpers/mockMapManager.ts — stub for MapManager.getTerrainAt/getHeightAt"
+    },
+    "debugBridge": "window.__catHerderDebug is exposed in dev mode (Game.ts). It provides: world, gameState, eventBus, physicsEngine, getPlayerEntity(), getActiveCats(), tick(n) for deterministic physics stepping. E2E scripts can use this via dev-browser.",
+    "antiPatterns": [
+      "Do NOT mark a story as passing without `pnpm test` succeeding.",
+      "Do NOT write tests that import Three.js or require DOM — use mocks for SceneManager/InputManager.",
+      "Do NOT test implementation details (private methods) — test behavior through public APIs.",
+      "Do NOT skip tests to make CI green — fix the underlying issue."
+    ]
+  },
   "userStories": [
     {
       "id": "US-201",
