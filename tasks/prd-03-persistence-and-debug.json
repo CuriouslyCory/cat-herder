@@ -179,7 +179,7 @@
         "Verify in browser using dev-browser skill: open Cats tab, force-summon each type, verify cats appear, dismiss all."
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on DebugMenu framework from US-206. Replace the 'Coming soon' placeholder in the Cats tab."
     },
     {

@@ -181,3 +181,20 @@
   - debugState (godMode, speedMultiplier) stores debug-only overrides; runtimeConfig.walkSpeed is mutated directly (MovementSystem reads runtimeConfig, not CONFIG)
   - _baseWalkSpeed captured from CONFIG.walkSpeed at construction time so multiplier math is always relative to the canonical value
 ---
+
+## 2026-05-05 - US-207
+- Added Cats tab to DebugMenu, replacing the "Coming soon" placeholder
+- Extended DebugMenu constructor: optional `catCompanionManager?: CatCompanionManager` (7th param) and `getPlayerPosition?: () => Vec3 | null` (8th param) — backward-compatible; existing tests unchanged
+- New public methods: `applyForceSummon(catType)`, `applyYarnOverride(value)`, `applyCatLimitOverride(value)`, `applyDismissAll()`
+- New public `update()` method: refreshes active-cat status display each frame (no-ops when menu is closed or catCompanionManager not wired)
+- Force-summon: temporarily sets yarn +9999 and maxActiveCats=999, calls summon(), restores original values regardless of outcome
+- Game.ts: passes `this.catCompanionManager` and a `getPlayerPosition` closure to DebugMenu; calls `debugMenu?.update()` in the variable-rate render pass
+- Added `_divider()` helper to DebugMenu for visual separation between sections
+- 16 new tests in DebugMenu.test.ts; 290 total pass
+- All checks pass: pnpm test && pnpm lint && pnpm typecheck && pnpm build
+- **Learnings for future iterations:**
+  - Force-summon via boost+restore pattern: set yarn/limit high, call real summon(), restore — avoids duplicating summon() logic; yarn net change is always zero
+  - `vi.fn()` without a return-type annotation produces `Mock<Procedure | Constructable>` which TypeScript won't unify with a typed function signature; fix with `as unknown as () => T` at the call site
+  - `update()` is a no-op guard pattern: return early if `!_visible || !_catStatusContainer || !catCompanionManager` — safe to call every frame
+  - Optional constructor params added after existing ones preserve backward-compatibility; no existing tests needed updating
+---
