@@ -132,6 +132,7 @@ export class Persistence {
       const now = Date.now();
       this._lastSaveCompletedAt = now;
       this._lastSavedAt = now;
+      this.eventBus.emit({ type: "save:complete" });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.eventBus.emit({ type: "save:failed", error: message });

@@ -148,6 +148,8 @@ export class Game {
 
   // ── Persistence ──────────────────────────────────────────────────────────────
   private readonly persistence: Persistence;
+  /** Current save error message; cleared after HUD displays it for 5 s. */
+  private _saveError: string | null = null;
 
   // ── Debug (dev-only, null in production) ─────────────────────────────────────
   private debugMenu: DebugMenu | null = null;
@@ -265,6 +267,11 @@ export class Game {
 
     // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
+    this.eventBus.on("save:failed", (evt) => {
+      this._saveError = evt.error;
+      // Clear after 5 s so HUD stops re-showing the same error.
+      setTimeout(() => { this._saveError = null; }, 5100);
+    });
 
     // 15. DebugMenu — dev-only overlay (null in production)
     if (process.env.NODE_ENV === "development") {
@@ -805,6 +812,11 @@ export class Game {
     const entity = this.playerEntity;
     const activeCompanions = this.buildActiveCompanions();
 
+    const saveIndicator = {
+      lastSavedAt: this.persistence.lastSavedAt,
+      saveError: this._saveError,
+    };
+
     if (entity === null) {
       return {
         oxygenPercent: null,
@@ -818,6 +830,7 @@ export class Game {
         inventoryFull: this.gatheringSystem.isInventoryFull(),
         insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
         activeCompanions,
+        ...saveIndicator,
       };
     }
 
@@ -838,6 +851,7 @@ export class Game {
       insufficientYarn: this.catPlacementSystem.getInsufficientYarn(),
       activeCompanions,
       playerPosition: transform ? { x: transform.x, y: transform.y, z: transform.z } : null,
+      ...saveIndicator,
     };
   }
 

@@ -44,6 +44,12 @@ export class HUD {
   private activeCatPanel: HTMLElement | null = null;
   private activeCatListEl: HTMLElement | null = null;
 
+  // Save indicator (top-right corner)
+  private saveIndicatorEl: HTMLElement | null = null;
+  private _saveIndicatorTimer: ReturnType<typeof setTimeout> | null = null;
+  private _lastSavedAtSeen: number | null = null;
+  private _saveErrorSeen: string | null = null;
+
   /** Rolling window for FPS calculation (~1 second at 60 fps). */
   private readonly frameTimes: number[] = [];
   private static readonly FPS_WINDOW = 60;
@@ -78,6 +84,7 @@ export class HUD {
     this.buildCatBar(container);
     this.buildInventoryPanel(container);
     this.buildActiveCatBar(container);
+    this.buildSaveIndicator(container);
     if (process.env.NODE_ENV === "development") {
       this.buildFps(container);
     }
@@ -128,7 +135,37 @@ export class HUD {
     this.renderCatSlots();
   }
 
+  /**
+   * Drive the save indicator from Persistence state each frame.
+   * Shows a success icon for 2 s when lastSavedAt changes; an error icon for
+   * 5 s when saveError becomes non-null (and clears once the timeout fires).
+   */
+  setSaveIndicator(
+    lastSavedAt: number | null | undefined,
+    saveError: string | null | undefined,
+  ): void {
+    if (!this.saveIndicatorEl) return;
+
+    // Error takes priority over success.
+    const err = saveError ?? null;
+    if (err !== null && err !== this._saveErrorSeen) {
+      this._saveErrorSeen = err;
+      this._showSaveIndicator("error", err);
+      return;
+    }
+
+    const ts = lastSavedAt ?? null;
+    if (ts !== null && ts !== this._lastSavedAtSeen) {
+      this._lastSavedAtSeen = ts;
+      this._showSaveIndicator("saved", null);
+    }
+  }
+
   dispose(): void {
+    if (this._saveIndicatorTimer !== null) {
+      clearTimeout(this._saveIndicatorTimer);
+      this._saveIndicatorTimer = null;
+    }
     this.heartsEl = null;
     this.oxygenPanel = null;
     this.oxygenBar = null;
@@ -147,6 +184,7 @@ export class HUD {
     this.inventoryFullEl = null;
     this.activeCatPanel = null;
     this.activeCatListEl = null;
+    this.saveIndicatorEl = null;
     this.fpsEl = null;
     this.frameTimes.length = 0;
   }
@@ -677,6 +715,55 @@ export class HUD {
     }
 
     if (hint) hint.style.display = "block";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Save indicator (top-right corner)
+  // ---------------------------------------------------------------------------
+
+  private buildSaveIndicator(container: HTMLElement): void {
+    const el = document.createElement("div");
+    // Positioned below the FPS counter to avoid overlap in dev builds.
+    el.style.cssText =
+      "position:absolute;top:38px;right:8px;" +
+      "font-family:monospace;font-size:13px;" +
+      "color:rgba(255,255,255,0.9);background:rgba(0,0,0,0.5);" +
+      "padding:2px 7px;border-radius:3px;" +
+      "pointer-events:none;user-select:none;" +
+      "opacity:0;transition:opacity 0.3s;";
+    this.saveIndicatorEl = el;
+    container.appendChild(el);
+  }
+
+  private _showSaveIndicator(variant: "saved" | "error", errorMsg: string | null): void {
+    const el = this.saveIndicatorEl;
+    if (!el) return;
+
+    if (this._saveIndicatorTimer !== null) {
+      clearTimeout(this._saveIndicatorTimer);
+      this._saveIndicatorTimer = null;
+    }
+
+    if (variant === "error") {
+      el.textContent = "💾 ✕";
+      el.style.color = "#fc8181";
+      el.title = errorMsg ?? "Save failed";
+      el.style.opacity = "1";
+      this._saveIndicatorTimer = setTimeout(() => {
+        if (this.saveIndicatorEl) this.saveIndicatorEl.style.opacity = "0";
+        this._saveIndicatorTimer = null;
+        this._saveErrorSeen = null;
+      }, 5000);
+    } else {
+      el.textContent = "💾";
+      el.style.color = "rgba(255,255,255,0.9)";
+      el.title = "";
+      el.style.opacity = "1";
+      this._saveIndicatorTimer = setTimeout(() => {
+        if (this.saveIndicatorEl) this.saveIndicatorEl.style.opacity = "0";
+        this._saveIndicatorTimer = null;
+      }, 2000);
+    }
   }
 
   private setCatBar(yarn: number, selectedCatType: CatType | null): void {
