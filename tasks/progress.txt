@@ -65,6 +65,10 @@
   - CuriositySystem needs SceneManager access (injected) to call setMeshOpacity() — this is the only system besides CatPlacementSystem that holds a SceneManager ref
   - Hidden terrain's Renderable is created normally by MapManager (opacity:0); RenderSystem registers it as a mesh. CuriositySystem then calls setMeshOpacity(handle, 1) using the sceneHandle stored by RenderSystem. This means reveal only works after the first RenderSystem frame — not a problem in practice since the cat is placed by the user.
   - Collider collisionMask is mutable on the component object; CuriositySystem toggles mask 0↔1 directly without destroying/recreating the entity
+- For Next.js route handler tests (Vitest): mock `server-only`, `~/env`, `~/server/db`, and `@workos-inc/authkit-nextjs` via vi.mock before imports; use vi.mocked() for typed access to mock fns
+- `import type { x } from "server-only-module"` (type-only imports) does NOT trigger the server-only guard — safe in shared helper type signatures
+- navigator.sendBeacon test pattern: vi.stubGlobal("window", {addEventListener, removeEventListener}) + vi.stubGlobal("navigator", {sendBeacon: vi.fn()}); clean up with vi.unstubAllGlobals() in afterEach
+
 ---
 
 ## 2026-05-05 - US-201
@@ -102,6 +106,19 @@
   - migrateIfNeeded handles both { version, saveData: content } (tRPC getSave shape) and { version, ...content } (flat) by checking for raw["saveData"]
   - The active MIGRATIONS chain is empty at CURRENT_VERSION 0.1; migration_0_1_to_0_2 is exported but not in the chain yet -- add it when bumping to 0.2
   - GameTrpcAdapter in Game.ts was using Record<string, unknown> for saveData -- now uses SaveData from state/SaveData.ts; Game.ts placeholder auto-save was removed
+---
+
+## 2026-05-05 - US-204
+- Created src/server/game/upsertGameSave.ts: shared Drizzle upsert helper (db, userId, version, saveData)
+- Updated src/server/api/routers/game.ts: upsertSave mutation now delegates to upsertGameSave
+- Created src/app/api/game/beacon-save/route.ts: POST handler with withAuth session check, Zod validation (beaconBodySchema), calls upsertGameSave; returns 401/400/500 on failure paths
+- Updated src/game/state/Persistence.ts: added setupBeforeUnload() + _beforeUnloadHandler cleanup in dispose()
+- 10 new tests: 5 beacon route (401/400-json/400-zod/200/500), 5 beforeunload (register/unregister/fires/graceful-fallback/no-remove-if-not-setup); 232 total pass
+- All checks pass: pnpm test && pnpm lint && pnpm typecheck && pnpm build
+- **Learnings for future iterations:**
+  - For Next.js route handler tests: mock `server-only`, `~/env`, `~/server/db`, and auth provider; then import route under test — vi.mock hoisting ensures mocks are in place
+  - `import type` from a `server-only` module is safe in shared helpers (type imports don't run module code)
+  - Persistence._beforeUnloadHandler is null until setupBeforeUnload() is called; dispose() guards with null check so it's safe to call before setup
 ---
 
 ## 2026-05-05 - US-203
