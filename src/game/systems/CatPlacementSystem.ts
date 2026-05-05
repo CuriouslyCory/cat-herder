@@ -8,6 +8,7 @@ import type { CatCompanionManager } from "../cats/CatCompanionManager";
 import type { MapManager } from "../maps/MapManager";
 import type { Transform } from "../ecs/components/Transform";
 import { CAT_REGISTRY } from "../cats/definitions";
+import { getCatHalfHeight } from "../cats/CatCompanionManager";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -170,10 +171,16 @@ export class CatPlacementSystem {
       );
     }
 
-    // Snap ghost Y to terrain surface when valid; keep mouse hit Y otherwise.
-    const y = isValid
+    // Position the ghost so its bottom face rests on the surface under the
+    // cursor — mirrors how CatCompanionManager.summon() places the actual cat.
+    // Without the +halfHeight offset, the box mesh is centered on the terrain
+    // (half-buried), making the ghost appear half as tall as the placed cat.
+    const def = CAT_REGISTRY.get(this.selectedCatType);
+    const halfHeight = def ? getCatHalfHeight(def) : 0;
+    const surfaceY = isValid
       ? this.mapManager.getHeightAt(mousePos.x, mousePos.z)
       : mousePos.y;
+    const y = surfaceY + halfHeight;
 
     this.sceneManager.updateTransform(
       this.ghostHandle,

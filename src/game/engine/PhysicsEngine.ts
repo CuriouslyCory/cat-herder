@@ -13,8 +13,14 @@ export type BodyHandle = symbol;
 export interface BodyConfig {
   /** Circle (capsule in 2D XZ) or box for terrain/walls. */
   shape: "circle" | "box";
-  /** Radius for circle; half-extent (uniform on all axes) for box. */
+  /** Radius for circle; uniform half-extent for box (used when halfExtents is omitted). */
   size: number;
+  /**
+   * For shape === "box": optional per-axis half-extents. When provided, this
+   * overrides `size` for box collision math (rayBox, resolveCircleBox, overlapsXZ).
+   * Required for non-cubic colliders such as the Loaf cat (1.2 × 1.5 × 1.2).
+   */
+  halfExtents?: Vec3;
   /** Static bodies are never moved by the solver. */
   isStatic: boolean;
   /** Trigger bodies detect overlap but produce no physics response. */
@@ -62,8 +68,8 @@ interface PhysicsBody {
  * of the ECS World. The MovementSystem is responsible for syncing ECS
  * Transform/Velocity components with body state via the accessor methods.
  *
- * Frame order: InputManager.poll() → MovementSystem (sets velocity) →
- *              PhysicsEngine.step() → CollisionSystem → RenderSystem
+ * Frame order: MovementSystem (sets velocity) → PhysicsEngine.step() →
+ *              CollisionSystem → RenderSystem → InputManager.poll() (end of frame)
  */
 export class PhysicsEngine {
   private readonly bodies = new Map<BodyHandle, PhysicsBody>();
@@ -192,6 +198,18 @@ export class PhysicsEngine {
     this.detectTriggerOverlaps();
   }
 
+  /**
+   * Returns the per-axis half-extents for a box body.
+   * Falls back to a uniform cube of `size` when `halfExtents` is omitted.
+   * Caller is responsible for ensuring the body is shape === "box".
+   */
+  private static boxHalf(body: PhysicsBody): Vec3 {
+    const he = body.config.halfExtents;
+    if (he) return he;
+    const s = body.config.size;
+    return { x: s, y: s, z: s };
+  }
+
   // ---------------------------------------------------------------------------
   // Private — integration
   // ---------------------------------------------------------------------------
@@ -309,20 +327,24 @@ export class PhysicsEngine {
    * Push a circle body out of a box body (XZ plane).
    * Finds the closest point on the box surface and pushes the circle center
    * away — this produces the wall-sliding effect.
+   *
+   * Uses per-axis half-extents (boxHalf.x / boxHalf.z) so non-cubic colliders
+   * such as the Loaf cat are resolved against their actual XZ footprint, not
+   * an inflated uniform-cube approximation.
    */
   private resolveCircleBox(
     radius: number,
     other: PhysicsBody,
     newPos: Vec3,
   ): void {
-    const hs = other.config.size;
+    const half = PhysicsEngine.boxHalf(other);
     const nearX = Math.max(
-      other.position.x - hs,
-      Math.min(newPos.x, other.position.x + hs),
+      other.position.x - half.x,
+      Math.min(newPos.x, other.position.x + half.x),
     );
     const nearZ = Math.max(
-      other.position.z - hs,
-      Math.min(newPos.z, other.position.z + hs),
+      other.position.z - half.z,
+      Math.min(newPos.z, other.position.z + half.z),
     );
     const dx = newPos.x - nearX;
     const dz = newPos.z - nearZ;
@@ -335,7 +357,7 @@ export class PhysicsEngine {
         newPos.z += dz * push;
       } else {
         // Origin exactly on box surface — push out on X as fallback
-        newPos.x = other.position.x + hs + radius;
+        newPos.x = other.position.x + half.x + radius;
       }
     }
   }
@@ -393,12 +415,20 @@ export class PhysicsEngine {
       const minDist = a.config.size + b.config.size;
       return dx * dx + dz * dz < minDist * minDist;
     }
-    // For box or mixed, use AABB footprint
-    const ahs = a.config.shape === "circle" ? a.config.size : a.config.size;
-    const bhs = b.config.shape === "circle" ? b.config.size : b.config.size;
+    // For box or mixed: use AABB-style footprint with per-axis half-extents.
+    // (Treats circles as their bounding square in XZ — a slight overshoot at
+    // corners but matches existing behavior and is cheap.)
+    const aHalfX =
+      a.config.shape === "box" ? PhysicsEngine.boxHalf(a).x : a.config.size;
+    const aHalfZ =
+      a.config.shape === "box" ? PhysicsEngine.boxHalf(a).z : a.config.size;
+    const bHalfX =
+      b.config.shape === "box" ? PhysicsEngine.boxHalf(b).x : b.config.size;
+    const bHalfZ =
+      b.config.shape === "box" ? PhysicsEngine.boxHalf(b).z : b.config.size;
     return (
-      Math.abs(a.position.x - b.position.x) < ahs + bhs &&
-      Math.abs(a.position.z - b.position.z) < ahs + bhs
+      Math.abs(a.position.x - b.position.x) < aHalfX + bHalfX &&
+      Math.abs(a.position.z - b.position.z) < aHalfZ + bHalfZ
     );
   }
 
@@ -447,7 +477,7 @@ export class PhysicsEngine {
     maxDist: number,
     body: PhysicsBody,
   ): RaycastHit | null {
-    const hs = body.config.size;
+    const half = PhysicsEngine.boxHalf(body);
     const axes = ["x", "y", "z"] as const;
     let tmin = 0;
     let tmax = maxDist;
@@ -455,8 +485,8 @@ export class PhysicsEngine {
 
     for (const axis of axes) {
       const d = dir[axis];
-      const bmin = body.position[axis] - hs;
-      const bmax = body.position[axis] + hs;
+      const bmin = body.position[axis] - half[axis];
+      const bmax = body.position[axis] + half[axis];
 
       if (Math.abs(d) < 1e-10) {
         // Ray parallel to this slab — miss if origin is outside

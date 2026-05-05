@@ -14,7 +14,7 @@ import { runtimeConfig } from "../config";
  * MovementSystem — walk, jump, coyote time, and jump buffer.
  *
  * Frame position in the loop:
- *   InputManager.poll() → **MovementSystem** → PhysicsEngine.step() → …
+ *   **MovementSystem** → PhysicsEngine.step() → … → InputManager.poll() (end of frame)
  *
  * Responsibilities per frame:
  *  1. Sync ECS Transform from the physics body (result of the previous frame's step).

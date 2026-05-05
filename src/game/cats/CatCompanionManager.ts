@@ -142,10 +142,17 @@ export class CatCompanionManager {
 
     // Terrain and launch cats need a PhysicsEngine static body so the player can
     // land on top of them via the downward ground-detection raycast.
+    //
+    // Cats are rarely cubic (Loaf is 1.2×1.5×1.2, Pounce is 1.8×0.5×1.8), so we
+    // pass per-axis halfExtents to the physics body. `size` is kept for back-compat
+    // and is set to the largest XZ half-extent so any code path that still falls
+    // back to it gets a reasonable footprint.
     if (def.effectType === "terrain" || def.effectType === "launch") {
+      const half = getCatHalfExtents(def);
       const handle = this.physics.addBody(entity, {
         shape: "box",
-        size: halfHeight,
+        size: Math.max(half.x, half.z),
+        halfExtents: half,
         isStatic: true,
         isTrigger: false,
         collisionLayer: 1,
@@ -368,11 +375,14 @@ export class CatCompanionManager {
  * Returns the half-height (Y half-extent) of a cat's mesh so the entity can be
  * placed with its bottom face sitting on the terrain surface.
  *
+ * Exported so CatPlacementSystem can position the ghost preview identically to
+ * the eventual placed cat (otherwise the ghost appears half-buried in terrain).
+ *
  * - box:      dims[1] / 2  (height is the second dimension)
  * - cylinder: (dims[2] ?? size) / 2  (height is the third dimension)
  * - sphere:   size  (radius = half-height of the sphere)
  */
-function getCatHalfHeight(def: CatDefinition): number {
+export function getCatHalfHeight(def: CatDefinition): number {
   const { geometry, dims, size = 0.5 } = def.meshConfig;
   if (dims) {
     if (geometry === "box") return dims[1] / 2;
@@ -394,4 +404,30 @@ function getXZHalfExtent(def: CatDefinition): number {
   // For box/cylinder, use the larger of X/Z dims as the footprint half-extent.
   if (dims) return Math.max(dims[0], dims[2] ?? dims[0]) / 2;
   return size;
+}
+
+/**
+ * Returns per-axis half-extents (Vec3) for a cat's PhysicsEngine box body.
+ *
+ * Prefers explicit colliderWidth/Height/Depth from behavior.params (set by
+ * cat definitions like Loaf), falling back to the mesh dims, then to `size`.
+ *
+ * Without this, the PhysicsEngine box collider would be a uniform cube of
+ * side `size`, producing the wrong footprint for non-cubic cats:
+ *   - Loaf (1.2 × 1.5 × 1.2): cube of 1.5 → too wide on X/Z
+ *   - Pounce (1.8 × 0.5 × 1.8): cube of 0.5 → too narrow on X/Z
+ */
+function getCatHalfExtents(def: CatDefinition): Vec3 {
+  const params = def.behavior.params ?? {};
+  const { dims, size = 0.5 } = def.meshConfig;
+
+  const widthParam = typeof params.colliderWidth === "number" ? params.colliderWidth : null;
+  const heightParam = typeof params.colliderHeight === "number" ? params.colliderHeight : null;
+  const depthParam = typeof params.colliderDepth === "number" ? params.colliderDepth : null;
+
+  const width = widthParam ?? dims?.[0] ?? size * 2;
+  const height = heightParam ?? dims?.[1] ?? size * 2;
+  const depth = depthParam ?? dims?.[2] ?? width;
+
+  return { x: width / 2, y: height / 2, z: depth / 2 };
 }

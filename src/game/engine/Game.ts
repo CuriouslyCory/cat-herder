@@ -100,9 +100,13 @@ const MAX_ACCUMULATOR = 0.1; // 100ms ≈ 6 missed frames
  *   Systems → CameraController → MapManager → UIManager
  *
  * Frame order:
- *   InputManager.poll() → MovementSystem → PhysicsEngine.step() →
- *   CollisionSystem → CameraController.update() → RenderSystem →
- *   UIManager.update() → SceneManager.render()
+ *   MovementSystem → PhysicsEngine.step() → CollisionSystem →
+ *   CameraController.update() → RenderSystem → UIManager.update() →
+ *   SceneManager.render() → InputManager.poll()
+ *
+ * InputManager.poll() runs at the END of the frame so that keydown/mousedown
+ * events that fire between frames are observed by next frame's systems before
+ * the per-frame "pressed" state is cleared.
  */
 export class Game {
   // ── Core modules ────────────────────────────────────────────────────────────
@@ -266,6 +270,38 @@ export class Game {
 
     // Spawn player entity (first time — no existing entity, so map spawn is used)
     this.spawnPlayer(this.opts.character);
+
+    // Expose debug bridge for E2E test automation (stripped in production builds)
+    if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
+      (window as unknown as Record<string, unknown>).__catHerderDebug = {
+        world: this.world,
+        gameState: this.gameState,
+        eventBus: this.eventBus,
+        physicsEngine: this.physics,
+        getPlayerEntity: () => this.playerEntity,
+        getActiveCats: () =>
+          this.catCompanionManager.getActiveCompanions().map((e) => ({
+            entity: e,
+            behavior: this.world.getComponent(e, "CatBehavior"),
+          })),
+        tick: (n: number) => {
+          const FIXED_DT = 1 / 60;
+          for (let i = 0; i < n; i++) {
+            this.movementSystem.update(this.world, FIXED_DT);
+            this.physics.step(FIXED_DT);
+            this.collisionSystem.update(this.world, FIXED_DT);
+            this.waterSystem.update(this.world, FIXED_DT);
+            this.oxygenSystem.update(this.world, FIXED_DT);
+            this.catAISystem.update(this.world, FIXED_DT);
+            this.zoomiesSystem.update(this.world, FIXED_DT);
+            this.curiositySystem.update(this.world, FIXED_DT);
+            this.pounceSystem.update(this.world, FIXED_DT);
+            this.gatheringSystem.update(this.world, FIXED_DT);
+            this.yarnPickupSystem.update(this.world, FIXED_DT);
+          }
+        },
+      };
+    }
 
     // Begin the render loop
     this.rafId = requestAnimationFrame((t) => this.loop(t));
@@ -524,9 +560,6 @@ export class Game {
     const realDt = Math.min((time - this.lastTime) / 1000, MAX_ACCUMULATOR);
     this.lastTime = time;
 
-    // ── Input (once per render frame, before any physics ticks) ───────────────
-    this.inputManager.poll();
-
     // ── Fixed-timestep physics (may run 0, 1, or rarely 2 ticks per frame) ────
     this.accumulator += realDt;
     while (this.accumulator >= FIXED_DT) {
@@ -559,6 +592,12 @@ export class Game {
     this.renderSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
     this.sceneManager.render();
+
+    // ── Input bookkeeping (end of frame) ───────────────────────────────────────
+    // Clear single-frame "pressed" state AFTER systems have had a chance to read
+    // it. Keydown/mousedown events that fire between frames populate pressedThisFrame
+    // and are then observed by next frame's systems before this clear runs.
+    this.inputManager.poll();
 
     // ── Auto-save (every CONFIG.autoSaveIntervalMs milliseconds) ───────────────
     this.saveTimer += realDt * 1000; // accumulate in ms

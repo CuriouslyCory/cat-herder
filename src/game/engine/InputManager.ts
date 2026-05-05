@@ -12,8 +12,13 @@ import type { SceneManager } from "./SceneManager";
  * Listeners are scoped to the canvas element so they never fire while the
  * player is interacting with DOM UI (React overlays, menus, etc.).
  *
- * Call poll() once per frame BEFORE any system reads input — it flushes the
- * single-frame "pressed" state.
+ * Call poll() once per frame at the END of the frame, AFTER all systems have
+ * read input — it flushes the single-frame "pressed" state so it does not
+ * leak into subsequent frames.
+ *
+ * Why end-of-frame: DOM keydown/mousedown events fire between RAF callbacks,
+ * so they populate pressedThisFrame *before* the next RAF runs. Clearing at
+ * the start of the frame would drop those events before any system sees them.
  */
 export class InputManager {
   private readonly canvas: HTMLCanvasElement;
@@ -120,8 +125,9 @@ export class InputManager {
   // ---------------------------------------------------------------------------
 
   /**
-   * Call once per frame, before systems read input.
-   * Clears the single-frame "pressed" state so isActionPressed() resets each frame.
+   * Call once per frame at the END of the frame, after all systems have read
+   * input. Clears the single-frame "pressed" state so it doesn't leak into the
+   * next frame. See class docstring for why this must run end-of-frame.
    */
   poll(): void {
     this.pressedThisFrame.clear();
