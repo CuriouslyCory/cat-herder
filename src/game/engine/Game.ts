@@ -23,6 +23,7 @@ import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
 import { CAT_REGISTRY } from "../cats/definitions";
 import { UIManager } from "../ui/UIManager";
+import { DebugMenu } from "../ui/DebugMenu";
 import { TestMap } from "../maps/TestMap";
 import { CONFIG, runtimeConfig } from "../config";
 import { Persistence } from "../state/Persistence";
@@ -147,6 +148,9 @@ export class Game {
   // ── Persistence ──────────────────────────────────────────────────────────────
   private readonly persistence: Persistence;
 
+  // ── Debug (dev-only, null in production) ─────────────────────────────────────
+  private debugMenu: DebugMenu | null = null;
+
   // ── Resource node ID lookup (nodeId → entity) for cooldown restoration ───────
   private readonly _nodeIdMap = new Map<string, Entity>();
 
@@ -260,6 +264,23 @@ export class Game {
 
     // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
+
+    // 15. DebugMenu — dev-only overlay (null in production)
+    if (process.env.NODE_ENV === "development") {
+      this.debugMenu = new DebugMenu(
+        canvas,
+        this.gameState,
+        this.eventBus,
+        runtimeConfig,
+        this.world,
+        (x, z) => {
+          const entity = this.playerEntity;
+          if (entity === null) return;
+          const handle = this.physics.getHandleByEntity(entity);
+          if (handle) this.physics.setPosition(handle, { x, y: 1, z });
+        },
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -386,6 +407,7 @@ export class Game {
    */
   destroy(): void {
     this.pause();
+    this.debugMenu?.dispose();
     this.persistence.dispose();
     this.cameraController.dispose();
     this.inputManager.dispose();
