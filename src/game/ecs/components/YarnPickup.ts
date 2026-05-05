@@ -11,5 +11,8 @@ export interface YarnPickup extends Component {
 }
 
 export function createYarnPickup(amount: number): YarnPickup {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new RangeError(`YarnPickup amount must be a finite positive number, got ${amount}`);
+  }
   return { type: "YarnPickup", amount };
 }

@@ -110,7 +110,10 @@ export class CatCompanionManager {
     }
 
     // 4. Deduct yarn and build the entity
-    this.gameState.deductYarn(def.yarnCost);
+    if (!this.gameState.deductYarn(def.yarnCost)) {
+      console.warn(`[CatCompanionManager] Failed to deduct yarn for ${catType}`);
+      return null;
+    }
 
     const terrainY = this.mapManager.getHeightAt(position.x, position.z);
     const physicsY = this.physics.getHighestSurfaceY(position.x, position.z);
@@ -344,7 +347,8 @@ export class CatCompanionManager {
     // Trail center: start at catPos, extend halfLength units in trail direction.
     const trailCenterX = catPos.x + dirX * halfLength;
     const trailCenterZ = catPos.z + dirZ * halfLength;
-    const trailCenterY = 0.5; // center of 1 u tall trail, resting on floor
+    const trailSurfaceY = this.mapManager.getHeightAt(trailCenterX, trailCenterZ);
+    const trailCenterY = trailSurfaceY + 0.5;
     // Rotate the box so its local Z axis aligns with the trail direction.
     const rotationY = Math.atan2(dirX, dirZ);
 

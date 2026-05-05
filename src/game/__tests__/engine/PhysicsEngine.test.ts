@@ -106,6 +106,28 @@ describe("PhysicsEngine", () => {
       expect(vel.y).toBe(0);
     });
 
+    it("does not ground noGravity bodies via the flat-floor fallback", () => {
+      const handle = physics.addBody(1, {
+        shape: "circle",
+        size: 0.4,
+        isStatic: false,
+        isTrigger: false,
+        collisionLayer: 1,
+        collisionMask: 1,
+      });
+      physics.setPosition(handle, { x: 0, y: 0.2, z: 0 });
+      physics.setVelocity(handle, { x: 0, y: -1, z: 0 });
+      physics.setGravityEnabled(handle, false);
+
+      physics.step(1 / 60);
+
+      expect(physics.isBodyGrounded(handle)).toBe(false);
+      const pos = physics.getPosition(handle)!;
+      expect(pos.y).toBeLessThan(0.4);
+      const vel = physics.getVelocity(handle)!;
+      expect(vel.y).toBe(-1);
+    });
+
     it("grounds bodies at y=0 floor", () => {
       const handle = physics.addBody(1, {
         shape: "circle",
