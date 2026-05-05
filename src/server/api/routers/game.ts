@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { characters, gameSaves, debugOverrides } from "~/server/db/schema";
+import { saveDataSchema } from "~/game/state/SaveData";
 
 export const gameRouter = createTRPCRouter({
   getCharacter: protectedProcedure.query(async ({ ctx }) => {
@@ -53,7 +54,7 @@ export const gameRouter = createTRPCRouter({
     .input(
       z.object({
         version: z.string(),
-        saveData: z.record(z.string(), z.unknown()),
+        saveData: saveDataSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {

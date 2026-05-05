@@ -1,5 +1,6 @@
 import { EventBus } from "./EventBus";
 import { SceneManager } from "./SceneManager";
+import type { SaveData } from "../state/SaveData";
 import { InputManager } from "./InputManager";
 import { PhysicsEngine } from "./PhysicsEngine";
 import { GameState } from "./GameState";
@@ -62,7 +63,7 @@ export interface PlayerCharacterConfig {
 export interface GameTrpcAdapter {
   upsertSave(input: {
     version: string;
-    saveData: Record<string, unknown>;
+    saveData: SaveData;
   }): Promise<void>;
 }
 
@@ -144,9 +145,6 @@ export class Game {
 
   // ── Player entity ────────────────────────────────────────────────────────────
   private playerEntity: Entity | null = null;
-
-  // ── Auto-save ────────────────────────────────────────────────────────────────
-  private saveTimer = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -622,12 +620,6 @@ export class Game {
     // and are then observed by next frame's systems before this clear runs.
     this.inputManager.poll();
 
-    // ── Auto-save (every CONFIG.autoSaveIntervalMs milliseconds) ───────────────
-    this.saveTimer += realDt * 1000; // accumulate in ms
-    if (this.saveTimer >= CONFIG.autoSaveIntervalMs) {
-      this.saveTimer = 0;
-      this.triggerAutoSave();
-    }
   }
 
   /**
@@ -693,19 +685,4 @@ export class Game {
     };
   }
 
-  private triggerAutoSave(): void {
-    if (!this.playerEntity) return;
-
-    const transform = this.world.getComponent<Transform>(
-      this.playerEntity,
-      "Transform",
-    );
-
-    void this.opts.trpc.upsertSave({
-      version: "0.1",
-      saveData: transform
-        ? { player: { x: transform.x, y: transform.y, z: transform.z } }
-        : {},
-    });
-  }
 }
