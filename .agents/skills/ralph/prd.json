@@ -58,7 +58,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "GameState already exists at src/game/engine/GameState.ts with yarn + inventory tracking. EXTEND it -- do not create a new file at src/game/state/. Keep all existing methods working."
     },
     {

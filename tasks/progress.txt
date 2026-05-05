@@ -66,3 +66,19 @@
   - Hidden terrain's Renderable is created normally by MapManager (opacity:0); RenderSystem registers it as a mesh. CuriositySystem then calls setMeshOpacity(handle, 1) using the sceneHandle stored by RenderSystem. This means reveal only works after the first RenderSystem frame — not a problem in practice since the cat is placed by the user.
   - Collider collisionMask is mutable on the component object; CuriositySystem toggles mask 0↔1 directly without destroying/recreating the entity
 ---
+
+## 2026-05-05 - US-201
+- Extended GameState with path-based API: get<T>(path), set<T>(path, value), onChange<T>(path, callback), serialize(), restore()
+- Added internal InternalState object with player/world/session sub-objects; session excluded from serialize()
+- Preserved all existing methods (addYarn, deductYarn, onYarnChange, addResource, hasInventorySpace, onInventoryChange) as wrappers
+- Added isDirty / clearDirty() for auto-save tracking
+- Added validation in set() for player.yarn (>=0), player.stats.health (0..maxHealth), player.stats.level (0-10 integer), player.stats.maxHealth (>0)
+- restore() snapshots old values before hydrating, then fires all registered path listeners with correct (newVal, oldVal)
+- Files changed: src/game/engine/GameState.ts, src/game/__tests__/engine/GameState.test.ts
+- All 167 tests pass; pnpm typecheck/lint/build all clean
+- **Learnings for future iterations:**
+  - TypeScript won't allow `this._state as Record<string,unknown>` directly — must go through `unknown` first: `as unknown as Record<string,unknown>`
+  - addResource() must clone the inventory array before mutating (to give set() a new reference and properly trigger onChange callbacks)
+  - onYarnChange/onInventoryChange emit immediately (existing contract) — the path-based onChange() does NOT emit immediately; wrappers call listener(currentVal) before registering
+  - SaveData interface lives in GameState.ts for US-201; US-202 will formalize it in src/game/state/SaveData.ts with Zod validation
+---
