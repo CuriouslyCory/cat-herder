@@ -161,3 +161,23 @@
   - GatheringSystem handles resource node visual dimming only when gathering completes; restored cooldowns won't appear dim visually on first load (cosmetic only, gameplay is correct)
   - startFresh() is synchronous — no async needed since it bypasses Persistence.load()
 ---
+
+## 2026-05-05 - US-206
+- Created src/game/ui/DebugMenu.ts: tabbed debug overlay panel (dev builds only)
+- Added `debug:value-changed` event to GameEvent discriminated union in types.ts
+- Panel: rgba(0,0,0,0.85) centered overlay, high z-index, Ctrl+D toggle, does not pause game loop
+- Tab bar: Player (active) | Cats | World | Session — last three show "coming in US-20X" placeholder
+- Player tab controls: level (number 0-10), health (range 0-maxHealth), yarn (number 0-99), teleport (X/Z inputs + Go button), speed multiplier (range 0.5x-3.0x), god mode (checkbox)
+- All Player-tab mutations route through GameState.set() or runtimeCfg.walkSpeed mutation
+- applyTeleport() accepts optional teleportPlayer callback (passed from Game.ts) for proper physics teleport
+- debugState { godMode, speedMultiplier } lives only on DebugMenu — never touches GameState.serialize()
+- Game.ts: added DebugMenu as a non-readonly private field, wired in constructor (step 15, dev-only) with physics teleport closure; dispose() called in destroy()
+- 27 new tests in src/game/__tests__/engine/DebugMenu.test.ts — DOM stubbed via vi.stubGlobal, NODE_ENV via vi.stubEnv
+- All 274 tests pass; pnpm lint, typecheck, build all clean
+- **Learnings for future iterations:**
+  - `readonly` field assigned conditionally after `= null` initializer can't be re-assigned via a cast — remove `readonly` and assign directly in the `if` block
+  - Tests stub document/window with vi.stubGlobal since node env has no DOM; vi.stubEnv('NODE_ENV', 'development') enables the dev-only constructor path in tests
+  - DebugMenu exposes `apply*()` public methods so tests (and keyboard handlers alike) call the same logic — no duplication between DOM event handlers and direct test calls
+  - debugState (godMode, speedMultiplier) stores debug-only overrides; runtimeConfig.walkSpeed is mutated directly (MovementSystem reads runtimeConfig, not CONFIG)
+  - _baseWalkSpeed captured from CONFIG.walkSpeed at construction time so multiplier math is always relative to the canonical value
+---

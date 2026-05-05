@@ -162,7 +162,7 @@
         "Verify in browser using dev-browser skill: Ctrl+D opens menu, change player stats, confirm changes apply in-game."
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "This story creates the DebugMenu framework (panel, tabs, toggle) AND the Player tab. Other tabs are placeholders -- US-207/208/209 fill them in."
     },
     {
