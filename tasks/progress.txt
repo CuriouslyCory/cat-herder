@@ -217,3 +217,19 @@
   - applySpawnResourceNode creates entities directly in World; no SceneManager call needed — RenderSystem auto-registers new Renderable entities
   - MapManagerLike / SceneManagerRef minimal interfaces defined in DebugMenu.ts to avoid importing full engine types into the UI layer
 ---
+
+## 2026-05-05 - US-209
+- Added Session tab to DebugMenu: Force Save, Force Load, Reset All State, Last Saved timestamp, FPS counter, session elapsed time, auto-save toggle
+- Extended GameTrpcAdapter interface with `deleteSave(): Promise<void>`; wired via `api.game.deleteSave.useMutation()` in GameCanvas.tsx
+- Added `Persistence.deleteSave()` delegating to `trpcAdapter.deleteSave()`
+- DebugMenu constructor gains params 11 (`persistence?: PersistenceLike`) and 12 (`onSaveReset?: () => void`)
+- `update()` signature changed to `update(dt?: number)` — stores `_sessionLastDt` for per-frame FPS display; Game.ts now passes `realDt`
+- `applyResetAllState()` calls `window.confirm()`, then `persistence.deleteSave()`, then `onSaveReset()` (which triggers `window.location.reload()` in Game.ts)
+- 14 new tests; 325 total pass; all checks clean
+- Updated existing `makeMockAdapter` in Persistence.test.ts and 4 inline adapters in load-restore.test.ts to include `deleteSave` mock
+- **Learnings for future iterations:**
+  - `PersistenceLike` is a module-private interface in DebugMenu.ts; tests cast mocks as `unknown as Persistence` (structural match is sufficient)
+  - Inner `afterEach` must NOT call `vi.unstubAllGlobals()` if outer `afterEach` still needs `document` — let the outermost cleanup handle global stubs
+  - `vi.fn()` produces `Mock<Procedure | Constructable>` — cast with `as unknown as () => void` when passing as a typed callback parameter
+  - `window.confirm` requires `vi.stubGlobal("window", { confirm: vi.fn(() => true) })` in node test env; main afterEach's `vi.unstubAllGlobals()` handles cleanup
+---
