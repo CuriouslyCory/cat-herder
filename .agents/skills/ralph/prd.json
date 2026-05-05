@@ -76,7 +76,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Create new src/game/state/ directory for SaveData.ts and migrations.ts. The Zod schema must be importable from both client (game engine) and server (gameRouter) -- no browser-only or server-only imports in the schema module."
     },
     {

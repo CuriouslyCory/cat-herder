@@ -82,3 +82,24 @@
   - onYarnChange/onInventoryChange emit immediately (existing contract) — the path-based onChange() does NOT emit immediately; wrappers call listener(currentVal) before registering
   - SaveData interface lives in GameState.ts for US-201; US-202 will formalize it in src/game/state/SaveData.ts with Zod validation
 ---
+
+## 2026-05-05 - US-202
+- Created src/game/state/SaveData.ts: saveDataSchema Zod schema + CURRENT_VERSION = '0.1'
+  - Schema validates { character: { appearance, stats, inventory, position, yarn, oxygen, abilities }, world: { currentMapId, activeCats, resourceNodeCooldowns, hiddenTerrain }, session: { totalPlaytimeMs } }
+  - Uses z.nativeEnum(CatType) and z.nativeEnum(ResourceType) for enum validation
+  - Safe for import from both client game engine and server (no browser/server-only imports)
+- Created src/game/state/migrations.ts: migrateIfNeeded(data: unknown): SaveData + SaveMigrationError
+  - KNOWN_VERSIONS set guards against future/unknown versions (throws with user-facing message)
+  - Handles both wrapped { version, saveData } and flat { version, ...content } input formats
+  - Exported migration_0_1_to_0_2 stub showing the no-op pattern for future migrations
+- Updated src/server/api/routers/game.ts: upsertSave.saveData now validated with saveDataSchema
+- Updated src/game/engine/Game.ts: GameTrpcAdapter.upsertSave now typed with SaveData; removed
+  the broken placeholder triggerAutoSave() (US-203 Persistence will handle auto-save properly)
+- Tests: 21 new tests in src/game/__tests__/engine/SaveData.test.ts; 188 total pass
+- All checks pass: pnpm test && pnpm lint && pnpm typecheck && pnpm build
+- **Learnings for future iterations:**
+  - Empty array literals like `inventory: []` in helper functions infer as `never[]` -- add `as Array<...>` type annotations OR use `const bad: unknown = {...}` for Zod invalid-value tests
+  - migrateIfNeeded handles both { version, saveData: content } (tRPC getSave shape) and { version, ...content } (flat) by checking for raw["saveData"]
+  - The active MIGRATIONS chain is empty at CURRENT_VERSION 0.1; migration_0_1_to_0_2 is exported but not in the chain yet -- add it when bumping to 0.2
+  - GameTrpcAdapter in Game.ts was using Record<string, unknown> for saveData -- now uses SaveData from state/SaveData.ts; Game.ts placeholder auto-save was removed
+---
