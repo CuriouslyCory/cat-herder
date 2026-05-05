@@ -42,18 +42,29 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   const { mutateAsync: upsertSaveMutateAsync } =
     api.game.upsertSave.useMutation();
-
-  // Ref is initialized once; synced after every commit so the game loop always
-  // calls the latest mutateAsync without needing to recreate the stable adapter.
-  const upsertSaveRef = useRef(upsertSaveMutateAsync);
-  useEffect(() => {
-    upsertSaveRef.current = upsertSaveMutateAsync;
+  const { refetch: refetchSave } = api.game.getSave.useQuery(undefined, {
+    enabled: false,
+    staleTime: Infinity,
   });
 
-  // Stable adapter — created once; always delegates to the latest mutateAsync
+  // Refs are initialized once; synced after every commit so the game loop always
+  // calls the latest function without needing to recreate the stable adapter.
+  const upsertSaveRef = useRef(upsertSaveMutateAsync);
+  const refetchSaveRef = useRef(refetchSave);
+  useEffect(() => {
+    upsertSaveRef.current = upsertSaveMutateAsync;
+    refetchSaveRef.current = refetchSave;
+  });
+
+  // Stable adapter — created once; always delegates to the latest functions
   const trpcAdapter = useMemo<GameTrpcAdapter>(
     () => ({
       upsertSave: (input) => upsertSaveRef.current(input),
+      getSave: async () => {
+        const result = await refetchSaveRef.current({ throwOnError: false });
+        if (!result.data) return null;
+        return result.data as { version: string; saveData: Record<string, unknown> };
+      },
     }),
     [], // stable for the lifetime of this component mount
   );

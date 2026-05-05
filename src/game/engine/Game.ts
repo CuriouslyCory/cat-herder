@@ -65,6 +65,7 @@ export interface GameTrpcAdapter {
     version: string;
     saveData: SaveData;
   }): Promise<void>;
+  getSave(): Promise<{ version: string; saveData: Record<string, unknown> } | null>;
 }
 
 export interface GameOpts {
