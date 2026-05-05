@@ -21,17 +21,22 @@ import { VisualEffectsSystem } from "../systems/VisualEffectsSystem";
 import { CameraController } from "./CameraController";
 import { MapManager } from "../maps/MapManager";
 import { CatCompanionManager } from "../cats/CatCompanionManager";
+import { CAT_REGISTRY } from "../cats/definitions";
 import { UIManager } from "../ui/UIManager";
 import { TestMap } from "../maps/TestMap";
 import { CONFIG, runtimeConfig } from "../config";
+import { Persistence } from "../state/Persistence";
+import type { SaveData as ExternalSaveData } from "../state/SaveData";
 import { createTransform } from "../ecs/components/Transform";
 import { createVelocity } from "../ecs/components/Velocity";
 import { createPlayerControlled } from "../ecs/components/PlayerControlled";
 import { createRenderable } from "../ecs/components/Renderable";
 import { createCollider } from "../ecs/components/Collider";
 import { createResourceNode } from "../ecs/components/ResourceNode";
+import type { ResourceNode } from "../ecs/components/ResourceNode";
 import { createYarnPickup } from "../ecs/components/YarnPickup";
 import { CatType, ResourceType } from "../types";
+import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
 import type { OxygenState } from "../ecs/components/OxygenState";
@@ -138,6 +143,12 @@ export class Game {
   private readonly yarnPickupSystem: YarnPickupSystem;
   private readonly renderSystem: RenderSystem;
   private readonly visualEffectsSystem: VisualEffectsSystem;
+
+  // ── Persistence ──────────────────────────────────────────────────────────────
+  private readonly persistence: Persistence;
+
+  // ── Resource node ID lookup (nodeId → entity) for cooldown restoration ───────
+  private readonly _nodeIdMap = new Map<string, Entity>();
 
   // ── Loop state ───────────────────────────────────────────────────────────────
   private rafId: number | null = null;
@@ -246,6 +257,9 @@ export class Game {
     // 13. UIManager — DOM panels over the canvas
     this.uiManager = new UIManager(canvas);
     this.uiManager.setCatCatalog(this.catCompanionManager.getCatalog());
+
+    // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
+    this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
   }
 
   // ---------------------------------------------------------------------------
@@ -253,15 +267,43 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   /**
-   * Load the test map, spawn the player, and start the game loop.
-   * Awaitable so callers can sequence post-start work if needed.
+   * Load the most recent save (if any), restore game state, then start the loop.
+   * Throws if save loading fails — caller should catch and offer retry/start-fresh.
    */
   async start(): Promise<void> {
+    const saveData = await this.persistence.load();
+    this._boot(saveData);
+  }
+
+  /**
+   * Start the game with default state, skipping the save-load step entirely.
+   * Use this when the player explicitly consents to discarding a failed save load.
+   */
+  startFresh(): void {
+    this._boot(null);
+  }
+
+  /**
+   * Core startup: apply optional save data, load the map, spawn entities,
+   * wire persistence, and begin the render loop.
+   */
+  private _boot(saveData: ExternalSaveData | null): void {
+    // Restore game state BEFORE spawning entities so stat/position values are correct.
+    if (saveData) {
+      this.persistence.restoreFromSave(saveData);
+    }
+
     // Load map (creates terrain entities in the ECS world)
     this.mapManager.loadMap(TestMap);
 
     // Populate resource nodes for the test map
     this.spawnTestMapResourceNodes();
+
+    // Apply saved cooldowns to resource nodes (must run after spawnTestMapResourceNodes
+    // so _nodeIdMap is populated).
+    if (saveData?.world.resourceNodeCooldowns.length) {
+      this._applyResourceNodeCooldowns(saveData.world.resourceNodeCooldowns);
+    }
 
     // Spawn yarn pickups (+3 each) scattered around the test map
     this.spawnTestMapYarnPickups();
@@ -274,8 +316,20 @@ export class Game {
       maxZ: TestMap.size.depth / 2,
     });
 
-    // Spawn player entity (first time — no existing entity, so map spawn is used)
-    this.spawnPlayer(this.opts.character);
+    // Determine player spawn position: saved position (from restore) or map spawn.
+    const spawnPos = saveData
+      ? this.gameState.get<Vec3>("player.position")
+      : undefined;
+    this.spawnPlayer(this.opts.character, spawnPos);
+
+    // Re-summon active cats at saved positions (terrain-validated; invalid → silent skip).
+    if (saveData?.world.activeCats.length) {
+      this._restoreActiveCats(saveData.world.activeCats);
+    }
+
+    // Wire persistence: beacon save on tab close, then begin auto-save interval.
+    this.persistence.setupBeforeUnload();
+    this.persistence.startAutoSave(CONFIG.autoSaveIntervalMs);
 
     // Expose debug bridge for E2E test automation (stripped in production builds)
     if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
@@ -332,6 +386,7 @@ export class Game {
    */
   destroy(): void {
     this.pause();
+    this.persistence.dispose();
     this.cameraController.dispose();
     this.inputManager.dispose();
     this.waterSystem.dispose();
@@ -347,11 +402,12 @@ export class Game {
 
   /**
    * Spawn (or re-spawn) the player entity using the given character config.
-   * - First call (no existing entity): places the player at the map spawn point.
+   * - First call (no existing entity): places at positionOverride if provided,
+   *   otherwise at the map's designated spawn point.
    * - Subsequent calls (config update from CharacterCreator): keeps the current
    *   position so the player doesn't teleport during a cosmetic change.
    */
-  spawnPlayer(config?: PlayerCharacterConfig): void {
+  spawnPlayer(config?: PlayerCharacterConfig, positionOverride?: Vec3): void {
     // Determine spawn position
     let spawnX = 0;
     let spawnY = 1;
@@ -373,6 +429,11 @@ export class Game {
       if (oldHandle) this.physics.removeBody(oldHandle);
       this.world.destroyEntity(this.playerEntity);
       this.playerEntity = null;
+    } else if (positionOverride) {
+      // Restored from save — use the saved world position
+      spawnX = positionOverride.x;
+      spawnY = positionOverride.y;
+      spawnZ = positionOverride.z;
     } else {
       // First spawn — use the map's designated player spawn point
       const spawn = this.mapManager.getSpawnPoint("player");
@@ -521,6 +582,9 @@ export class Game {
         entity,
         createResourceNode(type, cfg.gatherTime, cfg.yield, cfg.respawn),
       );
+
+      // Track position-based nodeId so cooldowns can be restored on load.
+      this._nodeIdMap.set(`node_${x}_${z}`, entity);
     }
   }
 
@@ -560,6 +624,50 @@ export class Game {
         }),
       );
       this.world.addComponent(entity, createYarnPickup(YARN_AMOUNT));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — save restore helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Applies saved cooldown values to spawned resource node entities.
+   * Nodes are matched by position-based nodeId (set during spawnTestMapResourceNodes).
+   * Visual dimming is skipped on restore — GatheringSystem handles opacity once gathering occurs.
+   */
+  private _applyResourceNodeCooldowns(
+    cooldowns: Array<{ nodeId: string; cooldownRemaining: number }>,
+  ): void {
+    for (const { nodeId, cooldownRemaining } of cooldowns) {
+      if (cooldownRemaining <= 0) continue;
+      const entity = this._nodeIdMap.get(nodeId);
+      if (entity === undefined) continue;
+      const node = this.world.getComponent<ResourceNode>(entity, "ResourceNode");
+      if (!node) continue;
+      node.cooldownRemaining = cooldownRemaining;
+    }
+  }
+
+  /**
+   * Re-summons active cats from save at their saved positions.
+   * Positions are validated via CatCompanionManager.isValidPosition(); invalid ones are silently skipped.
+   * Yarn is pre-added per cat so summon() can deduct it back — net yarn change = 0.
+   */
+  private _restoreActiveCats(
+    activeCats: Array<{ catType: CatType; position: Vec3 }>,
+  ): void {
+    for (const { catType, position } of activeCats) {
+      const def = CAT_REGISTRY.get(catType);
+      if (!def) continue;
+      if (!this.catCompanionManager.isValidPosition(position)) continue;
+      // Pre-fund yarn so summon()'s yarn check passes; summon() deducts it back.
+      this.gameState.addYarn(def.yarnCost);
+      const entity = this.catCompanionManager.summon(catType, position);
+      if (!entity) {
+        // summon() rejected after position check — undo the pre-added yarn.
+        this.gameState.deductYarn(def.yarnCost);
+      }
     }
   }
 

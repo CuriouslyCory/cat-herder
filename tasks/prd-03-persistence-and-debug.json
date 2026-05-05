@@ -139,7 +139,7 @@
         "Verify in browser using dev-browser skill: load page, confirm loading state appears, game starts with correct state."
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "This story integrates Persistence into the existing GameCanvas lifecycle. The loading/error UI can be simple DOM overlays -- no need for a full React component since GameCanvas manages its own DOM."
     },
     {

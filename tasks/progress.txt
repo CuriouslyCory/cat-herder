@@ -140,3 +140,24 @@
   - GameCanvas.tsx getSave() uses useQuery with enabled:false + refetch — tRPC returns saveData as unknown so cast to Record<string,unknown> is needed
   - vi.useFakeTimers() mocks Date.now() too, so timestamp comparisons in throttle logic work correctly in tests; use vi.advanceTimersByTimeAsync() to run intervals + flush microtasks
 ---
+
+## 2026-05-05 - US-205
+- Integrated Persistence into Game.ts constructor (step 14 in init chain)
+- Refactored start() into start() + startFresh() + private _boot(saveData|null)
+  - start(): loads save (throws on error, caller catches), then calls _boot
+  - startFresh(): bypasses load, calls _boot(null) — used by GameCanvas "Start New Game"
+  - _boot(): restoreFromSave → loadMap → spawnNodes → applyCooldowns → spawnPickups → spawnPlayer → restoreCats → setupBeforeUnload → startAutoSave → render loop
+- spawnPlayer() extended with optional positionOverride: Vec3 (used when restoring from save)
+- spawnTestMapResourceNodes() now tracks nodeId→entity in _nodeIdMap ("node_x_z" format)
+- _applyResourceNodeCooldowns(): applies saved cooldowns to ResourceNode components (no visual dim on restore — cosmetic limitation noted)
+- _restoreActiveCats(): validates position via catManager.isValidPosition(), pre-adds yarn before summon then summon deducts it back (net 0 change)
+- GameCanvas.tsx: added StartState (idle/loading/error/running), awaits game.start(), shows loading overlay, shows error overlay with [Retry] / [Start New Game] buttons
+- 15 new integration tests in src/game/__tests__/integration/load-restore.test.ts: yarn invariant, entity creation, position skip, cooldown application, Persistence.load() pipeline
+- All 247 tests pass; pnpm test && pnpm lint && pnpm typecheck && pnpm build all clean
+- **Learnings for future iterations:**
+  - Cat restore yarn trick: isValidPosition() check first, then addYarn(cost) + summon() (which deducts cost back), then deductYarn(cost) if summon returns null
+  - position-based nodeId ("node_x_z") allows matching entities to save data without modifying ResourceNode component shape
+  - _boot(null) is the correct "start fresh" path — avoids code duplication between start() and startFresh()
+  - GatheringSystem handles resource node visual dimming only when gathering completes; restored cooldowns won't appear dim visually on first load (cosmetic only, gameplay is correct)
+  - startFresh() is synchronous — no async needed since it bypasses Persistence.load()
+---
