@@ -274,7 +274,7 @@ export class Game {
     });
 
     // 15. DebugMenu — dev-only overlay (null in production)
-    if (process.env.NODE_ENV === "development") {
+    if (process.env.NODE_ENV !== "production") {
       this.debugMenu = new DebugMenu(
         canvas,
         this.gameState,

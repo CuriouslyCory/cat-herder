@@ -105,7 +105,7 @@ export class DebugMenu {
     private readonly onSaveReset?: () => void,
   ) {
     this._baseWalkSpeed = CONFIG.walkSpeed;
-    if (process.env.NODE_ENV !== "development") return;
+    if (process.env.NODE_ENV === "production") return;
     this._sessionStartTime = Date.now();
     this._build();
     this._registerKeyboard();
@@ -487,7 +487,7 @@ export class DebugMenu {
     header.style.cssText =
       "padding:10px 14px 6px;border-bottom:1px solid rgba(255,255,255,0.1);" +
       "font-size:11px;letter-spacing:2px;color:rgba(255,255,255,0.5);";
-    header.textContent = "DEBUG MENU  [Ctrl+D to close]";
+    header.textContent = "DEBUG MENU  [Ctrl+D / F9 to close]";
     panel.appendChild(header);
 
     const tabBar = document.createElement("div");
@@ -526,7 +526,8 @@ export class DebugMenu {
     this._buildWorldTab(tabPanels.get("world")!);
     this._buildSessionTab(tabPanels.get("session")!);
 
-    this.container.appendChild(panel);
+    const parent = this.container.parentElement ?? document.body;
+    parent.appendChild(panel);
     this.panel = panel;
 
     // Activate the Player tab by default
@@ -1111,7 +1112,8 @@ export class DebugMenu {
 
   private _registerKeyboard(): void {
     this._keydownHandler = (e: KeyboardEvent) => {
-      if (e.key === "d" && e.ctrlKey) {
+      const key = e.key.toLowerCase();
+      if ((key === "d" && e.ctrlKey) || key === "f9") {
         e.preventDefault();
         this.toggle();
       }
