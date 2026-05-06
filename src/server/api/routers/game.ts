@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { characters, gameSaves, debugOverrides } from "~/server/db/schema";
+import { saveDataSchema } from "~/game/state/SaveData";
+import { upsertGameSave } from "~/server/game/upsertGameSave";
 
 export const gameRouter = createTRPCRouter({
   getCharacter: protectedProcedure.query(async ({ ctx }) => {
@@ -53,24 +55,11 @@ export const gameRouter = createTRPCRouter({
     .input(
       z.object({
         version: z.string(),
-        saveData: z.record(z.string(), z.unknown()),
+        saveData: saveDataSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await ctx.db
-        .insert(gameSaves)
-        .values({
-          userId: ctx.user.id,
-          version: input.version,
-          saveData: input.saveData,
-        })
-        .onConflictDoUpdate({
-          target: gameSaves.userId,
-          set: {
-            version: input.version,
-            saveData: input.saveData,
-          },
-        });
+      await upsertGameSave(ctx.db, ctx.user.id, input.version, input.saveData);
     }),
 
   deleteSave: protectedProcedure.mutation(async ({ ctx }) => {

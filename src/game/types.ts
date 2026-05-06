@@ -71,4 +71,6 @@ export type GameEvent =
   | { type: "cat:summoned"; entity: number; catType: CatType; position: Vec3 }
   | { type: "cat:dismissed"; entity: number; catType: CatType }
   | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] }
-  | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number };
+  | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number }
+  | { type: "save:failed"; error: string }
+  | { type: "debug:value-changed"; key: string; value: unknown };
