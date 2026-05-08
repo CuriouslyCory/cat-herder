@@ -6,17 +6,13 @@ import { TerrainType } from "../types";
 // ---------------------------------------------------------------------------
 // MapEditor — developer-facing map editor, dev builds only.
 //
+// US-301: Base editor (Ctrl+E toggle, free camera, EDITOR MODE banner)
+// US-302a: Terrain tool palette, ghost preview, block placement
+// US-302b: Block selection, property editing (type/height), Delete key removal,
+//          water zone drag-to-define with depth input.
+//
 // Gated by process.env.NODE_ENV === 'production'. Constructor returns early
 // in production, leaving all element refs null and _active always false.
-//
-// Ctrl+E toggles editor mode. Entering pauses the game and switches camera to
-// free mode. Exiting resumes the game and restores follow camera mode.
-//
-// US-302a adds:
-//   - Left-side panel with terrain tool palette (Grass/Dirt/Stone/Water)
-//   - Ghost preview block follows mouse at grid-snapped position
-//   - Left-click places terrain block at snapped world position
-//   - Internal EditorBlock list tracks placed blocks independent of MapManager
 // ---------------------------------------------------------------------------
 
 interface GameLifecycle {
@@ -39,6 +35,8 @@ interface SceneManagerLike {
     screenY: number,
     excludeHandles?: ReadonlySet<SceneHandle>,
   ): { x: number; y: number; z: number } | null;
+  setMeshEmissive(handle: SceneHandle, color: string | number, intensity: number): void;
+  setMeshColor(handle: SceneHandle, color: string | number): void;
 }
 
 export interface EditorBlock {
@@ -46,6 +44,15 @@ export interface EditorBlock {
   z: number;
   type: TerrainType;
   height: number;
+  handle: SceneHandle | null;
+}
+
+export interface EditorWaterZone {
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+  depth: number;
   handle: SceneHandle | null;
 }
 
@@ -66,6 +73,12 @@ const PLACEABLE_TOOLS: readonly TerrainType[] = [
   TerrainType.Water,
 ];
 
+const HEIGHT_MIN = 0.5;
+const HEIGHT_MAX = 5;
+const HEIGHT_STEP = 0.5;
+const SELECTION_EMISSIVE_COLOR = "#ffffff";
+const SELECTION_EMISSIVE_INTENSITY = 0.4;
+
 export class MapEditor {
   private _active = false;
   private _mapData: MapData | null = null;
@@ -77,9 +90,24 @@ export class MapEditor {
   private _ghostX = 0;
   private _ghostZ = 0;
 
+  // US-302b: selection & water zones
+  private _selectedBlock: EditorBlock | null = null;
+  private _editorWaterZones: EditorWaterZone[] = [];
+  private _waterDragStart: { x: number; z: number } | null = null;
+  private _waterDragGhost: SceneHandle | null = null;
+  private _suppressNextClick = false;
+
+  // Properties section DOM refs
+  private _propertiesSection: HTMLElement | null = null;
+  private _propPosDisplay: HTMLElement | null = null;
+  private _propTypeSelect: HTMLSelectElement | null = null;
+  private _propHeightInput: HTMLInputElement | null = null;
+
   private readonly _toolButtons = new Map<TerrainType, HTMLElement>();
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private _mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
+  private _mousedownHandler: ((e: MouseEvent) => void) | null = null;
+  private _mouseupHandler: ((e: MouseEvent) => void) | null = null;
   private _clickHandler: ((e: MouseEvent) => void) | null = null;
 
   constructor(
@@ -110,11 +138,13 @@ export class MapEditor {
   disable(): void {
     if (!this._active) return;
     this._active = false;
+    this.selectBlock(null);
     this.cameraController.setMode("follow");
     this.gameLifecycle.resume();
     if (this._banner) this._banner.style.display = "none";
     if (this._panel) this._panel.style.display = "none";
     this._removeGhost();
+    this._cancelWaterDrag();
   }
 
   isActive(): boolean {
@@ -175,6 +205,98 @@ export class MapEditor {
     return Math.round(worldPos);
   }
 
+  // ── Selection API (US-302b) ───────────────────────────────────────────────
+
+  /** Select a placed block, applying a visual highlight. Pass null to deselect. */
+  selectBlock(block: EditorBlock | null): void {
+    if (this._selectedBlock?.handle && this.sceneManager) {
+      this.sceneManager.setMeshEmissive(this._selectedBlock.handle, "#000000", 0);
+    }
+    this._selectedBlock = block;
+    if (block?.handle && this.sceneManager) {
+      this.sceneManager.setMeshEmissive(
+        block.handle,
+        SELECTION_EMISSIVE_COLOR,
+        SELECTION_EMISSIVE_INTENSITY,
+      );
+    }
+    this._updatePropertiesSection();
+  }
+
+  getSelectedBlock(): EditorBlock | null {
+    return this._selectedBlock;
+  }
+
+  /** Update the terrain type of the currently selected block. */
+  updateSelectedBlockType(type: TerrainType): void {
+    if (!this._selectedBlock) return;
+    this._selectedBlock.type = type;
+    if (this._selectedBlock.handle && this.sceneManager) {
+      this.sceneManager.setMeshColor(
+        this._selectedBlock.handle,
+        EDITOR_TERRAIN_COLORS[type],
+      );
+    }
+    this._updatePropertiesSection();
+  }
+
+  /**
+   * Update the height of the currently selected block.
+   * Clamped to [HEIGHT_MIN, HEIGHT_MAX]. The mesh scale is updated in place
+   * (no geometry recreation needed since blocks use unit cubes + scale).
+   */
+  updateSelectedBlockHeight(height: number): void {
+    if (!this._selectedBlock) return;
+    const clamped = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, height));
+    this._selectedBlock.height = clamped;
+    if (this._selectedBlock.handle && this.sceneManager) {
+      this.sceneManager.updateTransform(
+        this._selectedBlock.handle,
+        { x: this._selectedBlock.x, y: clamped / 2, z: this._selectedBlock.z },
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: clamped, z: 1 },
+      );
+    }
+    this._updatePropertiesSection();
+  }
+
+  /** Remove the currently selected block from editor state and scene. */
+  deleteSelectedBlock(): void {
+    if (!this._selectedBlock) return;
+    if (this._selectedBlock.handle && this.sceneManager) {
+      this.sceneManager.removeMesh(this._selectedBlock.handle);
+    }
+    const idx = this._editorBlocks.indexOf(this._selectedBlock);
+    if (idx !== -1) this._editorBlocks.splice(idx, 1);
+    this._selectedBlock = null;
+    this._updatePropertiesSection();
+  }
+
+  /** Read-only view of placed water zones. */
+  getEditorWaterZones(): readonly EditorWaterZone[] {
+    return this._editorWaterZones;
+  }
+
+  /**
+   * Define a rectangular water zone from two corner grid coordinates.
+   * Coordinates are normalised so x1 <= x2 and z1 <= z2.
+   */
+  createWaterZone(x1: number, z1: number, x2: number, z2: number): void {
+    const nx1 = Math.min(x1, x2);
+    const nz1 = Math.min(z1, z2);
+    const nx2 = Math.max(x1, x2);
+    const nz2 = Math.max(z1, z2);
+    const zone: EditorWaterZone = {
+      x1: nx1,
+      z1: nz1,
+      x2: nx2,
+      z2: nz2,
+      depth: 1,
+      handle: this._createWaterZoneMesh(nx1, nz1, nx2, nz2),
+    };
+    this._editorWaterZones.push(zone);
+  }
+
   dispose(): void {
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
@@ -184,10 +306,26 @@ export class MapEditor {
       this.container.removeEventListener("mousemove", this._mouseMoveHandler);
       this._mouseMoveHandler = null;
     }
+    if (this._mousedownHandler) {
+      this.container.removeEventListener("mousedown", this._mousedownHandler);
+      this._mousedownHandler = null;
+    }
+    if (this._mouseupHandler) {
+      this.container.removeEventListener("mouseup", this._mouseupHandler);
+      this._mouseupHandler = null;
+    }
     if (this._clickHandler) {
       this.container.removeEventListener("click", this._clickHandler);
       this._clickHandler = null;
     }
+    for (const zone of this._editorWaterZones) {
+      if (zone.handle && this.sceneManager) {
+        this.sceneManager.removeMesh(zone.handle);
+      }
+    }
+    this._editorWaterZones = [];
+    this._cancelWaterDrag();
+    this._selectedBlock = null;
     if (this._banner) {
       this._banner.remove();
       this._banner = null;
@@ -234,9 +372,91 @@ export class MapEditor {
       panel.appendChild(this._buildToolButton(type));
     }
 
+    panel.appendChild(this._buildPropertiesSection());
+
     const parent = this.container.parentElement ?? document.body;
     parent.appendChild(panel);
     this._panel = panel;
+  }
+
+  private _buildPropertiesSection(): HTMLElement {
+    const section = document.createElement("div");
+    section.style.cssText =
+      "border-top:1px solid #444;margin-top:8px;padding-top:8px;display:none;";
+    this._propertiesSection = section;
+
+    const sectionTitle = document.createElement("div");
+    sectionTitle.textContent = "Selection";
+    sectionTitle.style.cssText =
+      "font-weight:bold;font-size:11px;margin-bottom:6px;color:#aaa;";
+    section.appendChild(sectionTitle);
+
+    const posDisplay = document.createElement("div");
+    posDisplay.style.cssText = "font-size:10px;color:#888;margin-bottom:6px;";
+    this._propPosDisplay = posDisplay;
+    section.appendChild(posDisplay);
+
+    const typeLabel = document.createElement("div");
+    typeLabel.textContent = "Type:";
+    typeLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    section.appendChild(typeLabel);
+
+    const typeSelect = document.createElement("select");
+    typeSelect.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;margin-bottom:6px;";
+    for (const type of PLACEABLE_TOOLS) {
+      const opt = document.createElement("option");
+      opt.value = type;
+      opt.textContent = type;
+      typeSelect.appendChild(opt);
+    }
+    typeSelect.addEventListener("change", () => {
+      this.updateSelectedBlockType(typeSelect.value as TerrainType);
+    });
+    this._propTypeSelect = typeSelect;
+    section.appendChild(typeSelect);
+
+    const heightLabel = document.createElement("div");
+    heightLabel.textContent = "Height:";
+    heightLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    section.appendChild(heightLabel);
+
+    const heightInput = document.createElement("input");
+    heightInput.type = "number";
+    heightInput.min = String(HEIGHT_MIN);
+    heightInput.max = String(HEIGHT_MAX);
+    heightInput.step = String(HEIGHT_STEP);
+    heightInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;";
+    heightInput.addEventListener("change", () => {
+      const val = parseFloat(heightInput.value);
+      if (!isNaN(val)) this.updateSelectedBlockHeight(val);
+    });
+    this._propHeightInput = heightInput;
+    section.appendChild(heightInput);
+
+    return section;
+  }
+
+  private _updatePropertiesSection(): void {
+    if (!this._propertiesSection) return;
+    if (!this._selectedBlock) {
+      this._propertiesSection.style.display = "none";
+      return;
+    }
+    this._propertiesSection.style.display = "block";
+    if (this._propPosDisplay) {
+      this._propPosDisplay.textContent =
+        `X: ${this._selectedBlock.x}  Z: ${this._selectedBlock.z}`;
+    }
+    if (this._propTypeSelect) {
+      this._propTypeSelect.value = this._selectedBlock.type;
+    }
+    if (this._propHeightInput) {
+      this._propHeightInput.value = String(this._selectedBlock.height);
+    }
   }
 
   private _buildToolButton(type: TerrainType): HTMLElement {
@@ -287,13 +507,17 @@ export class MapEditor {
           this.enable();
         }
       }
+      if (this._active && e.key === "Delete") {
+        this.deleteSelectedBlock();
+      }
     };
     document.addEventListener("keydown", this._keydownHandler);
   }
 
   private _registerMouseHandlers(): void {
+    // mousemove: ghost preview + water drag ghost update
     this._mouseMoveHandler = (e: MouseEvent) => {
-      if (!this._active || !this._selectedTool || !this.sceneManager) return;
+      if (!this._active || !this.sceneManager) return;
       const rect = this.container.getBoundingClientRect();
       const worldPos = this.sceneManager.screenToWorld(
         e.clientX - rect.left,
@@ -301,29 +525,182 @@ export class MapEditor {
         this._ghostHandle ? new Set([this._ghostHandle]) : undefined,
       );
       if (!worldPos) return;
-      this._updateGhost(
-        MapEditor.snapToGrid(worldPos.x),
-        MapEditor.snapToGrid(worldPos.z),
-      );
+      const snappedX = MapEditor.snapToGrid(worldPos.x);
+      const snappedZ = MapEditor.snapToGrid(worldPos.z);
+
+      if (this._selectedTool) {
+        this._updateGhost(snappedX, snappedZ);
+      }
+
+      if (this._selectedTool === TerrainType.Water && this._waterDragStart) {
+        this._updateWaterDragGhost(
+          this._waterDragStart.x,
+          this._waterDragStart.z,
+          snappedX,
+          snappedZ,
+        );
+      }
     };
     this.container.addEventListener("mousemove", this._mouseMoveHandler);
 
+    // mousedown: start water zone drag tracking
+    this._mousedownHandler = (e: MouseEvent) => {
+      if (!this._active || this._selectedTool !== TerrainType.Water) return;
+      if (!this.sceneManager) return;
+      const rect = this.container.getBoundingClientRect();
+      const worldPos = this.sceneManager.screenToWorld(
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+      );
+      if (!worldPos) return;
+      this._waterDragStart = {
+        x: MapEditor.snapToGrid(worldPos.x),
+        z: MapEditor.snapToGrid(worldPos.z),
+      };
+    };
+    this.container.addEventListener("mousedown", this._mousedownHandler);
+
+    // mouseup: finalise water zone drag (if end differs from start, create zone)
+    this._mouseupHandler = (e: MouseEvent) => {
+      if (!this._active || !this._waterDragStart) {
+        this._cancelWaterDrag();
+        return;
+      }
+      if (!this.sceneManager) {
+        this._cancelWaterDrag();
+        return;
+      }
+      const rect = this.container.getBoundingClientRect();
+      const worldPos = this.sceneManager.screenToWorld(
+        e.clientX - rect.left,
+        e.clientY - rect.top,
+        this._waterDragGhost ? new Set([this._waterDragGhost]) : undefined,
+      );
+      const endX = worldPos
+        ? MapEditor.snapToGrid(worldPos.x)
+        : this._waterDragStart.x;
+      const endZ = worldPos
+        ? MapEditor.snapToGrid(worldPos.z)
+        : this._waterDragStart.z;
+
+      if (endX !== this._waterDragStart.x || endZ !== this._waterDragStart.z) {
+        this.createWaterZone(
+          this._waterDragStart.x,
+          this._waterDragStart.z,
+          endX,
+          endZ,
+        );
+        this._suppressNextClick = true;
+      }
+      this._cancelWaterDrag();
+    };
+    this.container.addEventListener("mouseup", this._mouseupHandler);
+
+    // click: place block (tool active) or select existing block (no tool)
     this._clickHandler = (e: MouseEvent) => {
-      if (!this._active || !this._selectedTool) return;
-      if (this.sceneManager) {
+      if (!this._active) return;
+
+      if (this._suppressNextClick) {
+        this._suppressNextClick = false;
+        return;
+      }
+
+      if (this._selectedTool) {
+        if (this.sceneManager) {
+          const rect = this.container.getBoundingClientRect();
+          const worldPos = this.sceneManager.screenToWorld(
+            e.clientX - rect.left,
+            e.clientY - rect.top,
+            this._ghostHandle ? new Set([this._ghostHandle]) : undefined,
+          );
+          if (!worldPos) return;
+          this.placeBlock(worldPos.x, worldPos.z);
+        } else {
+          this.placeBlock(this._ghostX, this._ghostZ);
+        }
+      } else {
+        // No tool selected — try to find and select a block at click position.
+        if (!this.sceneManager) return;
         const rect = this.container.getBoundingClientRect();
         const worldPos = this.sceneManager.screenToWorld(
           e.clientX - rect.left,
           e.clientY - rect.top,
-          this._ghostHandle ? new Set([this._ghostHandle]) : undefined,
         );
         if (!worldPos) return;
-        this.placeBlock(worldPos.x, worldPos.z);
-      } else {
-        this.placeBlock(this._ghostX, this._ghostZ);
+        const gx = MapEditor.snapToGrid(worldPos.x);
+        const gz = MapEditor.snapToGrid(worldPos.z);
+        const block =
+          this._editorBlocks.find((b) => b.x === gx && b.z === gz) ?? null;
+        this.selectBlock(block);
       }
     };
     this.container.addEventListener("click", this._clickHandler);
+  }
+
+  private _cancelWaterDrag(): void {
+    if (this._waterDragGhost && this.sceneManager) {
+      this.sceneManager.removeMesh(this._waterDragGhost);
+    }
+    this._waterDragGhost = null;
+    this._waterDragStart = null;
+  }
+
+  private _updateWaterDragGhost(
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+  ): void {
+    if (!this.sceneManager) return;
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    const minZ = Math.min(z1, z2);
+    const maxZ = Math.max(z1, z2);
+    const width = maxX - minX + 1;
+    const depth = maxZ - minZ + 1;
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+
+    if (!this._waterDragGhost) {
+      this._waterDragGhost = this.sceneManager.addMesh({
+        geometry: "box",
+        dims: [1, 1, 1],
+        color: EDITOR_TERRAIN_COLORS[TerrainType.Water],
+        opacity: 0.3,
+      });
+    }
+    this.sceneManager.updateTransform(
+      this._waterDragGhost,
+      { x: cx, y: 0.1, z: cz },
+      { x: 0, y: 0, z: 0 },
+      { x: width, y: 0.2, z: depth },
+    );
+  }
+
+  private _createWaterZoneMesh(
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+  ): SceneHandle | null {
+    if (!this.sceneManager) return null;
+    const width = x2 - x1 + 1;
+    const depth = z2 - z1 + 1;
+    const cx = (x1 + x2) / 2;
+    const cz = (z1 + z2) / 2;
+    const handle = this.sceneManager.addMesh({
+      geometry: "box",
+      dims: [1, 1, 1],
+      color: EDITOR_TERRAIN_COLORS[TerrainType.Water],
+      opacity: 0.5,
+    });
+    this.sceneManager.updateTransform(
+      handle,
+      { x: cx, y: 0.1, z: cz },
+      { x: 0, y: 0, z: 0 },
+      { x: width, y: 0.2, z: depth },
+    );
+    return handle;
   }
 
   private _updateGhost(x: number, z: number): void {
@@ -362,14 +739,14 @@ export class MapEditor {
     if (!this.sceneManager) return null;
     const handle = this.sceneManager.addMesh({
       geometry: "box",
-      dims: [1, height, 1],
+      dims: [1, 1, 1], // unit cube — height controlled via scale.y
       color: EDITOR_TERRAIN_COLORS[type],
     });
     this.sceneManager.updateTransform(
       handle,
       { x, y: height / 2, z },
       { x: 0, y: 0, z: 0 },
-      { x: 1, y: 1, z: 1 },
+      { x: 1, y: height, z: 1 },
     );
     return handle;
   }
