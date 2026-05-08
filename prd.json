@@ -67,7 +67,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "The side panel DOM construction follows the same pattern as DebugMenu._build(). Ghost preview uses SceneManager to create a temporary mesh. Grid snapping: Math.round(worldPos) for 1u grid. InputManager already tracks mouse position and left-click events. SceneManager.screenToWorld() converts mouse coords to world space."
     },
     {

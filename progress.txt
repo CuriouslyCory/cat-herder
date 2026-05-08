@@ -1,0 +1,19 @@
+## Codebase Patterns
+- MapEditor is dev-gated via `process.env.NODE_ENV === 'production'` guard in constructor — same pattern as DebugMenu
+- DOM overlays (banner, panel) append to `container.parentElement ?? document.body`; container is the canvas element
+- SceneManager is abstracted behind a local `SceneManagerLike` interface in MapEditor.ts to avoid importing Three.js types and keep tests clean
+- Test DOM mocks: use a `createdElements[]` queue (each `createElement` call returns a fresh MockEl) so banner (index 0) and panel (index 1) are independently testable
+- For tests that need SceneManager, always use a SEPARATE container mock so event listener calls don't bleed between test setups
+- `as any` is acceptable for internal interface mocks in tests (no eslint suppression needed — rule not configured for this pattern)
+
+---
+
+## 2026-05-08 - US-302a
+- What was implemented: Terrain tool palette side panel in MapEditor. Left panel (160px wide, dark background) with 4 terrain type buttons (Grass/Dirt/Stone/Water), each with color swatch matching TERRAIN_COLORS. selectTool()/getSelectedTool() public API. placeBlock() places EditorBlocks at grid-snapped (Math.round) positions. Ghost preview mesh (opacity 0.4) follows mouse via SceneManager.screenToWorld + mousemove listener on canvas. SceneManager passed as optional 4th constructor arg (SceneManagerLike internal interface). Game.ts updated to pass sceneManager to MapEditor.
+- Files changed: src/game/maps/MapEditor.ts, src/game/engine/Game.ts, src/game/__tests__/engine/MapEditor.test.ts
+- **Learnings for future iterations:**
+  - The existing MapEditor test setup used a single `mockCreatedEl` for ALL createElement calls — had to redesign to a queue (createdElements[]) so banner[0] and panel[1] are independently tracked
+  - SceneManager mouse handlers must use a SEPARATE container per editor instance in tests; shared container accumulates handlers from multiple editor instances causing wrong handler to be found
+  - Ghost is only created on mousemove (lazy), so ghost preview tests must fire mousemove before testing removeMesh
+  - `SceneManagerLike` is intentionally unexported — internal interface for clean boundary; callers pass `as any` in tests
+---
