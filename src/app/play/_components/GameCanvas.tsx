@@ -75,6 +75,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
       upsertSave: (input) => upsertSaveRef.current(input),
       getSave: async () => {
         const result = await refetchSaveRef.current({ throwOnError: false });
+        if (result.error) throw result.error;
         if (!result.data) return null;
         return result.data as { version: string; saveData: Record<string, unknown> };
       },
@@ -102,6 +103,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   // ── Helpers for retry / start-fresh ─────────────────────────────────────────
   const handleRetry = useCallback(() => {
+    if (startState.phase === "loading" || startState.phase === "running") return;
     const game = gameRef.current;
     if (!game) return;
     setStartState({ phase: "loading" });
@@ -115,12 +117,15 @@ export function GameCanvas({ user }: GameCanvasProps) {
             err instanceof Error ? err.message : "Failed to load save data.",
         }),
       );
-  }, []);
+  }, [startState.phase]);
 
-  const handleStartFresh = useCallback(() => {
+  const handleStartFresh = useCallback(async () => {
+    if (startState.phase === "loading" || startState.phase === "running") return;
     const game = gameRef.current;
     if (!game) return;
+    setStartState({ phase: "loading" });
     try {
+      await trpcAdapter.deleteSave();
       game.startFresh();
       setStartState({ phase: "running" });
     } catch (err: unknown) {
@@ -130,7 +135,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
           err instanceof Error ? err.message : "Failed to start new game.",
       });
     }
-  }, []);
+  }, [startState.phase, trpcAdapter]);
 
   // ── Game lifecycle ──────────────────────────────────────────────────────────
   // Start (or update) the game whenever a character becomes available
