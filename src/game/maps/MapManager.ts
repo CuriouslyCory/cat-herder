@@ -105,6 +105,11 @@ export class MapManager {
     return this.getTerrainAt(x, z)?.height ?? 0;
   }
 
+  /** Return the current loaded MapData, or null if no map is loaded. */
+  getMapData(): MapData | null {
+    return this.mapData;
+  }
+
   /** Return all spawn points defined by the current map. */
   getSpawnPoints(): SpawnPoint[] {
     return this.mapData?.spawnPoints ?? [];

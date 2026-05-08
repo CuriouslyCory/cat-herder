@@ -24,6 +24,7 @@ import { CatCompanionManager } from "../cats/CatCompanionManager";
 import { CAT_REGISTRY } from "../cats/definitions";
 import { UIManager } from "../ui/UIManager";
 import { DebugMenu } from "../ui/DebugMenu";
+import { NavigationOverlay } from "../ui/NavigationOverlay";
 import { MapEditor } from "../maps/MapEditor";
 import { TestMap } from "../maps/TestMap";
 import { CONFIG, runtimeConfig } from "../config";
@@ -37,7 +38,7 @@ import { createCollider } from "../ecs/components/Collider";
 import { createResourceNode } from "../ecs/components/ResourceNode";
 import type { ResourceNode } from "../ecs/components/ResourceNode";
 import { createYarnPickup } from "../ecs/components/YarnPickup";
-import { CatType, ResourceType } from "../types";
+import { CatType, ResourceType, GameAction } from "../types";
 import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
@@ -153,6 +154,9 @@ export class Game {
   private _saveError: string | null = null;
   private _saveErrorTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ── Navigation overlay ────────────────────────────────────────────────────────
+  private readonly navigationOverlay: NavigationOverlay;
+
   // ── Debug (dev-only, null in production) ─────────────────────────────────────
   private debugMenu: DebugMenu | null = null;
   private mapEditor: MapEditor | null = null;
@@ -267,6 +271,14 @@ export class Game {
     // 13. UIManager — DOM panels over the canvas
     this.uiManager = new UIManager(canvas);
     this.uiManager.setCatCatalog(this.catCompanionManager.getCatalog());
+
+    // 13a. NavigationOverlay — 2D minimap (M key, gameplay mode only)
+    this.navigationOverlay = new NavigationOverlay(
+      canvas,
+      this.world,
+      this.mapManager,
+      () => this.playerEntity,
+    );
 
     // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
@@ -457,6 +469,7 @@ export class Game {
     }
     this.mapEditor?.dispose();
     this.debugMenu?.dispose();
+    this.navigationOverlay.dispose();
     this.persistence.dispose();
     this.cameraController.dispose();
     this.inputManager.dispose();
@@ -797,6 +810,14 @@ export class Game {
     this.visualEffectsSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
     this.debugMenu?.update(realDt);
+    // Toggle minimap on M key — only in gameplay mode (editor suppresses M when active)
+    if (
+      this.inputManager.isActionPressed(GameAction.ToggleMap) &&
+      !this.mapEditor?.isActive()
+    ) {
+      this.navigationOverlay.open();
+    }
+    this.navigationOverlay.update(realDt);
     this.sceneManager.render();
 
     // ── Input bookkeeping (end of frame) ───────────────────────────────────────
