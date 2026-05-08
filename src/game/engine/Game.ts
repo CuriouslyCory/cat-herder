@@ -150,6 +150,7 @@ export class Game {
   private readonly persistence: Persistence;
   /** Current save error message; cleared after HUD displays it for 5 s. */
   private _saveError: string | null = null;
+  private _saveErrorTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Debug (dev-only, null in production) ─────────────────────────────────────
   private debugMenu: DebugMenu | null = null;
@@ -269,8 +270,11 @@ export class Game {
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
     this.eventBus.on("save:failed", (evt) => {
       this._saveError = evt.error;
-      // Clear after 5 s so HUD stops re-showing the same error.
-      setTimeout(() => { this._saveError = null; }, 5100);
+      if (this._saveErrorTimer) clearTimeout(this._saveErrorTimer);
+      this._saveErrorTimer = setTimeout(() => {
+        this._saveError = null;
+        this._saveErrorTimer = null;
+      }, 5100);
     });
 
     // 15. DebugMenu — dev-only overlay (null in production)
@@ -434,6 +438,10 @@ export class Game {
    */
   destroy(): void {
     this.pause();
+    if (this._saveErrorTimer) {
+      clearTimeout(this._saveErrorTimer);
+      this._saveErrorTimer = null;
+    }
     this.debugMenu?.dispose();
     this.persistence.dispose();
     this.cameraController.dispose();

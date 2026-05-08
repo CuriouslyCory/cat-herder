@@ -249,11 +249,12 @@ export class DebugMenu {
     this.gameState.set("player.yarn", savedYarn + 9999);
     this.runtimeCfg.maxActiveCats = 999;
 
-    this.catCompanionManager.summon(catType, position);
-
-    // Restore original values regardless of summon() outcome.
-    this.runtimeCfg.maxActiveCats = savedLimit;
-    this.gameState.set("player.yarn", savedYarn);
+    try {
+      this.catCompanionManager.summon(catType, position);
+    } finally {
+      this.runtimeCfg.maxActiveCats = savedLimit;
+      this.gameState.set("player.yarn", savedYarn);
+    }
 
     this.eventBus.emit({ type: "debug:value-changed", key: "debug.forceSummon", value: catType });
   }
@@ -389,10 +390,23 @@ export class DebugMenu {
   applyForceSave(): void {
     if (!this.persistence) return;
     this._setSessionFeedback("Saving…");
-    void this.persistence.forceSave().then(() => {
+    const cleanup = () => {
+      this.eventBus.off("save:complete", onOk);
+      this.eventBus.off("save:failed", onFail);
+    };
+    const onOk = () => {
+      cleanup();
       this._setSessionFeedback("Saved!");
       setTimeout(() => this._setSessionFeedback(""), 2000);
-    });
+    };
+    const onFail = (evt: { type: "save:failed"; error: string }) => {
+      cleanup();
+      this._setSessionFeedback(`Failed: ${evt.error}`);
+      setTimeout(() => this._setSessionFeedback(""), 4000);
+    };
+    this.eventBus.on("save:complete", onOk);
+    this.eventBus.on("save:failed", onFail);
+    void this.persistence.forceSave();
   }
 
   applyForceLoad(): void {

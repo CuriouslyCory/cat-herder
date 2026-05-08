@@ -267,6 +267,16 @@ export class GameState {
         );
       case "player.stats.maxHealth":
         return typeof value === "number" && value > 0;
+      case "player.position": {
+        const v = value as Record<string, unknown>;
+        return (
+          typeof v === "object" &&
+          v !== null &&
+          Number.isFinite(v.x) &&
+          Number.isFinite(v.y) &&
+          Number.isFinite(v.z)
+        );
+      }
       default:
         return true;
     }

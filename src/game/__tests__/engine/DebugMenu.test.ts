@@ -67,6 +67,7 @@ beforeEach(() => {
     removeEventListener: vi.fn(),
     getElementById: vi.fn(() => null),
     head: { appendChild: vi.fn() },
+    body: makeMockEl(),
   });
 
   gameState = new GameState(10);
