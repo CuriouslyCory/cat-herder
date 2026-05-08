@@ -24,6 +24,7 @@ import { CatCompanionManager } from "../cats/CatCompanionManager";
 import { CAT_REGISTRY } from "../cats/definitions";
 import { UIManager } from "../ui/UIManager";
 import { DebugMenu } from "../ui/DebugMenu";
+import { MapEditor } from "../maps/MapEditor";
 import { TestMap } from "../maps/TestMap";
 import { CONFIG, runtimeConfig } from "../config";
 import { Persistence } from "../state/Persistence";
@@ -154,6 +155,7 @@ export class Game {
 
   // ── Debug (dev-only, null in production) ─────────────────────────────────────
   private debugMenu: DebugMenu | null = null;
+  private mapEditor: MapEditor | null = null;
 
   // ── Resource node ID lookup (nodeId → entity) for cooldown restoration ───────
   private readonly _nodeIdMap = new Map<string, Entity>();
@@ -312,6 +314,15 @@ export class Game {
         },
       );
     }
+
+    // 16. MapEditor — dev-only map editing overlay (null in production)
+    if (process.env.NODE_ENV !== "production") {
+      this.mapEditor = new MapEditor(
+        canvas,
+        this.cameraController,
+        { pause: () => this.pause(), resume: () => this.resume() },
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -442,6 +453,7 @@ export class Game {
       clearTimeout(this._saveErrorTimer);
       this._saveErrorTimer = null;
     }
+    this.mapEditor?.dispose();
     this.debugMenu?.dispose();
     this.persistence.dispose();
     this.cameraController.dispose();

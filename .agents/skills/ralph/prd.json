@@ -1,239 +1,452 @@
 {
   "project": "Cat Herder",
-  "branchName": "feat/persistence-and-debug-v2",
-  "description": "Phase 3: Full game state persistence (save/load/auto-save) routed through tRPC gameRouter (no browser-direct DB), versioned save format with Zod validation and migrations, and a comprehensive debug menu gated to NODE_ENV=development. Depends on PRD-01 and PRD-02.",
+  "branchName": "feat/map-editor-and-polish-phase4",
+  "description": "Phase 4: Developer-facing map editor (gated to NODE_ENV=development, tree-shaken from production), 2D map overlay for players, balance tuning passes, edge case hardening, visual polish, and final quality gate (pnpm lint/typecheck/build).",
   "testingDirectives": {
     "framework": "Vitest (already configured at vitest.config.ts, run via `pnpm test`)",
     "requirements": [
-      "Every new module MUST have a co-located test file (e.g., GameState.ts -> src/game/__tests__/engine/GameState.test.ts). Story is not complete without tests.",
+      "Every new system or module MUST have a co-located test file. Story is not complete without tests.",
       "Unit tests are the minimum quality bar. `pnpm test` must pass before committing.",
-      "The full verification command is: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`."
+      "The full verification command is: `pnpm test && pnpm lint && pnpm typecheck && pnpm build`.",
+      "Balance pass stories (US-312 through US-314): write regression tests that assert the tuned values produce expected outcomes (e.g., jump impulse reaches expected height, gather completes in expected time).",
+      "Edge case stories (US-315 through US-317): each edge case MUST have a dedicated test proving the fix (e.g., player can't clip through terrain, oxygen respawn works correctly)."
     ],
     "testPatterns": {
-      "stateModules": "Test all public methods: get/set/serialize/restore. Verify onChange callbacks fire. Verify invalid inputs are rejected. Use the existing GameState.test.ts as a pattern.",
-      "persistence": "Mock the tRPC adapter (vi.fn()). Test save/load/migrate flows without network. Verify dirty tracking, auto-save timing, and error handling.",
-      "migrations": "Test each migration transform with fixture data. Verify unknown versions throw. Test full migration chain (0.1 -> latest).",
-      "debugMenu": "Test that debug value changes propagate through GameState/runtimeConfig. Test that debug state is excluded from serialization."
+      "mapEditor": "Test MapEditor.enable()/disable() state transitions. Test getMapData()/loadMapData() round-trip serialization. Mock SceneManager for rendering calls.",
+      "navigationOverlay": "Test overlay toggle (M key), test that game input is consumed while open. Use mockInputManager.",
+      "balancePasses": "Write parametric tests verifying config values produce expected physics outcomes (e.g., with jumpImpulse=3.5 and gravity=-12, player reaches apex of ~1.02u). These tests catch accidental config regressions.",
+      "edgeCases": "Each edge case should be a test: spawn player at bounds → verify push-back, dismiss cat under player → verify safe fall, oxygen → 0 → health → 0 → verify respawn."
     },
     "existingHelpers": {
-      "entityFactories": "src/game/__tests__/helpers/entityFactories.ts -- spawnPlayer(), spawnCat(), spawnResourceNode(), etc.",
-      "mockInputManager": "src/game/__tests__/helpers/mockInputManager.ts -- stub for InputManager with pressAction/holdAction/setMovementIntent",
-      "mockSceneManager": "src/game/__tests__/helpers/mockSceneManager.ts -- stub for SceneManager.setMeshOpacity",
-      "mockMapManager": "src/game/__tests__/helpers/mockMapManager.ts -- stub for MapManager.getTerrainAt/getHeightAt"
+      "entityFactories": "src/game/__tests__/helpers/entityFactories.ts — spawnPlayer(), spawnCat(), spawnResourceNode(), spawnHiddenTerrain(), etc.",
+      "mockInputManager": "src/game/__tests__/helpers/mockInputManager.ts — stub for InputManager with pressAction/holdAction/setMovementIntent",
+      "mockSceneManager": "src/game/__tests__/helpers/mockSceneManager.ts — stub for SceneManager.setMeshOpacity/createHandle",
+      "mockMapManager": "src/game/__tests__/helpers/mockMapManager.ts — stub for MapManager.getTerrainAt/getHeightAt/setTerrain"
     },
-    "existingCodeContext": {
-      "gameState": "src/game/engine/GameState.ts already has yarn (get/set/addYarn/deductYarn/onYarnChange) and inventory (addResource/hasInventorySpace/onInventoryChange) with reactive listener Sets. US-201 must extend this, not replace it -- preserve existing convenience methods as wrappers over the new path-based API so callers in Game.ts, systems, and HUD don't break.",
-      "gameRouter": "src/server/api/routers/game.ts already has getSave/upsertSave/deleteSave procedures. upsertSave currently accepts Record<string, unknown> for saveData -- US-202 should tighten this with the Zod schema.",
-      "gameTrpcAdapter": "GameCanvas.tsx creates a GameTrpcAdapter passed to Game constructor (opts.trpc). Currently only has upsertSave(). US-203 needs to extend it with getSave() for the load flow.",
-      "debugBridge": "window.__catHerderDebug is already exposed in Game.ts (dev-only). Provides world, gameState, eventBus, physicsEngine, getPlayerEntity(), getActiveCats(), tick(n).",
-      "hudPattern": "HUD.ts builds DOM elements in constructor, updates via setX() methods called from UIManager. UIManager.update() receives HUDState from Game.buildHUDState(). Follow this pattern for save indicator.",
-      "config": "src/game/config.ts already has autoSaveIntervalMs: 30000 -- use this for auto-save timing.",
-      "eventBus": "src/game/engine/EventBus.ts -- used throughout for decoupled communication. Emit SAVE_FAILED, DEBUG_VALUE_CHANGED, etc. here."
-    },
-    "debugBridge": "window.__catHerderDebug is exposed in dev mode (Game.ts). It provides: world, gameState, eventBus, physicsEngine, getPlayerEntity(), getActiveCats(), tick(n) for deterministic physics stepping. E2E scripts can use this via dev-browser.",
+    "debugBridge": "window.__catHerderDebug is exposed in dev mode (Game.ts). It provides: world, gameState, eventBus, physicsEngine, getPlayerEntity(), getActiveCats(), tick(n) for deterministic physics stepping. E2E scripts can use this via dev-browser for browser-based validation.",
+    "e2eTesting": "For UI-dependent stories (map editor, overlay, visual polish), use `dev-browser` CLI to automate browser interaction. Pattern: navigate to /play, await window.__catHerderDebug, simulate input, assert state via page.evaluate().",
     "antiPatterns": [
       "Do NOT mark a story as passing without `pnpm test` succeeding.",
-      "Do NOT write tests that import Three.js or require DOM -- use mocks for SceneManager/InputManager.",
-      "Do NOT test implementation details (private methods) -- test behavior through public APIs.",
-      "Do NOT skip tests to make CI green -- fix the underlying issue.",
-      "Do NOT replace existing GameState methods -- extend GameState with the path-based API and keep existing methods as wrappers.",
-      "Do NOT use import.meta.env.DEV in Next.js -- use process.env.NODE_ENV === 'development' for dev-only gating."
+      "Do NOT write tests that import Three.js or require DOM — use mocks for SceneManager/InputManager.",
+      "Do NOT skip edge case tests — each acceptance criterion in edge case stories maps to a test case.",
+      "Do NOT adjust config values without a test proving the old value was wrong and the new value is correct."
     ]
   },
   "userStories": [
     {
-      "id": "US-201",
-      "title": "GameState full implementation",
-      "description": "As a developer, I need a central state store that tracks all game data with change detection so UI updates reactively and serialization captures everything.",
+      "id": "US-301",
+      "title": "Map editor mode — enable/disable & camera",
+      "description": "As a developer, I want to toggle map editor mode and control the camera so I can navigate and edit the world.",
       "acceptanceCriteria": [
-        "Extend src/game/engine/GameState.ts with path-based API: get<T>(path: string): T, set<T>(path: string, value: T), onChange<T>(path: string, callback: (newVal: T, oldVal: T) => void): Unsubscribe, serialize(): SaveData, restore(data: SaveData).",
-        "Internal state object includes: player (appearance, position {x,y,z}, stats {level, health, maxHealth}, yarn, oxygen, abilities, inventory); world (currentMapId, activeCats[], hiddenTerrain[], resourceNodes[]); session (totalPlaytimeMs, isSwimming, isDiving).",
-        "Existing convenience methods (addYarn, deductYarn, onYarnChange, addResource, hasInventorySpace, onInventoryChange) preserved as wrappers delegating to the new path-based store internally. All existing callers continue to work without changes.",
-        "set() triggers registered onChange() callbacks for that path.",
-        "serialize() excludes transient state (session data, debug overrides) and returns a JSON-safe object matching the SaveData shape.",
-        "restore(data) hydrates all persistable state from a saved snapshot and triggers change callbacks for each restored path.",
-        "State validation: set() rejects invalid values (negative health, yarn below 0, level out of range).",
-        "isDirty flag: set to true by set() (used later by Persistence for auto-save). Exposed as a public getter.",
-        "Tests in src/game/__tests__/engine/GameState.test.ts cover: get/set round-trip, onChange fires with old+new values, serialize excludes session, restore hydrates and fires callbacks, validation rejects bad values, isDirty tracking.",
-        "pnpm test && pnpm typecheck passes."
+        "Ctrl+E toggles map editor mode only when process.env.NODE_ENV === 'development'.",
+        "Entering editor mode: game pauses, camera switches to free mode (WASD pans, mouse rotates, scroll zooms).",
+        "Exiting editor mode: game resumes, camera returns to follow mode.",
+        "src/game/maps/MapEditor.ts exposes enable(), disable(), isActive(): boolean.",
+        "Editor code is gated at construction so it tree-shakes from production bundles (same pattern as DebugMenu in PRD-03).",
+        "Tests: test Ctrl+E toggles enable/disable, test camera switches modes, test pause/resume on toggle.",
+        "Typecheck passes."
       ],
       "priority": 1,
-      "passes": true,
-      "notes": "GameState already exists at src/game/engine/GameState.ts with yarn + inventory tracking. EXTEND it -- do not create a new file at src/game/state/. Keep all existing methods working."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-202",
-      "title": "Save data format & versioning",
-      "description": "As a developer, I need a versioned save format so future schema changes don't break existing saves.",
+      "id": "US-302",
+      "title": "Map editor — editor mode indicator",
+      "description": "As a developer, I want a prominent 'EDITOR MODE' banner so I don't confuse editor keybindings with gameplay.",
       "acceptanceCriteria": [
-        "src/game/state/SaveData.ts defines a SaveData TypeScript interface and a saveDataSchema Zod schema for runtime validation: { version: string, character: { appearance, stats, inventory, position }, world: { activeCats, resourceNodeCooldowns }, session: { totalPlaytimeMs } }.",
-        "src/game/state/migrations.ts exports migrateIfNeeded(data: unknown): SaveData.",
-        "migrateIfNeeded behavior: if version === CURRENT_VERSION ('0.1') -> validate with Zod and return. If version is older -> chain migration transforms. If version is unknown/future -> throw SaveMigrationError with user-presentable message.",
-        "Stub migration '0.1' -> '0.2' included as a template (transform function that is a no-op since '0.2' doesn't exist yet, but shows the pattern).",
-        "The saveDataSchema is also imported by gameRouter.upsertSave (src/server/api/routers/game.ts) to validate the saveData input. Replace the current Record<string, unknown> with proper Zod validation.",
-        "CURRENT_VERSION constant exported from SaveData.ts for use by Persistence and migrations.",
-        "Tests in src/game/__tests__/engine/SaveData.test.ts cover: valid data passes schema, invalid data rejected, migrateIfNeeded no-ops on current version, migrateIfNeeded throws on unknown version, migration chain works for stub 0.1->0.2.",
-        "pnpm test && pnpm typecheck passes."
+        "When editor is active, a prominent 'EDITOR MODE' banner appears at the top of the screen.",
+        "Banner is visible at all times while editor is active, styled distinctly (e.g., red background, white text).",
+        "Banner disappears immediately when editor is deactivated.",
+        "Banner does not block important gameplay UI.",
+        "Tests: test banner appears on enable(), disappears on disable().",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: open editor, confirm banner visible, close editor, confirm gone."
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Create new src/game/state/ directory for SaveData.ts and migrations.ts. The Zod schema must be importable from both client (game engine) and server (gameRouter) -- no browser-only or server-only imports in the schema module."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-203",
-      "title": "Persistence module (save/load/auto-save)",
-      "description": "As a player, I want my game to auto-save so I never lose progress.",
+      "id": "US-303",
+      "title": "Map editor tools — terrain block placement",
+      "description": "As a developer, I want to place terrain blocks (grass, dirt, stone) at grid-snapped positions.",
       "acceptanceCriteria": [
-        "src/game/state/Persistence.ts exposes: save(): Promise<void>, load(): Promise<SaveData | null>, startAutoSave(intervalMs: number), stopAutoSave(), forceSave(): Promise<void>.",
-        "Constructor takes { gameState: GameState, trpcAdapter: GameTrpcAdapter, eventBus: EventBus }.",
-        "save(): calls gameState.serialize(), validates with saveDataSchema Zod guard, sends via trpcAdapter.upsertSave({ version: CURRENT_VERSION, saveData }).",
-        "load(): calls trpcAdapter.getSave(), if null returns null, otherwise runs migrateIfNeeded() and returns SaveData.",
-        "GameTrpcAdapter interface (in GameCanvas.tsx or a shared types file) extended with getSave(): Promise<{ version: string, saveData: Record<string, unknown> } | null>. GameCanvas creates the adapter using the existing tRPC hooks.",
-        "startAutoSave(30000): sets an interval that calls save() only if gameState.isDirty is true.",
-        "Dirty tracking: gameState.isDirty set by GameState.set(), cleared by Persistence after successful save.",
-        "Position-specific dirty throttle: position changes only set isDirty every 5 seconds (Persistence tracks lastPositionDirtyAt). Other state changes mark dirty immediately.",
-        "forceSave(): immediate save regardless of isDirty -- used by manual save button.",
-        "isSaving: boolean and lastSavedAt: number | null exposed as public getters for HUD consumption.",
-        "Save errors caught and emitted as SAVE_FAILED events on EventBus with the error message. Never crash the game loop.",
-        "stopAutoSave(): clears the interval timer. Called on game dispose.",
-        "Tests in src/game/__tests__/engine/Persistence.test.ts: mock trpcAdapter (vi.fn()), test save serializes+validates+sends, test load fetches+migrates, test auto-save skips when clean, test auto-save fires when dirty, test forceSave ignores dirty flag, test save error emits SAVE_FAILED, test position dirty throttle.",
-        "pnpm test && pnpm typecheck passes."
+        "Tool palette in side panel: select Grass, Dirt, or Stone block.",
+        "Click on map → block placed at grid-snapped position (1u grid).",
+        "Ghost preview of block appears before placement (semi-transparent).",
+        "Grid snap: use Math.round(worldPos.x) and Math.round(worldPos.z) for placement.",
+        "Tests: test terrain blocks placed at snapped positions, test different block types create correct entities, test preview renders.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: select block type, click map, confirm block placed at grid position."
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "This story does NOT include the beacon-save route or beforeunload handler -- those are in US-204. Focus on the core persistence engine."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-204",
-      "title": "Beacon save endpoint + beforeunload handler",
-      "description": "As a player, I want my progress saved even when I close the browser tab.",
+      "id": "US-304",
+      "title": "Map editor tools — terrain height & selection",
+      "description": "As a developer, I want to adjust terrain block heights and see selected block properties.",
       "acceptanceCriteria": [
-        "src/app/api/game/beacon-save/route.ts: POST handler that resolves WorkOS session via withAuth(), validates body with saveDataSchema, calls the same Drizzle upsert logic as gameRouter.upsertSave.",
-        "Extract the save-upsert DB logic from gameRouter into a shared helper (e.g., src/server/game/upsertGameSave.ts) so gameRouter.upsertSave and beacon-save/route.ts both call it. This prevents drift between the two save paths.",
-        "Persistence.ts adds setupBeforeUnload() called during initialization: registers window.beforeunload handler that calls navigator.sendBeacon('/api/game/beacon-save', JSON.stringify(serializedState)).",
-        "If navigator.sendBeacon is unavailable (some browsers in private mode), fall back gracefully -- no error thrown, just skip.",
-        "Beacon payload includes { version, saveData } matching the same shape as upsertSave input.",
-        "Persistence.dispose() removes the beforeunload listener.",
-        "Tests: test beacon route handler with mocked session + valid/invalid payloads, test setupBeforeUnload registers/unregisters listener, test sendBeacon fallback when unavailable.",
-        "pnpm test && pnpm typecheck passes."
+        "Click existing block → select it → highlighted border appears on selected block.",
+        "Side panel shows editable properties: type, height (0.5u to 5u in 0.5u increments), position (X, Z).",
+        "Adjust height input → block height updates in real-time.",
+        "Terrain blocks have height property stored in MapData.",
+        "Tests: test block selection highlights, test height adjustment updates entity, test properties sync to UI.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: select block, adjust height in side panel, confirm block resizes."
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "The shared upsert helper must accept userId + version + saveData and handle the Drizzle onConflictDoUpdate. withAuth() pattern: see existing protected routes for reference."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-205",
-      "title": "Load & restore flow",
-      "description": "As a returning player, I want to resume where I left off when I open the game.",
+      "id": "US-305",
+      "title": "Map editor tools — water zones",
+      "description": "As a developer, I want to define rectangular water areas and set their depth.",
       "acceptanceCriteria": [
-        "On /play mount (in GameCanvas.tsx, after auth + character check): Persistence.load() is called before game.start().",
-        "If no save exists AND no character: redirect to Character Creator (existing flow from PRD-01).",
-        "If character exists but no save: start new game at map spawn point with default state (10 yarn, full health).",
-        "If save exists: gameState.restore(saveData) called before spawning player -> player entity at saved position with saved stats, inventory, yarn.",
-        "Active cats from save: re-summoned at saved positions. Validate each position against terrain via MapManager.getTerrainAt() -- invalid positions silently skip (cat not re-summoned).",
-        "Resource node cooldowns from save: restored to ResourceNode components (mid-cooldown nodes stay mid-cooldown with remaining time calculated from save timestamp).",
-        "Loading state: GameCanvas shows a loading indicator while Persistence.load() is in flight (before game renders).",
-        "Error handling: if load fails (network error / TRPCError), show retry button + 'Start New Game' option. Never silently fall back to default -- user must consent to losing their save.",
-        "Auto-save started after successful load/restore via Persistence.startAutoSave(config.autoSaveIntervalMs).",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: load page, confirm loading state appears, game starts with correct state."
+        "Water tool in palette: click-drag to define rectangular water area (grid-snapped corners).",
+        "Selected water zone shows highlighted border and editable properties in side panel: depth (0.5u to 10u).",
+        "Water zones stored in MapData with x, z, width, height, depth.",
+        "Delete key removes selected block (water or terrain).",
+        "Tests: test water zone creation via drag, test depth adjustment, test deletion removes zone.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: drag to create water, adjust depth, delete and confirm gone."
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "This story integrates Persistence into the existing GameCanvas lifecycle. The loading/error UI can be simple DOM overlays -- no need for a full React component since GameCanvas manages its own DOM."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-206",
-      "title": "Debug Menu -- Player tab",
-      "description": "As a developer, I want to modify player stats in real-time so I can test different progression states.",
+      "id": "US-306",
+      "title": "Map editor tools — spawn points",
+      "description": "As a developer, I want to place player and cat spawn points on the map.",
       "acceptanceCriteria": [
-        "src/game/ui/DebugMenu.ts: class that creates a tabbed panel UI. Constructor gated with if (process.env.NODE_ENV !== 'development') return -- ensures tree-shaking in production bundles.",
-        "Ctrl+D toggles menu open/closed. Only registers the keyboard listener in development mode.",
-        "Semi-transparent dark panel (rgba(0,0,0,0.85)) overlaying the game canvas with high z-index. Does NOT pause the game.",
-        "Tab bar at top: Player | Cats | World | Session. Player tab active by default. Only Player tab implemented in this story -- other tabs show 'Coming soon' placeholder.",
-        "Player tab controls: Level selector (number input 0-10), Health setter (range slider 0 to maxHealth), Yarn setter (number input 0-99), Teleport (X and Z number inputs + 'Teleport' button), Speed multiplier (range slider 0.5x-3.0x modifying runtimeConfig.movement.walkSpeed), God mode toggle (checkbox).",
-        "All changes apply immediately via GameState.set() or direct runtimeConfig mutation.",
-        "Changes emit DEBUG_VALUE_CHANGED events on EventBus with { key, value } payload.",
-        "Debug overrides stored in a transient debugState object on DebugMenu -- never included in GameState.serialize().",
-        "Constructor takes { gameState, eventBus, runtimeConfig, world } dependencies.",
-        "dispose() removes all DOM elements and event listeners.",
-        "Tests: test debug value changes propagate to GameState, test debug state excluded from serialize(), test toggle open/close state.",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: Ctrl+D opens menu, change player stats, confirm changes apply in-game."
+        "Player Spawn tool in palette: only one allowed — placing a new one moves the existing one.",
+        "Cat Spawn tool: place multiple, each shows as a cat icon marker.",
+        "Both tools place entities at grid-snapped positions.",
+        "All placed spawns show as distinct colored markers in editor view.",
+        "Spawns stored in MapData (playerSpawn, catSpawns[]).",
+        "Tests: test player spawn placement (one-only rule), test cat spawn placement (multiple allowed), test marker display.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: place player spawn, place cat spawns, confirm markers show."
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "This story creates the DebugMenu framework (panel, tabs, toggle) AND the Player tab. Other tabs are placeholders -- US-207/208/209 fill them in."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-207",
-      "title": "Debug Menu -- Cats tab",
-      "description": "As a developer, I want to test cat abilities without resource constraints so I can iterate on cat behavior rapidly.",
+      "id": "US-307",
+      "title": "Map editor tools — resource nodes",
+      "description": "As a developer, I want to place and configure resource nodes (grass, sticks, water).",
       "acceptanceCriteria": [
-        "Cats tab in DebugMenu contains: Force-summon buttons (one per cat type from CAT_REGISTRY, ignores yarn cost and cat limit), Yarn override (number input sets yarn to any amount via GameState.set()), Cat limit override (number input 1-10), Dismiss all button (dismisses all active cats via CatCompanionManager), Cat behavior state display (shows state Idle/Active/Expired for each active cat, updated each frame).",
-        "Force-summoned cats appear at player's current position + 2 units offset in X.",
-        "All changes apply immediately.",
-        "Constructor extended to accept catCompanionManager dependency.",
-        "Tests: test force-summon creates cat entity, test dismiss all clears active cats, test yarn override sets GameState yarn.",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: open Cats tab, force-summon each type, verify cats appear, dismiss all."
+        "Resource Node tool in palette: select type from dropdown (Grass/Sticks/Water).",
+        "Click map → resource node placed at grid-snapped position.",
+        "Selected node shows properties: type, respawn time (in seconds), position.",
+        "Respawn time default: 30s Grass, 45s Sticks, 60s Water.",
+        "Resource nodes stored in MapData with type, position, respawnTimeMs.",
+        "Tests: test node placement by type, test respawn time configuration, test defaults match config.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: place each resource type, adjust respawn time."
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Depends on DebugMenu framework from US-206. Replace the 'Coming soon' placeholder in the Cats tab."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-208",
-      "title": "Debug Menu -- World tab",
-      "description": "As a developer, I want to manipulate world state so I can test edge cases and balance.",
+      "id": "US-308",
+      "title": "Map editor tools — special zones (hidden terrain, yarn pickups)",
+      "description": "As a developer, I want to place hidden terrain zones and yarn pickups.",
       "acceptanceCriteria": [
-        "World tab in DebugMenu contains: Time scale slider (0.25x-4.0x) stored in runtimeConfig -- affects dt passed to all systems EXCEPT InputManager, Reload map button -> MapManager.loadMap(TestMap), Show collision wireframes toggle, Entity count display (total + breakdown by component type from World.query()), Resource controls ('Fill all nodes' resets all ResourceNode cooldowns, 'Empty all nodes' sets max cooldown), Spawn resource node (type dropdown from ResourceType enum + X/Z position inputs + 'Spawn' button).",
-        "Time scale: Game.ts multiplies dt by runtimeConfig.timeScale before passing to systems. InputManager receives unscaled dt.",
-        "Collision wireframes: SceneManager extended with toggleWireframes(enabled: boolean) that renders collider outlines as a separate Three.js layer.",
-        "Constructor extended to accept mapManager, sceneManager dependencies.",
-        "Tests: test time scale value propagates to runtimeConfig, test fill/empty all nodes modifies ResourceNode components, test entity count reflects actual world state.",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: open World tab, adjust time scale, toggle wireframes, fill/empty nodes."
+        "Hidden Terrain Zone tool: click-drag to define area, set height in side panel.",
+        "Yarn Pickup tool: place collectible, set yarn amount in side panel (default 3).",
+        "Both tools show as distinct colored markers.",
+        "Special zones stored in MapData (hiddenTerrainZones[], yarnPickups[]).",
+        "Tests: test hidden zone creation and height adjustment, test yarn pickup placement and amount config.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: place hidden zone and yarn pickup, adjust properties."
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Depends on DebugMenu framework from US-206. The wireframe toggle touches SceneManager -- keep the Three.js layer logic minimal (one wireframe material, iterate collider entities)."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "US-209",
-      "title": "Debug Menu -- Session tab",
-      "description": "As a developer, I want to control save/load and view session diagnostics.",
+      "id": "US-309",
+      "title": "Map editor tools — move & delete + keyboard shortcuts",
+      "description": "As a developer, I want to move and delete placed objects with keyboard shortcuts.",
       "acceptanceCriteria": [
-        "Session tab in DebugMenu contains: Force Save button -> Persistence.forceSave() with success/failure feedback text, Force Load button -> Persistence.load() + gameState.restore() with feedback, Reset All State button -> calls trpcAdapter.deleteSave() and reloads game with default state (keeps character), Last saved timestamp display (updates reactively from Persistence.lastSavedAt), FPS counter (updated each frame from 1/dt), Entity count (World.getEntityCount() or equivalent), Session time (elapsed since game start), Auto-save status ('Enabled (every 30s)' / 'Disabled') with toggle button.",
-        "Reset All State shows confirmation dialog ('Are you sure? This deletes your save.') before executing. Uses window.confirm() for simplicity.",
-        "Constructor extended to accept persistence dependency.",
-        "GameTrpcAdapter interface extended with deleteSave(): Promise<void>. GameCanvas creates the adapter method.",
-        "Tests: test force save calls persistence.forceSave(), test reset calls deleteSave, test FPS/entity count display updates.",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: open Session tab, verify FPS counter, force save/load, check last saved timestamp."
+        "Move tool (M key): click entity → drag to new position → release to place (grid-snapped).",
+        "Delete tool (D key): click entity → entity removed from map.",
+        "Number keys 1–9 for quick tool palette selection.",
+        "All shortcuts only active in editor mode (M/D are remapped from gameplay).",
+        "Tests: test move tool drag-and-snap, test delete removes entity, test shortcuts activate correct tools.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: press M, drag object, press D, delete object."
       ],
       "priority": 9,
       "passes": false,
-      "notes": "Depends on Persistence (US-203) and DebugMenu framework (US-206). The deleteSave adapter method mirrors the pattern established for getSave in US-203."
+      "notes": ""
     },
     {
-      "id": "US-210",
-      "title": "HUD save indicator",
-      "description": "As a player, I want subtle save feedback so I know my progress is being saved without being interrupted.",
+      "id": "US-310",
+      "title": "Map editor — getMapData, loadMapData, serialization",
+      "description": "As a developer, I want to export and reload maps so changes persist.",
       "acceptanceCriteria": [
-        "HUD.ts extended with a save indicator element: small icon (floppy disk unicode or simple SVG) in the top-right corner of the game canvas.",
-        "On successful auto-save: icon appears with a subtle fade-in, shows for 2 seconds, then fades out. CSS transition handles the animation.",
-        "On save failure: icon appears with red X overlay, persists for 5 seconds, hover/title attribute shows the error message from the SAVE_FAILED event.",
-        "Indicator positioned to not block gameplay or overlap existing HUD elements (hearts, oxygen, inventory).",
-        "UIManager.update() receives isSaving and lastSavedAt from Persistence (via HUDState). HUD.setSaveState() method triggers the indicator.",
-        "EventBus listener for SAVE_FAILED shows the error variant.",
-        "Tests: test save indicator shows on save complete, test error indicator shows on SAVE_FAILED, test indicator hides after timeout.",
-        "pnpm test && pnpm typecheck passes.",
-        "Verify in browser using dev-browser skill: trigger a save (via debug menu or auto-save), confirm icon appears and fades."
+        "MapEditor.getMapData(): MapData returns current map state (terrain, entities, spawns).",
+        "MapEditor.loadMapData(data: MapData): clears all entities and rebuilds from MapData.",
+        "Round-trip: getMapData() → loadMapData() → getMapData() produces identical data.",
+        "MapData type matches the structure used by MapManager.loadMap().",
+        "Tests: test getMapData captures all entities, test loadMapData rebuilds correctly, test round-trip fidelity.",
+        "Typecheck passes."
       ],
       "priority": 10,
       "passes": false,
-      "notes": "Follows existing HUD pattern: build DOM in constructor, update via setter methods. The save/error state comes through the same UIManager.update() pipeline as hearts/oxygen/inventory."
+      "notes": ""
+    },
+    {
+      "id": "US-311",
+      "title": "Map editor — save & load files",
+      "description": "As a developer, I want to export map JSON and load previously saved maps.",
+      "acceptanceCriteria": [
+        "Save button: exports current map state as MapData JSON (browser download dialog).",
+        "Filename auto-generated: map-[name]-[timestamp].json.",
+        "Load button: file picker → select JSON → MapEditor.loadMapData(parsed) → map rebuilds.",
+        "Loaded map replaces current map entirely (all entities destroyed and recreated).",
+        "Invalid JSON shows error message (does not crash). Validate via Zod schema mirroring MapData.",
+        "Tests: test save produces valid JSON, test load parses and rebuilds, test validation rejects bad JSON.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: save map, reload page, load saved JSON, confirm map restored."
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-312",
+      "title": "Map editor — play button (exit editor & play)",
+      "description": "As a developer, I want to play-test the edited map immediately.",
+      "acceptanceCriteria": [
+        "'Play' button in editor: calls MapManager.loadMap(editorMapData) → exits editor → game resumes on the edited map.",
+        "Player spawns at playerSpawn position with default state (10 yarn, full health).",
+        "All terrain, cats, and resource nodes visible and functional on resume.",
+        "Tests: test play button calls loadMap, test editor closes, test game resumes with correct state.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: edit map, press play, confirm game runs with edited map."
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-313",
+      "title": "2D map overlay — terrain rendering",
+      "description": "As a player, I want a 2D overhead map showing terrain types.",
+      "acceptanceCriteria": [
+        "src/game/ui/NavigationOverlay.ts renders when M key pressed (gameplay mode only).",
+        "2D top-down view rendered as colored regions: Grass green (#90EE90), Dirt brown (#8B4513), Stone gray (#A9A9A9), Water blue (#4169E1).",
+        "Overlay rendered on a separate HTML5 <canvas> over the game canvas (no Three.js).",
+        "Map scales to fit overlay panel (fixed size, e.g., 400×400px centered on screen).",
+        "Hidden terrain not shown unless currently revealed by Curiosity Cat.",
+        "Pressing M again or Escape closes overlay.",
+        "Tests: test overlay toggle on M key, test terrain colors render correctly, test escape closes.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: press M, confirm map shows with terrain colors, press M to close."
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-314",
+      "title": "2D map overlay — player, cats, resources",
+      "description": "As a player, I want to see my position, cats, and resources on the overhead map.",
+      "acceptanceCriteria": [
+        "Player icon: colored dot matching character color, with arrow showing facing direction.",
+        "Active cats: small cat-shaped icons at their positions.",
+        "Resource nodes: small icons (G=Grass, S=Sticks, W=Water) distinguishable by color.",
+        "All icons update in real-time as entities move.",
+        "Game continues running behind overlay (NOT paused) — input is consumed by overlay while open.",
+        "Tests: test player icon updates with position, test cat icons appear/disappear with summon/dismiss, test resources show.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: open map, move around, confirm player icon follows, summon cat, confirm on map."
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-315",
+      "title": "Movement balance pass",
+      "description": "As a developer, I want to verify and tune all movement values so traversal feels satisfying.",
+      "acceptanceCriteria": [
+        "Walk speed (4.5 u/s) tested: traversal feels purposeful, not sluggish.",
+        "Acceleration (0.3s) and deceleration (0.2s) tested: feels responsive and controlled.",
+        "Jump impulse (3.5u) tested: reaches intended platforms.",
+        "Coyote time (5 frames) tested: jumping after walking off edges works reliably.",
+        "Jump buffer (5 frames) tested: rapid repeated jumps feel responsive.",
+        "Air control (70%) tested: can steer mid-air.",
+        "Swimming speeds: surface (3.2 u/s), dive (2.0 u/s), ascend (2.5 u/s) tested.",
+        "Any values adjusted are documented in src/game/config.ts with comments explaining the change.",
+        "Tests: parametric tests verifying physics outcomes (e.g., with jumpImpulse=3.5 and gravity=-12, player reaches expected apex height).",
+        "Typecheck passes."
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-316",
+      "title": "Cat balance pass",
+      "description": "As a developer, I want to verify and tune cat costs and effects so each cat feels worth its yarn cost.",
+      "acceptanceCriteria": [
+        "Loaf (1 yarn): height appropriate for stepping; stacking 2–3 reaches platforms.",
+        "Zoomies (2 yarn): trail length and 2× multiplier feel impactful.",
+        "Curiosity Cat (2 yarn): 5u reveal radius useful, 20s duration sufficient.",
+        "Pounce (3 yarn): 3.5u launch reliably reaches High tier (~3.5u).",
+        "Starting yarn (10) tested: enough to experiment with all cats.",
+        "Cat limit (3 for MVP) tested: creates meaningful placement decisions.",
+        "Any values adjusted are documented in cat definition files with comments.",
+        "Tests: parametric tests verifying cat specs produce expected gameplay (e.g., Pounce impulse + cat height reaches ~3.5u).",
+        "Typecheck passes."
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-317",
+      "title": "Resource balance pass",
+      "description": "As a developer, I want resource gathering to hit the GDD feel targets so the core loop is satisfying.",
+      "acceptanceCriteria": [
+        "Grass gather time (1.5s) tested: feels 'snappy — instant gratification' per GDD.",
+        "Sticks gather time (1.5s) and Water gather time (2.0s) tested: feel appropriate.",
+        "Respawn timers: Grass (30s), Sticks (45s), Water (60s) tested.",
+        "Inventory cap (10) tested: tension without frustration.",
+        "Resource distribution: player can gather 5–10 Grass, 2–3 Sticks, 1 Water per 10-minute session.",
+        "'+1 Resource' floating text feedback feels rewarding.",
+        "Any values adjusted documented in src/game/config.ts with comments.",
+        "Tests: parametric tests verifying gather times and respawn durations work as configured.",
+        "Typecheck passes."
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-318",
+      "title": "Edge case fixes — terrain clipping & map bounds",
+      "description": "As a developer, I want the player to stay within safe bounds without clipping through terrain.",
+      "acceptanceCriteria": [
+        "Player cannot get stuck in terrain (push-out resolution if clipping occurs).",
+        "Player cannot walk out of map bounds (collision walls at edges).",
+        "Tests: spawn player at bounds, verify push-back; move player toward terrain, verify push-out if clipped.",
+        "Typecheck passes."
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-319",
+      "title": "Edge case fixes — cat summon validation & dismiss safety",
+      "description": "As a developer, I want cat summon to validate placement and dismiss to handle unsafe situations.",
+      "acceptanceCriteria": [
+        "Cat cannot be summoned inside collision geometry (auto-raise per spec: 3 attempts, then fail with feedback).",
+        "Cat dismissed while player standing on it: player falls safely (no void/clip).",
+        "Tests: attempt to summon in bad positions, verify feedback; dismiss cat under player, verify safe fall.",
+        "Typecheck passes."
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-320",
+      "title": "Edge case fixes — respawn & inventory",
+      "description": "As a developer, I want respawn to reset state correctly and inventory full to give feedback.",
+      "acceptanceCriteria": [
+        "Oxygen draining to 0 → health draining to 0: player respawns at map spawn point with full health (5 hearts) and full oxygen — no death screen, no health penalty (Zen Engagement pillar).",
+        "Inventory full → gathering attempt: clear feedback message, gathering does not start.",
+        "Tests: drain oxygen/health, verify respawn; fill inventory, attempt gather, verify feedback.",
+        "Typecheck passes."
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-321",
+      "title": "Edge case fixes — state persistence & input handling",
+      "description": "As a developer, I want state to persist correctly across complex scenarios and handle rapid input.",
+      "acceptanceCriteria": [
+        "Saving while swimming: on load, if player position is in water, SwimmingState is correctly applied.",
+        "Tab unfocus: game pauses naturally (requestAnimationFrame stops), auto-save fires via beforeunload beacon (PRD-03 US-203).",
+        "Rapid input: holding multiple keys, mashing jump, spam-clicking cat summon — no crashes or inconsistent state.",
+        "HMR / route change: navigating from /play to / and back leaks no WebGL contexts (Game.destroy() from PRD-01).",
+        "Tests: save while swimming, load and verify state; simulate rapid inputs, verify stability.",
+        "Typecheck passes."
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-322",
+      "title": "Visual polish — shadows, grid, water animation",
+      "description": "As a developer, I want visual refinements that make the game feel more alive.",
+      "acceptanceCriteria": [
+        "Ground plane shadows: player and cat entities cast elliptical shadows onto ground.",
+        "Terrain grid lines: subtle grid overlay for spatial reference.",
+        "Terrain color variation: slight random tint within terrain types.",
+        "Water zone: semi-transparent blue with subtle animation (opacity pulse or UV shift).",
+        "Tests: test shadow meshes created, test grid rendered, test water opacity animates.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: load game, confirm shadows, grid, water animation visible."
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-323",
+      "title": "Visual polish — animations (summon, dismiss, progress)",
+      "description": "As a developer, I want entity animations and progress feedback to feel polished.",
+      "acceptanceCriteria": [
+        "Cat summon effect: brief scale-up animation (0 → 1 over 0.2s).",
+        "Cat dismiss effect: brief scale-down animation (1 → 0 over 0.2s).",
+        "Gather progress: smooth progress bar (no jerky step increments).",
+        "Hidden terrain reveal: shimmer/fade-in transition.",
+        "Tests: test animation durations and easing, test progress bar smoothness.",
+        "Typecheck passes.",
+        "Verify in browser using dev-browser skill: summon cat, dismiss cat, gather resource, confirm animations smooth."
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-324",
+      "title": "Final quality gate",
+      "description": "As a developer, I need all quality checks passing so the MVP is shippable.",
+      "acceptanceCriteria": [
+        "pnpm lint passes with zero warnings.",
+        "pnpm typecheck passes with zero errors.",
+        "pnpm build succeeds and produces an optimized bundle.",
+        "No console errors on clean startup of /, /play, or auth callback.",
+        "No console warnings related to game logic (Three.js warnings acceptable).",
+        "Game maintains 60 FPS with test map fully populated.",
+        "Auth flow completes successfully (sign in → /play, sign out → /, refresh → persists).",
+        "Save/load round trip verified (play → close tab → reopen → state matches).",
+        "All 4 cat types functional.",
+        "Swimming + oxygen verified.",
+        "Debug menu functional and stripped from production (grep production JS for 'DebugMenu' — should not appear).",
+        "Map editor produces valid MapData (save → load → identical map) and is similarly stripped from production.",
+        "Typecheck passes."
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
     }
   ]
 }
