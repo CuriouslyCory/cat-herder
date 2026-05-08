@@ -148,3 +148,24 @@ export function recalcDerivedConfig(): void {
     2 * Math.abs(runtimeConfig.gravity) * runtimeConfig.jumpApex,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Resource node configs — gather time, yield, and respawn timers per type.
+// These values are used by Game.ts spawnTestMapResourceNodes() and should
+// be treated as GDD balance constants (change requires a regression test update).
+// ---------------------------------------------------------------------------
+
+export interface ResourceNodeConfig {
+  /** Seconds to complete one gather interaction. */
+  gatherTime: number;
+  /** Items yielded per completed gather. */
+  yieldAmount: number;
+  /** Seconds before the node becomes ready again after being gathered. */
+  respawnTime: number;
+}
+
+export const RESOURCE_CONFIGS = {
+  Grass:  { gatherTime: 1.5, yieldAmount: 1, respawnTime: 30 },
+  Sticks: { gatherTime: 1.5, yieldAmount: 1, respawnTime: 45 },
+  Water:  { gatherTime: 2.0, yieldAmount: 1, respawnTime: 60 },
+} as const satisfies Record<string, ResourceNodeConfig>;

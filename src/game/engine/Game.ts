@@ -27,7 +27,7 @@ import { DebugMenu } from "../ui/DebugMenu";
 import { NavigationOverlay } from "../ui/NavigationOverlay";
 import { MapEditor } from "../maps/MapEditor";
 import { TestMap } from "../maps/TestMap";
-import { CONFIG, runtimeConfig } from "../config";
+import { CONFIG, runtimeConfig, RESOURCE_CONFIGS } from "../config";
 import { Persistence } from "../state/Persistence";
 import type { SaveData as ExternalSaveData } from "../state/SaveData";
 import { createTransform } from "../ecs/components/Transform";
@@ -591,10 +591,6 @@ export class Game {
    *   Water  — 2  nodes, near the SW water zone
    */
   private spawnTestMapResourceNodes(): void {
-    // gatherTime / yieldAmount / respawnTime per resource type
-    const GRASS_CONFIG  = { gatherTime: 1.5, yield: 1, respawn: 30 } as const;
-    const STICKS_CONFIG = { gatherTime: 1.5, yield: 1, respawn: 45 } as const;
-    const WATER_CONFIG  = { gatherTime: 2.0, yield: 1, respawn: 60 } as const;
 
     // Node height: base node center is at y=0.5 (half of 1u sphere diameter)
     const NODE_Y = 0.5;
@@ -657,14 +653,14 @@ export class Game {
 
       const cfg =
         type === ResourceType.Grass
-          ? GRASS_CONFIG
+          ? RESOURCE_CONFIGS.Grass
           : type === ResourceType.Sticks
-          ? STICKS_CONFIG
-          : WATER_CONFIG;
+          ? RESOURCE_CONFIGS.Sticks
+          : RESOURCE_CONFIGS.Water;
 
       this.world.addComponent(
         entity,
-        createResourceNode(type, cfg.gatherTime, cfg.yield, cfg.respawn),
+        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, cfg.respawnTime),
       );
 
       // Track position-based nodeId so cooldowns can be restored on load.
