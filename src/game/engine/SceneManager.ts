@@ -240,6 +240,13 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
     this.meshes.delete(handle);
   }
 
+  /** Toggle wireframe rendering on all registered meshes. Used by the debug menu. */
+  toggleWireframes(enabled: boolean): void {
+    for (const mesh of this.meshes.values()) {
+      (mesh.material as THREE.MeshStandardMaterial).wireframe = enabled;
+    }
+  }
+
   updateTransform(
     handle: SceneHandle,
     position: Vec3,

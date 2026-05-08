@@ -63,6 +63,9 @@ export interface GameConfig {
   // Persistence
   autoSaveIntervalMs: number; // milliseconds between auto-saves
 
+  // Debug / time control
+  timeScale: number; // simulation speed multiplier (1.0 = realtime; debug only)
+
   // Visual effects
   visual: VisualConfig;
 }
@@ -109,6 +112,9 @@ const BASE_CONFIG: GameConfig = {
 
   // Persistence
   autoSaveIntervalMs: 30_000,
+
+  // Debug
+  timeScale: 1.0,
 
   // Visual effects
   visual: {

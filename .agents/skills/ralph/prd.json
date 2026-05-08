@@ -213,7 +213,7 @@
         "Verify in browser using dev-browser skill: open Session tab, verify FPS counter, force save/load, check last saved timestamp."
       ],
       "priority": 9,
-      "passes": true,
+      "passes": false,
       "notes": "Depends on Persistence (US-203) and DebugMenu framework (US-206). The deleteSave adapter method mirrors the pattern established for getSave in US-203."
     },
     {
@@ -232,7 +232,7 @@
         "Verify in browser using dev-browser skill: trigger a save (via debug menu or auto-save), confirm icon appears and fades."
       ],
       "priority": 10,
-      "passes": true,
+      "passes": false,
       "notes": "Follows existing HUD pattern: build DOM in constructor, update via setter methods. The save/error state comes through the same UIManager.update() pipeline as hearts/oxygen/inventory."
     }
   ]

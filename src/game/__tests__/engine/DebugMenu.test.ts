@@ -1,0 +1,903 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { GameState } from "~/game/engine/GameState";
+import { EventBus } from "~/game/engine/EventBus";
+import { DebugMenu } from "~/game/ui/DebugMenu";
+import { World } from "~/game/ecs/World";
+import type { Persistence } from "~/game/state/Persistence";
+import { CONFIG } from "~/game/config";
+import type { GameConfig } from "~/game/config";
+import type { GameEvent } from "~/game/types";
+import { CatType, ResourceType } from "~/game/types";
+import type { Vec3 } from "~/game/types";
+import type { CatCompanionManager } from "~/game/cats/CatCompanionManager";
+import type { Entity } from "~/game/ecs/Entity";
+import { createTransform } from "~/game/ecs/components/Transform";
+import { createResourceNode } from "~/game/ecs/components/ResourceNode";
+
+// ---------------------------------------------------------------------------
+// Minimal DOM stubs — node test env has no document/window
+// ---------------------------------------------------------------------------
+
+function makeMockEl() {
+  return {
+    style: { cssText: "", display: "" } as Record<string, string>,
+    textContent: "",
+    innerHTML: "",
+    value: "0",
+    checked: false,
+    min: "",
+    max: "",
+    step: "",
+    type: "",
+    placeholder: "",
+    disabled: false,
+    dataset: {} as Record<string, string>,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    appendChild: vi.fn(),
+    remove: vi.fn(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Test fixture helpers
+// ---------------------------------------------------------------------------
+
+function makeRuntimeCfg(): GameConfig {
+  return { ...CONFIG, visual: { ...CONFIG.visual } };
+}
+
+// ---------------------------------------------------------------------------
+// Setup / teardown
+// ---------------------------------------------------------------------------
+
+let gameState: GameState;
+let eventBus: EventBus;
+let world: World;
+let runtimeCfg: GameConfig;
+let container: ReturnType<typeof makeMockEl>;
+let menu: DebugMenu;
+let emittedEvents: GameEvent[];
+
+beforeEach(() => {
+  vi.stubEnv("NODE_ENV", "development");
+  vi.stubGlobal("document", {
+    createElement: vi.fn(() => makeMockEl()),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getElementById: vi.fn(() => null),
+    head: { appendChild: vi.fn() },
+  });
+
+  gameState = new GameState(10);
+  eventBus = new EventBus();
+  world = new World();
+  runtimeCfg = makeRuntimeCfg();
+  container = makeMockEl();
+  emittedEvents = [];
+
+  eventBus.on("debug:value-changed", (e) => emittedEvents.push(e));
+
+  menu = new DebugMenu(
+    container as unknown as HTMLElement,
+    gameState,
+    eventBus,
+    runtimeCfg,
+    world,
+  );
+});
+
+afterEach(() => {
+  menu.dispose();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// Toggle open/close
+// ---------------------------------------------------------------------------
+
+describe("toggle()", () => {
+  it("starts closed", () => {
+    expect(menu.isOpen).toBe(false);
+  });
+
+  it("opens menu on first toggle", () => {
+    menu.toggle();
+    expect(menu.isOpen).toBe(true);
+  });
+
+  it("closes menu on second toggle", () => {
+    menu.toggle();
+    menu.toggle();
+    expect(menu.isOpen).toBe(false);
+  });
+
+  it("emits debug:toggled with visible=true when opening", () => {
+    const toggled: GameEvent[] = [];
+    eventBus.on("debug:toggled", (e) => toggled.push(e));
+    menu.toggle();
+    expect(toggled).toContainEqual(expect.objectContaining({ type: "debug:toggled", visible: true }));
+  });
+
+  it("emits debug:toggled with visible=false when closing", () => {
+    const toggled: GameEvent[] = [];
+    eventBus.on("debug:toggled", (e) => toggled.push(e));
+    menu.toggle();
+    menu.toggle();
+    expect(toggled[1]).toMatchObject({ type: "debug:toggled", visible: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyLevel
+// ---------------------------------------------------------------------------
+
+describe("applyLevel()", () => {
+  it("sets player.stats.level in GameState", () => {
+    menu.applyLevel(5);
+    expect(gameState.get<number>("player.stats.level")).toBe(5);
+  });
+
+  it("clamps level to 0..10", () => {
+    menu.applyLevel(-3);
+    expect(gameState.get<number>("player.stats.level")).toBe(0);
+    menu.applyLevel(99);
+    expect(gameState.get<number>("player.stats.level")).toBe(10);
+  });
+
+  it("emits debug:value-changed with player.stats.level key", () => {
+    menu.applyLevel(7);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "player.stats.level", value: 7 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyHealth
+// ---------------------------------------------------------------------------
+
+describe("applyHealth()", () => {
+  it("sets player.stats.health in GameState", () => {
+    menu.applyHealth(6);
+    expect(gameState.get<number>("player.stats.health")).toBe(6);
+  });
+
+  it("clamps health to 0..maxHealth", () => {
+    menu.applyHealth(-1);
+    expect(gameState.get<number>("player.stats.health")).toBe(0);
+    menu.applyHealth(999);
+    const maxHealth = gameState.get<number>("player.stats.maxHealth");
+    expect(gameState.get<number>("player.stats.health")).toBe(maxHealth);
+  });
+
+  it("emits debug:value-changed with player.stats.health key", () => {
+    menu.applyHealth(4);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "player.stats.health", value: 4 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyYarn
+// ---------------------------------------------------------------------------
+
+describe("applyYarn()", () => {
+  it("sets player.yarn in GameState", () => {
+    menu.applyYarn(42);
+    expect(gameState.get<number>("player.yarn")).toBe(42);
+  });
+
+  it("clamps yarn to 0..99", () => {
+    menu.applyYarn(-5);
+    expect(gameState.get<number>("player.yarn")).toBe(0);
+    menu.applyYarn(200);
+    expect(gameState.get<number>("player.yarn")).toBe(99);
+  });
+
+  it("emits debug:value-changed with player.yarn key", () => {
+    menu.applyYarn(25);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "player.yarn", value: 25 }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyTeleport
+// ---------------------------------------------------------------------------
+
+describe("applyTeleport()", () => {
+  it("updates player.position in GameState", () => {
+    menu.applyTeleport(10, -5);
+    const pos = gameState.get<{ x: number; y: number; z: number }>("player.position");
+    expect(pos.x).toBe(10);
+    expect(pos.z).toBe(-5);
+  });
+
+  it("calls the teleportPlayer callback when provided", () => {
+    const teleportCb = vi.fn();
+    const menuWithCb = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+      teleportCb,
+    );
+    menuWithCb.applyTeleport(3, 7);
+    expect(teleportCb).toHaveBeenCalledWith(3, 7);
+    menuWithCb.dispose();
+  });
+
+  it("emits debug:value-changed with player.position key", () => {
+    menu.applyTeleport(1, 2);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "player.position" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applySpeedMultiplier
+// ---------------------------------------------------------------------------
+
+describe("applySpeedMultiplier()", () => {
+  it("modifies runtimeCfg.walkSpeed by the multiplier", () => {
+    menu.applySpeedMultiplier(2.0);
+    expect(runtimeCfg.walkSpeed).toBeCloseTo(CONFIG.walkSpeed * 2.0);
+  });
+
+  it("clamps multiplier to 0.5..3.0", () => {
+    menu.applySpeedMultiplier(0.1);
+    expect(runtimeCfg.walkSpeed).toBeCloseTo(CONFIG.walkSpeed * 0.5);
+    menu.applySpeedMultiplier(5.0);
+    expect(runtimeCfg.walkSpeed).toBeCloseTo(CONFIG.walkSpeed * 3.0);
+  });
+
+  it("stores speedMultiplier in debugState (not GameState)", () => {
+    menu.applySpeedMultiplier(1.5);
+    expect(menu.debugState.speedMultiplier).toBe(1.5);
+  });
+
+  it("emits debug:value-changed with runtimeConfig.walkSpeed key", () => {
+    menu.applySpeedMultiplier(2.0);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "runtimeConfig.walkSpeed" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyGodMode
+// ---------------------------------------------------------------------------
+
+describe("applyGodMode()", () => {
+  it("stores godMode in debugState", () => {
+    menu.applyGodMode(true);
+    expect(menu.debugState.godMode).toBe(true);
+    menu.applyGodMode(false);
+    expect(menu.debugState.godMode).toBe(false);
+  });
+
+  it("emits debug:value-changed with debug.godMode key", () => {
+    menu.applyGodMode(true);
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({ type: "debug:value-changed", key: "debug.godMode", value: true }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Debug state excluded from serialization
+// ---------------------------------------------------------------------------
+
+describe("debug state excluded from GameState.serialize()", () => {
+  it("godMode does not appear in serialized output", () => {
+    menu.applyGodMode(true);
+    const save = gameState.serialize();
+    expect(JSON.stringify(save)).not.toContain("godMode");
+  });
+
+  it("speedMultiplier does not appear in serialized output", () => {
+    menu.applySpeedMultiplier(2.5);
+    const save = gameState.serialize();
+    expect(JSON.stringify(save)).not.toContain("speedMultiplier");
+  });
+
+  it("serialize() still contains expected player fields", () => {
+    menu.applyLevel(5);
+    menu.applyHealth(8);
+    const save = gameState.serialize();
+    // level and health ARE persisted via GameState.set() paths
+    expect(save.player.stats.level).toBe(5);
+    expect(save.player.stats.health).toBe(8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Production mode — constructor no-ops
+// ---------------------------------------------------------------------------
+
+describe("production mode no-op", () => {
+  it("does not build panel when NODE_ENV is not development", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const prodMenu = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+    );
+    expect(prodMenu.isOpen).toBe(false);
+    // toggle() is safe to call even in production (panel is null, returns early)
+    prodMenu.toggle();
+    expect(prodMenu.isOpen).toBe(false);
+    prodMenu.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cats tab
+// ---------------------------------------------------------------------------
+
+describe("Cats tab", () => {
+  type MockCatManager = {
+    getCatalog: ReturnType<typeof vi.fn>;
+    summon: ReturnType<typeof vi.fn>;
+    dismiss: ReturnType<typeof vi.fn>;
+    getActiveCompanions: ReturnType<typeof vi.fn>;
+    canAfford: ReturnType<typeof vi.fn>;
+    isValidPosition: ReturnType<typeof vi.fn>;
+  };
+
+  let mockCatManager: MockCatManager;
+  let menuWithCats: DebugMenu;
+  let mockGetPlayerPos: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockCatManager = {
+      getCatalog: vi.fn(() => [
+        { type: CatType.Loaf, name: "Loaf", yarnCost: 2, description: "test", unlocked: true },
+        { type: CatType.Zoomies, name: "Zoomies", yarnCost: 3, description: "test", unlocked: true },
+      ]),
+      summon: vi.fn(() => 42 as Entity),
+      dismiss: vi.fn(),
+      getActiveCompanions: vi.fn(() => [] as Entity[]),
+      canAfford: vi.fn(() => true),
+      isValidPosition: vi.fn(() => true),
+    };
+
+    mockGetPlayerPos = vi.fn(() => ({ x: 5, y: 0, z: 3 }));
+
+    menuWithCats = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+      undefined,
+      mockCatManager as unknown as CatCompanionManager,
+      mockGetPlayerPos as unknown as () => Vec3 | null,
+    );
+  });
+
+  afterEach(() => {
+    menuWithCats.dispose();
+  });
+
+  describe("applyForceSummon()", () => {
+    it("calls catCompanionManager.summon at player position + 2 in X", () => {
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(mockCatManager.summon).toHaveBeenCalledWith(
+        CatType.Loaf,
+        expect.objectContaining({ x: 7, z: 3 }),
+      );
+    });
+
+    it("restores yarn to its pre-summon value", () => {
+      gameState.set("player.yarn", 10);
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(gameState.get<number>("player.yarn")).toBe(10);
+    });
+
+    it("restores runtimeConfig.maxActiveCats after summon", () => {
+      runtimeCfg.maxActiveCats = 3;
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(runtimeCfg.maxActiveCats).toBe(3);
+    });
+
+    it("emits debug:value-changed with debug.forceSummon key", () => {
+      menuWithCats.applyForceSummon(CatType.Loaf);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.forceSummon" }),
+      );
+    });
+
+    it("uses origin + 2 in X when getPlayerPosition returns null", () => {
+      mockGetPlayerPos.mockReturnValue(null);
+      menuWithCats.applyForceSummon(CatType.Zoomies);
+      expect(mockCatManager.summon).toHaveBeenCalledWith(
+        CatType.Zoomies,
+        expect.objectContaining({ x: 2, z: 0 }),
+      );
+    });
+  });
+
+  describe("applyDismissAll()", () => {
+    it("calls dismiss for each active cat", () => {
+      const entity1 = 1 as Entity;
+      const entity2 = 2 as Entity;
+      mockCatManager.getActiveCompanions.mockReturnValue([entity1, entity2]);
+      menuWithCats.applyDismissAll();
+      expect(mockCatManager.dismiss).toHaveBeenCalledWith(entity1);
+      expect(mockCatManager.dismiss).toHaveBeenCalledWith(entity2);
+    });
+
+    it("is a no-op when no cats are active", () => {
+      menuWithCats.applyDismissAll();
+      expect(mockCatManager.dismiss).not.toHaveBeenCalled();
+    });
+
+    it("emits debug:value-changed with debug.dismissAll key", () => {
+      menuWithCats.applyDismissAll();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.dismissAll", value: true }),
+      );
+    });
+  });
+
+  describe("applyYarnOverride()", () => {
+    it("sets player.yarn to any non-negative value (above normal 99 cap)", () => {
+      menuWithCats.applyYarnOverride(500);
+      expect(gameState.get<number>("player.yarn")).toBe(500);
+    });
+
+    it("clamps to 0 for negative values", () => {
+      menuWithCats.applyYarnOverride(-10);
+      expect(gameState.get<number>("player.yarn")).toBe(0);
+    });
+
+    it("emits debug:value-changed with player.yarn key", () => {
+      menuWithCats.applyYarnOverride(100);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "player.yarn", value: 100 }),
+      );
+    });
+  });
+
+  describe("applyCatLimitOverride()", () => {
+    it("sets runtimeConfig.maxActiveCats", () => {
+      menuWithCats.applyCatLimitOverride(7);
+      expect(runtimeCfg.maxActiveCats).toBe(7);
+    });
+
+    it("clamps to 1..10", () => {
+      menuWithCats.applyCatLimitOverride(0);
+      expect(runtimeCfg.maxActiveCats).toBe(1);
+      menuWithCats.applyCatLimitOverride(99);
+      expect(runtimeCfg.maxActiveCats).toBe(10);
+    });
+
+    it("emits debug:value-changed with runtimeConfig.maxActiveCats key", () => {
+      menuWithCats.applyCatLimitOverride(5);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({
+          type: "debug:value-changed",
+          key: "runtimeConfig.maxActiveCats",
+          value: 5,
+        }),
+      );
+    });
+  });
+
+  describe("update()", () => {
+    it("calls getActiveCompanions when menu is open", () => {
+      menuWithCats.toggle(); // open
+      menuWithCats.update();
+      expect(mockCatManager.getActiveCompanions).toHaveBeenCalled();
+    });
+
+    it("does not call getActiveCompanions when menu is closed", () => {
+      // Menu starts closed
+      menuWithCats.update();
+      expect(mockCatManager.getActiveCompanions).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// World tab
+// ---------------------------------------------------------------------------
+
+describe("World tab", () => {
+  // ---------------------------------------------------------------------------
+  // applyTimeScale
+  // ---------------------------------------------------------------------------
+
+  describe("applyTimeScale()", () => {
+    it("sets runtimeConfig.timeScale", () => {
+      menu.applyTimeScale(2.0);
+      expect(runtimeCfg.timeScale).toBe(2.0);
+    });
+
+    it("clamps to 0.25..4.0", () => {
+      menu.applyTimeScale(0.01);
+      expect(runtimeCfg.timeScale).toBe(0.25);
+      menu.applyTimeScale(99);
+      expect(runtimeCfg.timeScale).toBe(4.0);
+    });
+
+    it("stores timeScale in debugState", () => {
+      menu.applyTimeScale(1.5);
+      expect(menu.debugState.timeScale).toBe(1.5);
+    });
+
+    it("emits debug:value-changed with runtimeConfig.timeScale key", () => {
+      menu.applyTimeScale(2.0);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "runtimeConfig.timeScale", value: 2.0 }),
+      );
+    });
+
+    it("timeScale does not appear in GameState.serialize()", () => {
+      menu.applyTimeScale(3.0);
+      const save = gameState.serialize();
+      expect(JSON.stringify(save)).not.toContain("timeScale");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyReloadMap
+  // ---------------------------------------------------------------------------
+
+  describe("applyReloadMap()", () => {
+    it("calls the reloadMap callback when provided", () => {
+      const reloadCb = vi.fn();
+      const menuWithReload = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState,
+        eventBus,
+        runtimeCfg,
+        world,
+        undefined,
+        undefined,
+        undefined,
+        reloadCb,
+      );
+      menuWithReload.applyReloadMap();
+      expect(reloadCb).toHaveBeenCalledOnce();
+      menuWithReload.dispose();
+    });
+
+    it("is a no-op when reloadMap is not provided", () => {
+      // menu has no reloadMap — should not throw
+      expect(() => menu.applyReloadMap()).not.toThrow();
+    });
+
+    it("emits debug:value-changed with debug.reloadMap key", () => {
+      menu.applyReloadMap();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.reloadMap", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyWireframes
+  // ---------------------------------------------------------------------------
+
+  describe("applyWireframes()", () => {
+    it("calls sceneManager.toggleWireframes when provided", () => {
+      const mockScene = { toggleWireframes: vi.fn() };
+      const menuWithScene = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState,
+        eventBus,
+        runtimeCfg,
+        world,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        mockScene,
+      );
+      menuWithScene.applyWireframes(true);
+      expect(mockScene.toggleWireframes).toHaveBeenCalledWith(true);
+      menuWithScene.applyWireframes(false);
+      expect(mockScene.toggleWireframes).toHaveBeenCalledWith(false);
+      menuWithScene.dispose();
+    });
+
+    it("is a no-op when sceneManager is not provided", () => {
+      expect(() => menu.applyWireframes(true)).not.toThrow();
+    });
+
+    it("emits debug:value-changed with debug.wireframes key", () => {
+      menu.applyWireframes(true);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.wireframes", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyFillAllNodes / applyEmptyAllNodes
+  // ---------------------------------------------------------------------------
+
+  describe("applyFillAllNodes()", () => {
+    it("resets all ResourceNode cooldowns to 0", () => {
+      // Spawn two resource node entities in the world
+      const e1 = world.createEntity();
+      world.addComponent(e1, createTransform(0, 0.5, 0));
+      const node1 = createResourceNode(ResourceType.Grass, 1.5, 1, 30);
+      node1.cooldownRemaining = 25;
+      world.addComponent(e1, node1);
+
+      const e2 = world.createEntity();
+      world.addComponent(e2, createTransform(5, 0.5, 0));
+      const node2 = createResourceNode(ResourceType.Sticks, 1.5, 1, 45);
+      node2.cooldownRemaining = 40;
+      world.addComponent(e2, node2);
+
+      menu.applyFillAllNodes();
+
+      expect(node1.cooldownRemaining).toBe(0);
+      expect(node2.cooldownRemaining).toBe(0);
+    });
+
+    it("emits debug:value-changed with debug.fillAllNodes key", () => {
+      menu.applyFillAllNodes();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.fillAllNodes", value: true }),
+      );
+    });
+
+    it("is safe when no resource nodes exist", () => {
+      expect(() => menu.applyFillAllNodes()).not.toThrow();
+    });
+  });
+
+  describe("applyEmptyAllNodes()", () => {
+    it("sets all ResourceNode cooldowns to their respawnTime", () => {
+      const e1 = world.createEntity();
+      world.addComponent(e1, createTransform(0, 0.5, 0));
+      const node1 = createResourceNode(ResourceType.Grass, 1.5, 1, 30);
+      node1.cooldownRemaining = 0;
+      world.addComponent(e1, node1);
+
+      menu.applyEmptyAllNodes();
+
+      expect(node1.cooldownRemaining).toBe(30);
+    });
+
+    it("emits debug:value-changed with debug.emptyAllNodes key", () => {
+      menu.applyEmptyAllNodes();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.emptyAllNodes", value: true }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applySpawnResourceNode
+  // ---------------------------------------------------------------------------
+
+  describe("applySpawnResourceNode()", () => {
+    it("creates a new entity with ResourceNode component in world", () => {
+      const countBefore = world.query("ResourceNode").length;
+      menu.applySpawnResourceNode(ResourceType.Grass, 3, 7);
+      const countAfter = world.query("ResourceNode").length;
+      expect(countAfter).toBe(countBefore + 1);
+    });
+
+    it("new ResourceNode has correct resourceType", () => {
+      menu.applySpawnResourceNode(ResourceType.Water, 0, 0);
+      const nodes = world.query("ResourceNode");
+      const last = nodes[nodes.length - 1]!;
+      const node = world.getComponent<import("~/game/ecs/components/ResourceNode").ResourceNode>(last, "ResourceNode");
+      expect(node?.resourceType).toBe(ResourceType.Water);
+    });
+
+    it("emits debug:value-changed with debug.spawnResourceNode key", () => {
+      menu.applySpawnResourceNode(ResourceType.Sticks, 1, 2);
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.spawnResourceNode" }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // entityCount via update()
+  // ---------------------------------------------------------------------------
+
+  describe("World tab entity count (update)", () => {
+    it("entityCount getter on World reflects alive entities", () => {
+      const before = world.entityCount;
+      world.createEntity();
+      world.createEntity();
+      expect(world.entityCount).toBe(before + 2);
+    });
+
+    it("entityCount decreases after destroyEntity", () => {
+      const e = world.createEntity();
+      const before = world.entityCount;
+      world.destroyEntity(e);
+      expect(world.entityCount).toBe(before - 1);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session tab
+// ---------------------------------------------------------------------------
+
+describe("Session tab", () => {
+  type MockPersistence = {
+    forceSave: ReturnType<typeof vi.fn>;
+    load: ReturnType<typeof vi.fn>;
+    restoreFromSave: ReturnType<typeof vi.fn>;
+    deleteSave: ReturnType<typeof vi.fn>;
+    lastSavedAt: number | null;
+    isSaving: boolean;
+    startAutoSave: ReturnType<typeof vi.fn>;
+    stopAutoSave: ReturnType<typeof vi.fn>;
+  };
+
+  let mockPersistence: MockPersistence;
+  let onSaveResetCb: ReturnType<typeof vi.fn>;
+  let menuWithSession: DebugMenu;
+
+  beforeEach(() => {
+    mockPersistence = {
+      forceSave: vi.fn(() => Promise.resolve()),
+      load: vi.fn(() => Promise.resolve(null)),
+      restoreFromSave: vi.fn(),
+      deleteSave: vi.fn(() => Promise.resolve()),
+      lastSavedAt: null,
+      isSaving: false,
+      startAutoSave: vi.fn(),
+      stopAutoSave: vi.fn(),
+    };
+    onSaveResetCb = vi.fn();
+    menuWithSession = new DebugMenu(
+      container as unknown as HTMLElement,
+      gameState,
+      eventBus,
+      runtimeCfg,
+      world,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockPersistence as unknown as Persistence,
+      onSaveResetCb as unknown as () => void,
+    );
+  });
+
+  afterEach(() => {
+    menuWithSession.dispose();
+    // Outer afterEach handles vi.unstubAllGlobals() — do not clear it here.
+  });
+
+  // ── applyForceSave ────────────────────────────────────────────────────────
+
+  describe("applyForceSave()", () => {
+    it("calls persistence.forceSave()", () => {
+      menuWithSession.applyForceSave();
+      expect(mockPersistence.forceSave).toHaveBeenCalledOnce();
+    });
+
+    it("is a no-op when persistence is not provided", () => {
+      const menuNoPersistence = new DebugMenu(
+        container as unknown as HTMLElement,
+        gameState, eventBus, runtimeCfg, world,
+      );
+      expect(() => menuNoPersistence.applyForceSave()).not.toThrow();
+      menuNoPersistence.dispose();
+    });
+  });
+
+  // ── applyForceLoad ────────────────────────────────────────────────────────
+
+  describe("applyForceLoad()", () => {
+    it("calls persistence.load()", () => {
+      menuWithSession.applyForceLoad();
+      expect(mockPersistence.load).toHaveBeenCalledOnce();
+    });
+
+    it("calls restoreFromSave when load returns data", async () => {
+      const fakeData = { character: {}, world: {}, session: {} };
+      mockPersistence.load.mockResolvedValue(fakeData);
+      menuWithSession.applyForceLoad();
+      await Promise.resolve();
+      expect(mockPersistence.restoreFromSave).toHaveBeenCalledWith(fakeData);
+    });
+
+    it("does not call restoreFromSave when load returns null", async () => {
+      mockPersistence.load.mockResolvedValue(null);
+      menuWithSession.applyForceLoad();
+      await Promise.resolve();
+      expect(mockPersistence.restoreFromSave).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── applyResetAllState ────────────────────────────────────────────────────
+
+  describe("applyResetAllState()", () => {
+    it("calls persistence.deleteSave() when user confirms", () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => true) });
+      menuWithSession.applyResetAllState();
+      expect(mockPersistence.deleteSave).toHaveBeenCalledOnce();
+    });
+
+    it("does not call deleteSave when user cancels", () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => false) });
+      menuWithSession.applyResetAllState();
+      expect(mockPersistence.deleteSave).not.toHaveBeenCalled();
+    });
+
+    it("calls onSaveReset callback after deleteSave resolves", async () => {
+      vi.stubGlobal("window", { confirm: vi.fn(() => true) });
+      menuWithSession.applyResetAllState();
+      await Promise.resolve();
+      await Promise.resolve(); // flush two microtask ticks for the .then chain
+      expect(onSaveResetCb).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── applyToggleAutoSave ───────────────────────────────────────────────────
+
+  describe("applyToggleAutoSave()", () => {
+    it("calls stopAutoSave when auto-save is currently enabled", () => {
+      menuWithSession.applyToggleAutoSave();
+      expect(mockPersistence.stopAutoSave).toHaveBeenCalledOnce();
+    });
+
+    it("calls startAutoSave when auto-save is currently disabled", () => {
+      menuWithSession.applyToggleAutoSave(); // disable
+      menuWithSession.applyToggleAutoSave(); // re-enable
+      expect(mockPersistence.startAutoSave).toHaveBeenCalledOnce();
+    });
+
+    it("emits debug:value-changed with debug.autoSave key", () => {
+      menuWithSession.applyToggleAutoSave();
+      expect(emittedEvents).toContainEqual(
+        expect.objectContaining({ type: "debug:value-changed", key: "debug.autoSave" }),
+      );
+    });
+  });
+
+  // ── update() — Session diagnostics ───────────────────────────────────────
+
+  describe("update() - session diagnostics", () => {
+    it("updates FPS display when menu is open", () => {
+      menuWithSession.toggle();
+      menuWithSession.update(1 / 30);
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const fpsEl = (menuWithSession as unknown as WithPrivate)._sessionFpsEl;
+      if (fpsEl) expect(fpsEl.textContent).toBe("30 fps");
+    });
+
+    it("does not update FPS display when menu is closed", () => {
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const before = (menuWithSession as unknown as WithPrivate)._sessionFpsEl?.textContent;
+      menuWithSession.update(1 / 30);
+      const after = (menuWithSession as unknown as WithPrivate)._sessionFpsEl?.textContent;
+      expect(after).toBe(before); // no change while closed
+    });
+
+    it("uses last known dt when update() is called without dt", () => {
+      menuWithSession.toggle();
+      menuWithSession.update(1 / 60); // seed the dt
+      menuWithSession.update();       // no dt — should reuse last
+      type WithPrivate = { _sessionFpsEl: { textContent: string } | null };
+      const fpsEl = (menuWithSession as unknown as WithPrivate)._sessionFpsEl;
+      if (fpsEl) expect(fpsEl.textContent).toBe("60 fps");
+    });
+  });
+});

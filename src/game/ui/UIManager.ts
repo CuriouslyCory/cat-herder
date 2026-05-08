@@ -41,6 +41,10 @@ export interface HUDState {
   activeCompanions?: ActiveCatInfo[];
   /** Player world position for the debug overlay (dev builds only). */
   playerPosition?: { x: number; y: number; z: number } | null;
+  /** Timestamp of last successful save; drives the save indicator fade-in. */
+  lastSavedAt?: number | null;
+  /** Non-null while there is an active save error; drives the error indicator. */
+  saveError?: string | null;
 }
 
 /**
@@ -87,6 +91,7 @@ export class UIManager {
       state?.activeCompanions ?? [],
       state?.playerPosition ?? null,
     );
+    this.hud.setSaveIndicator(state?.lastSavedAt, state?.saveError);
   }
 
   /** Pass the cat catalog to the HUD so it can render the selection bar. */

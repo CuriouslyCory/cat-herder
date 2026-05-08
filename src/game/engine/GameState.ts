@@ -1,119 +1,274 @@
 // ---------------------------------------------------------------------------
-// GameState — mutable player state shared across systems and the HUD.
+// GameState — central game state store with path-based reactive API.
 //
-// Tracks yarn and inventory; provides reactive onChange() subscriptions so
-// the HUD can update without polling.
+// Tracks all persistable game data. Existing convenience methods (addYarn,
+// deductYarn, onYarnChange, addResource, hasInventorySpace, onInventoryChange)
+// are preserved as wrappers over the path-based store so callers don't break.
 // ---------------------------------------------------------------------------
 
-import type { ResourceType } from "../types";
+import type { ResourceType, CatType, Vec3 } from "../types";
 
-type Listener<T> = (value: T) => void;
+type Unsubscribe = () => void;
+type PathCallback<T> = (newVal: T, oldVal: T) => void;
 
 export interface InventoryStack {
   resourceType: ResourceType;
   quantity: number;
 }
 
-export class GameState {
-  private _yarn: number;
-  private readonly yarnListeners = new Set<Listener<number>>();
-  private readonly inventoryListeners = new Set<Listener<readonly InventoryStack[]>>();
+interface PlayerStats {
+  level: number;
+  health: number;
+  maxHealth: number;
+}
 
-  /** Resource stacks — same-type resources share one stack. */
-  readonly inventory: InventoryStack[] = [];
+interface PlayerState {
+  appearance: Record<string, unknown>;
+  position: Vec3;
+  stats: PlayerStats;
+  yarn: number;
+  oxygen: number;
+  abilities: string[];
+  inventory: InventoryStack[];
+}
+
+interface WorldState {
+  currentMapId: string;
+  activeCats: Array<{ catType: CatType; position: Vec3 }>;
+  hiddenTerrain: number[];
+  resourceNodes: Array<{ nodeId: string; cooldownRemaining: number }>;
+}
+
+interface SessionState {
+  totalPlaytimeMs: number;
+  isSwimming: boolean;
+  isDiving: boolean;
+}
+
+interface InternalState {
+  player: PlayerState;
+  world: WorldState;
+  session: SessionState;
+}
+
+// SaveData excludes transient session fields.
+export interface SaveData {
+  player: PlayerState;
+  world: WorldState;
+}
+
+function defaultState(initialYarn: number): InternalState {
+  return {
+    player: {
+      appearance: {},
+      position: { x: 0, y: 0, z: 0 },
+      stats: { level: 1, health: 10, maxHealth: 10 },
+      yarn: initialYarn,
+      oxygen: 100,
+      abilities: [],
+      inventory: [],
+    },
+    world: {
+      currentMapId: "default",
+      activeCats: [],
+      hiddenTerrain: [],
+      resourceNodes: [],
+    },
+    session: {
+      totalPlaytimeMs: 0,
+      isSwimming: false,
+      isDiving: false,
+    },
+  };
+}
+
+export class GameState {
+  private _state: InternalState;
+  private _isDirty = false;
+  private readonly _pathListeners = new Map<
+    string,
+    Set<PathCallback<unknown>>
+  >();
+
   /** Maximum total items across all stacks (enforced by US-112). */
   maxInventoryCapacity = 10;
 
   constructor(initialYarn = 10) {
-    this._yarn = initialYarn;
+    this._state = defaultState(initialYarn);
   }
 
-  // ── Yarn ────────────────────────────────────────────────────────────────────
+  // ── Path-based API ────────────────────────────────────────────────────────────
+
+  get<T>(path: string): T {
+    return this._getAtPath(path) as T;
+  }
+
+  set<T>(path: string, value: T): void {
+    if (!this._validate(path, value)) return;
+    const oldVal = this._getAtPath(path);
+    this._setAtPath(path, value);
+    this._isDirty = true;
+    this._notifyPath(path, value, oldVal);
+  }
+
+  onChange<T>(path: string, callback: PathCallback<T>): Unsubscribe {
+    if (!this._pathListeners.has(path)) {
+      this._pathListeners.set(path, new Set());
+    }
+    const cb = callback as PathCallback<unknown>;
+    this._pathListeners.get(path)!.add(cb);
+    return () => this._pathListeners.get(path)?.delete(cb);
+  }
+
+  get isDirty(): boolean {
+    return this._isDirty;
+  }
+
+  clearDirty(): void {
+    this._isDirty = false;
+  }
+
+  // ── Serialization ─────────────────────────────────────────────────────────────
+
+  serialize(): SaveData {
+    return {
+      player: structuredClone(this._state.player),
+      world: structuredClone(this._state.world),
+    };
+  }
+
+  restore(data: SaveData): void {
+    // Snapshot old values for all registered paths before restoring.
+    const oldValues = new Map<string, unknown>();
+    for (const path of this._pathListeners.keys()) {
+      oldValues.set(path, this._getAtPath(path));
+    }
+
+    this._state.player = structuredClone(data.player);
+    this._state.world = structuredClone(data.world);
+
+    // Notify all registered listeners with correct old/new values.
+    for (const [path, listeners] of this._pathListeners) {
+      const newVal = this._getAtPath(path);
+      const oldVal = oldValues.get(path);
+      for (const listener of listeners) {
+        listener(newVal, oldVal);
+      }
+    }
+
+    this._isDirty = false;
+  }
+
+  // ── Yarn (backward-compat wrappers) ──────────────────────────────────────────
 
   get yarn(): number {
-    return this._yarn;
+    return this._state.player.yarn;
   }
 
-  /** Add yarn and notify subscribers. */
   addYarn(amount: number): void {
     if (!Number.isFinite(amount) || amount <= 0) return;
-    this._yarn += amount;
-    this.notifyYarn();
+    this.set("player.yarn", this._state.player.yarn + amount);
   }
 
-  /**
-   * Deduct yarn if the balance is sufficient.
-   * Returns true on success, false if there is not enough yarn.
-   */
   deductYarn(amount: number): boolean {
     if (!Number.isFinite(amount) || amount <= 0) return false;
-    if (this._yarn < amount) return false;
-    this._yarn -= amount;
-    this.notifyYarn();
+    const current = this._state.player.yarn;
+    if (current < amount) return false;
+    this.set("player.yarn", current - amount);
     return true;
   }
 
-  /**
-   * Subscribe to yarn changes.
-   * The listener is called immediately with the current value, then on every change.
-   * Returns an unsubscribe function.
-   */
-  onYarnChange(listener: Listener<number>): () => void {
-    this.yarnListeners.add(listener);
-    listener(this._yarn); // emit current value immediately
-    return () => this.yarnListeners.delete(listener);
+  onYarnChange(listener: (value: number) => void): Unsubscribe {
+    listener(this._state.player.yarn); // immediate call (existing contract)
+    return this.onChange<number>("player.yarn", (newVal) => listener(newVal));
   }
 
-  // ── Inventory ────────────────────────────────────────────────────────────────
+  // ── Inventory (backward-compat wrappers) ─────────────────────────────────────
 
-  /** Total items held across all stacks. */
+  get inventory(): InventoryStack[] {
+    return this._state.player.inventory;
+  }
+
   get inventoryTotal(): number {
-    return this.inventory.reduce((sum, s) => sum + s.quantity, 0);
+    return this._state.player.inventory.reduce((sum, s) => sum + s.quantity, 0);
   }
 
-  /** True if adding `amount` items would not exceed maxInventoryCapacity. */
   hasInventorySpace(amount = 1): boolean {
     return this.inventoryTotal + amount <= this.maxInventoryCapacity;
   }
 
-  /**
-   * Add `amount` units of the given resource type to inventory.
-   * Stacks with the same type accumulate. Does NOT enforce capacity — callers
-   * should check hasInventorySpace() before calling.
-   */
   addResource(resourceType: ResourceType, amount = 1): void {
     if (!Number.isFinite(amount) || amount <= 0) return;
-    const stack = this.inventory.find((s) => s.resourceType === resourceType);
+    // Clone stacks so set() receives a new array reference.
+    const inventory = this._state.player.inventory.map((s) => ({ ...s }));
+    const stack = inventory.find((s) => s.resourceType === resourceType);
     if (stack) {
       stack.quantity += amount;
     } else {
-      this.inventory.push({ resourceType, quantity: amount });
+      inventory.push({ resourceType, quantity: amount });
     }
-    this.notifyInventory();
+    this.set("player.inventory", inventory);
   }
 
-  /**
-   * Subscribe to inventory changes.
-   * The listener is called immediately with the current inventory, then on every change.
-   * Returns an unsubscribe function.
-   */
-  onInventoryChange(listener: Listener<readonly InventoryStack[]>): () => void {
-    this.inventoryListeners.add(listener);
-    listener(this.inventory);
-    return () => this.inventoryListeners.delete(listener);
+  onInventoryChange(
+    listener: (inventory: readonly InventoryStack[]) => void,
+  ): Unsubscribe {
+    listener(this._state.player.inventory); // immediate call (existing contract)
+    return this.onChange<InventoryStack[]>("player.inventory", (newVal) =>
+      listener(newVal),
+    );
   }
 
-  // ── Private ─────────────────────────────────────────────────────────────────
+  // ── Private ──────────────────────────────────────────────────────────────────
 
-  private notifyYarn(): void {
-    for (const listener of this.yarnListeners) {
-      listener(this._yarn);
+  private _getAtPath(path: string): unknown {
+    const parts = path.split(".");
+    let obj: unknown = this._state;
+    for (const part of parts) {
+      if (obj === null || typeof obj !== "object") return undefined;
+      obj = (obj as Record<string, unknown>)[part];
+    }
+    return obj;
+  }
+
+  private _setAtPath(path: string, value: unknown): void {
+    const parts = path.split(".");
+    let obj = this._state as unknown as Record<string, unknown>;
+    for (let i = 0; i < parts.length - 1; i++) {
+      obj = obj[parts[i]!] as Record<string, unknown>;
+    }
+    obj[parts[parts.length - 1]!] = value;
+  }
+
+  private _notifyPath(path: string, newVal: unknown, oldVal: unknown): void {
+    const listeners = this._pathListeners.get(path);
+    if (!listeners) return;
+    for (const listener of listeners) {
+      listener(newVal, oldVal);
     }
   }
 
-  private notifyInventory(): void {
-    for (const listener of this.inventoryListeners) {
-      listener(this.inventory);
+  private _validate(path: string, value: unknown): boolean {
+    switch (path) {
+      case "player.yarn":
+        return typeof value === "number" && value >= 0;
+      case "player.stats.health":
+        return (
+          typeof value === "number" &&
+          value >= 0 &&
+          value <= this._state.player.stats.maxHealth
+        );
+      case "player.stats.level":
+        return (
+          typeof value === "number" &&
+          Number.isInteger(value) &&
+          value >= 0 &&
+          value <= 10
+        );
+      case "player.stats.maxHealth":
+        return typeof value === "number" && value > 0;
+      default:
+        return true;
     }
   }
 }

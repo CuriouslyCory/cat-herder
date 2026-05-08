@@ -98,4 +98,9 @@ export class World {
   isAlive(entity: Entity): boolean {
     return this.entities.has(entity);
   }
+
+  /** Total number of alive entities. */
+  get entityCount(): number {
+    return this.entities.size;
+  }
 }

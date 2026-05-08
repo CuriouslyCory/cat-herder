@@ -16,6 +16,12 @@ interface GameCanvasProps {
   user: GameUser;
 }
 
+type StartState =
+  | { phase: "idle" }
+  | { phase: "loading" }
+  | { phase: "error"; message: string }
+  | { phase: "running" };
+
 /**
  * Client-only component that owns the Three.js canvas.
  * Loaded via next/dynamic with ssr: false so Three.js never runs on the server.
@@ -24,11 +30,14 @@ interface GameCanvasProps {
  *  1. Query getCharacter on mount.
  *  2. If no character exists → render CharacterCreator overlay (game not yet started).
  *  3. Once a character is confirmed (DB or newly created) → start the game.
+ *     - show loading indicator while Persistence.load() is in flight.
+ *     - on error → show retry / start-new-game options (user consents to save loss).
  *  4. If the game is already running and a new character is set → call spawnPlayer().
  */
 export function GameCanvas({ user }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
+  const [startState, setStartState] = useState<StartState>({ phase: "idle" });
 
   // Character explicitly set by CharacterCreator (takes priority over DB row)
   const [createdCharacter, setCreatedCharacter] =
@@ -42,18 +51,34 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   const { mutateAsync: upsertSaveMutateAsync } =
     api.game.upsertSave.useMutation();
-
-  // Ref is initialized once; synced after every commit so the game loop always
-  // calls the latest mutateAsync without needing to recreate the stable adapter.
-  const upsertSaveRef = useRef(upsertSaveMutateAsync);
-  useEffect(() => {
-    upsertSaveRef.current = upsertSaveMutateAsync;
+  const { mutateAsync: deleteSaveMutateAsync } =
+    api.game.deleteSave.useMutation();
+  const { refetch: refetchSave } = api.game.getSave.useQuery(undefined, {
+    enabled: false,
+    staleTime: Infinity,
   });
 
-  // Stable adapter — created once; always delegates to the latest mutateAsync
+  // Refs are initialized once; synced after every commit so the game loop always
+  // calls the latest function without needing to recreate the stable adapter.
+  const upsertSaveRef = useRef(upsertSaveMutateAsync);
+  const deleteSaveRef = useRef(deleteSaveMutateAsync);
+  const refetchSaveRef = useRef(refetchSave);
+  useEffect(() => {
+    upsertSaveRef.current = upsertSaveMutateAsync;
+    deleteSaveRef.current = deleteSaveMutateAsync;
+    refetchSaveRef.current = refetchSave;
+  });
+
+  // Stable adapter — created once; always delegates to the latest functions
   const trpcAdapter = useMemo<GameTrpcAdapter>(
     () => ({
       upsertSave: (input) => upsertSaveRef.current(input),
+      getSave: async () => {
+        const result = await refetchSaveRef.current({ throwOnError: false });
+        if (!result.data) return null;
+        return result.data as { version: string; saveData: Record<string, unknown> };
+      },
+      deleteSave: () => deleteSaveRef.current(),
     }),
     [], // stable for the lifetime of this component mount
   );
@@ -74,6 +99,38 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
   // Effective character: prefer creator output over DB row
   const character = createdCharacter ?? savedCharacterConfig;
+
+  // ── Helpers for retry / start-fresh ─────────────────────────────────────────
+  const handleRetry = useCallback(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    setStartState({ phase: "loading" });
+    game
+      .start()
+      .then(() => setStartState({ phase: "running" }))
+      .catch((err: unknown) =>
+        setStartState({
+          phase: "error",
+          message:
+            err instanceof Error ? err.message : "Failed to load save data.",
+        }),
+      );
+  }, []);
+
+  const handleStartFresh = useCallback(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    try {
+      game.startFresh();
+      setStartState({ phase: "running" });
+    } catch (err: unknown) {
+      setStartState({
+        phase: "error",
+        message:
+          err instanceof Error ? err.message : "Failed to start new game.",
+      });
+    }
+  }, []);
 
   // ── Game lifecycle ──────────────────────────────────────────────────────────
   // Start (or update) the game whenever a character becomes available
@@ -99,12 +156,31 @@ export function GameCanvas({ user }: GameCanvasProps) {
 
     const game = new Game(canvas, { user, character, trpc: trpcAdapter });
     gameRef.current = game;
-    void game.start();
+
+    let cancelled = false;
+
+    setStartState({ phase: "loading" });
+    game
+      .start()
+      .then(() => {
+        if (!cancelled) setStartState({ phase: "running" });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setStartState({
+            phase: "error",
+            message:
+              err instanceof Error ? err.message : "Failed to load save data.",
+          });
+        }
+      });
 
     return () => {
+      cancelled = true;
       game.destroy();
       gameRef.current = null;
       canvas.remove();
+      setStartState({ phase: "idle" });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [character]);
@@ -123,6 +199,78 @@ export function GameCanvas({ user }: GameCanvasProps) {
         ref={containerRef}
         style={{ width: "100%", height: "100%", overflow: "hidden" }}
       />
+
+      {/* Loading overlay — visible while Persistence.load() is in flight */}
+      {startState.phase === "loading" && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(0,0,0,0.7)",
+            color: "#fff",
+            fontSize: "1.25rem",
+            zIndex: 20,
+          }}
+        >
+          Loading save data…
+        </div>
+      )}
+
+      {/* Error overlay — load failed; player must choose retry or start fresh */}
+      {startState.phase === "error" && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "1rem",
+            background: "rgba(0,0,0,0.85)",
+            color: "#fff",
+            zIndex: 20,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: "1.1rem" }}>
+            Failed to load save: {startState.message}
+          </p>
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            <button
+              onClick={handleRetry}
+              style={{
+                padding: "0.5rem 1.25rem",
+                background: "#3b82f6",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontSize: "1rem",
+              }}
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleStartFresh}
+              style={{
+                padding: "0.5rem 1.25rem",
+                background: "#6b7280",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                fontSize: "1rem",
+              }}
+            >
+              Start New Game
+            </button>
+          </div>
+        </div>
+      )}
+
       {showCreator && <CharacterCreator onComplete={handleCharacterCreated} />}
     </>
   );
