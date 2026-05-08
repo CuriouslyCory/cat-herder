@@ -2,6 +2,7 @@ import type { MapData } from "./MapData";
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
 import { TerrainType, ResourceType } from "../types";
+import { mapDataSchema } from "./MapDataSchema";
 
 // ---------------------------------------------------------------------------
 // MapEditor — developer-facing map editor, dev builds only.
@@ -40,6 +41,11 @@ interface SceneManagerLike {
   ): { x: number; y: number; z: number } | null;
   setMeshEmissive(handle: SceneHandle, color: string | number, intensity: number): void;
   setMeshColor(handle: SceneHandle, color: string | number): void;
+}
+
+// Minimal subset of MapManager needed by the editor — avoids circular import.
+interface MapManagerLike {
+  loadMap(data: MapData): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +244,10 @@ export class MapEditor {
   private _moveToolBtn: HTMLElement | null = null;
   private _deleteToolBtn: HTMLElement | null = null;
 
+  // US-305: save / load / play
+  private _errorDisplay: HTMLElement | null = null;
+  private _fileInput: HTMLInputElement | null = null;
+
   // Event handler refs
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private _mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
@@ -250,6 +260,7 @@ export class MapEditor {
     private readonly cameraController: CameraController,
     private readonly gameLifecycle: GameLifecycle,
     private readonly sceneManager: SceneManagerLike | null = null,
+    private readonly mapManager: MapManagerLike | null = null,
   ) {
     if (process.env.NODE_ENV === "production") return;
     this._buildBanner();
@@ -304,6 +315,50 @@ export class MapEditor {
 
   loadMapData(data: MapData): void {
     this._mapData = { ...data, terrain: data.terrain.map((row) => [...row]) };
+  }
+
+  // ── Public API — US-305: save / load / play ───────────────────────────────
+
+  /** Export the current map as a JSON file download. */
+  saveMap(): void {
+    const data = this.getMapData();
+    const json = JSON.stringify(data, null, 2);
+    const timestamp = new Date().toISOString();
+    const filename = `map-${data.name}-${timestamp}.json`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /** Load map data from a JSON File, validate with Zod, then call loadMapData(). */
+  async loadFromFile(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text) as unknown;
+      const result = mapDataSchema.safeParse(raw);
+      if (!result.success) {
+        const msg = result.error.issues[0]?.message ?? "schema validation failed";
+        this._showError(`Invalid map: ${msg}`);
+        return;
+      }
+      this._showError(null);
+      this.loadMapData(result.data);
+    } catch {
+      this._showError("Failed to read file: invalid JSON");
+    }
+  }
+
+  /** Load the current editor map into the game and exit editor mode. */
+  playMap(): void {
+    if (!this.mapManager) return;
+    this.mapManager.loadMap(this.getMapData());
+    this.disable();
   }
 
   // ── Public API — terrain tools ────────────────────────────────────────────
@@ -667,6 +722,8 @@ export class MapEditor {
       this._panel.remove();
       this._panel = null;
     }
+    this._errorDisplay = null;
+    this._fileInput = null;
     this._removeGhost();
     this._active = false;
   }
@@ -766,6 +823,67 @@ export class MapEditor {
     });
     this._deleteToolBtn = deleteBtn;
     panel.appendChild(deleteBtn);
+
+    // US-305: Save / Load / Play
+    const fileSep = document.createElement("div");
+    fileSep.style.cssText = "border-top:1px solid #444;margin-top:4px;";
+    panel.appendChild(fileSep);
+
+    const fileTitle = document.createElement("div");
+    fileTitle.style.cssText =
+      "font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:4px;margin-top:4px;";
+    fileTitle.textContent = "File";
+    panel.appendChild(fileTitle);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#2a4a2a;border:1px solid #4a8;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    saveBtn.textContent = "Save";
+    saveBtn.addEventListener("click", () => {
+      this.saveMap();
+    });
+    panel.appendChild(saveBtn);
+
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".json";
+    fileInput.style.display = "none";
+    fileInput.addEventListener("change", () => {
+      const file = (fileInput as unknown as { files: FileList | null }).files?.[0];
+      if (file) void this.loadFromFile(file);
+    });
+    this._fileInput = fileInput as unknown as HTMLInputElement;
+    panel.appendChild(fileInput);
+
+    const loadBtn = document.createElement("button");
+    loadBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#2a2a4a;border:1px solid #44a;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    loadBtn.textContent = "Load";
+    loadBtn.addEventListener("click", () => {
+      this._fileInput?.click();
+    });
+    panel.appendChild(loadBtn);
+
+    const playBtn = document.createElement("button");
+    playBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#4a2a2a;border:1px solid #a44;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    playBtn.textContent = "Play";
+    playBtn.addEventListener("click", () => {
+      this.playMap();
+    });
+    panel.appendChild(playBtn);
+
+    const errorDisplay = document.createElement("div");
+    errorDisplay.style.cssText =
+      "font-size:10px;color:#f44;display:none;word-wrap:break-word;";
+    this._errorDisplay = errorDisplay;
+    panel.appendChild(errorDisplay);
 
     const parent = this.container.parentElement ?? document.body;
     parent.appendChild(panel);
@@ -1693,6 +1811,12 @@ export class MapEditor {
   /** Clear an in-progress move drag without restoring position. */
   private _cancelMoveDrag(): void {
     this._movingObject = null;
+  }
+
+  private _showError(msg: string | null): void {
+    if (!this._errorDisplay) return;
+    this._errorDisplay.textContent = msg ?? "";
+    this._errorDisplay.style.display = msg ? "block" : "none";
   }
 
   private _updateEditorToolModeButtons(): void {

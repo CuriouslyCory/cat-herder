@@ -322,6 +322,7 @@ export class Game {
         this.cameraController,
         { pause: () => this.pause(), resume: () => this.resume() },
         this.sceneManager,
+        this.mapManager,
       );
     }
   }

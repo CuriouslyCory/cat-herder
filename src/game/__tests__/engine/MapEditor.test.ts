@@ -4,6 +4,7 @@ import type { EditorBlock, EditorWaterZone, EditorToolMode } from "~/game/maps/M
 import type { CameraController } from "~/game/engine/CameraController";
 import type { MapData } from "~/game/maps/MapData";
 import { TerrainType, ResourceType } from "~/game/types";
+import { mapDataSchema } from "~/game/maps/MapDataSchema";
 
 // ---------------------------------------------------------------------------
 // Minimal DOM stubs
@@ -17,6 +18,7 @@ interface MockEl {
   removeEventListener: ReturnType<typeof vi.fn>;
   appendChild: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
+  click: ReturnType<typeof vi.fn>;
   getBoundingClientRect: ReturnType<typeof vi.fn>;
   // value property for input/select elements (set dynamically)
   value?: string;
@@ -35,6 +37,7 @@ function makeMockEl(): MockEl {
     removeEventListener: vi.fn(),
     appendChild: vi.fn(),
     remove: vi.fn(),
+    click: vi.fn(),
     getBoundingClientRect: vi.fn(() => ({ left: 0, top: 0 })),
   };
 }
@@ -1968,5 +1971,183 @@ describe("move tool drag", () => {
     ];
     expect(pos.x).toBe(5);
     expect(pos.z).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-305 — Zod schema validation
+// ---------------------------------------------------------------------------
+
+describe("mapDataSchema (US-305)", () => {
+  it("accepts valid MapData", () => {
+    const result = mapDataSchema.safeParse(makeSampleMapData());
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects MapData missing required fields", () => {
+    const result = mapDataSchema.safeParse({ name: "test" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid TerrainType", () => {
+    const data = makeSampleMapData();
+    // biome-ignore lint/suspicious/noExplicitAny: test intentional bad type
+    (data.terrain[0]![0] as any).type = "InvalidType";
+    const result = mapDataSchema.safeParse(data);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid spawnPoint role", () => {
+    const data = makeSampleMapData();
+    // biome-ignore lint/suspicious/noExplicitAny: test intentional bad type
+    (data.spawnPoints[0] as any).role = "badRole";
+    const result = mapDataSchema.safeParse(data);
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts empty terrain and spawnPoints", () => {
+    const data: MapData = {
+      name: "empty",
+      size: { width: 10, depth: 10 },
+      terrain: [],
+      cellSize: 1,
+      spawnPoints: [],
+    };
+    const result = mapDataSchema.safeParse(data);
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-305 — saveMap()
+// ---------------------------------------------------------------------------
+
+describe("saveMap() (US-305)", () => {
+  let mockCreateObjectURL: ReturnType<typeof vi.fn>;
+  let mockRevokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockCreateObjectURL = vi.fn(() => "blob:fake-url");
+    mockRevokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL: mockCreateObjectURL,
+      revokeObjectURL: mockRevokeObjectURL,
+    });
+    vi.stubGlobal("Blob", class MockBlob {
+      constructor(public parts: unknown[], public opts: unknown) {}
+    });
+    Object.assign(mockBody, { removeChild: vi.fn() });
+  });
+
+  it("calls URL.createObjectURL", () => {
+    editor.saveMap();
+    expect(mockCreateObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it("calls URL.revokeObjectURL after download", () => {
+    editor.saveMap();
+    expect(mockRevokeObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it("creates an anchor element with .download attribute set", () => {
+    const data = makeSampleMapData();
+    editor.loadMapData(data);
+    editor.saveMap();
+    // The anchor will have a .download property assigned after createElement
+    const anchors = createdElements.filter(
+      (el) => (el as unknown as Record<string, unknown>).download !== undefined,
+    );
+    expect(anchors.length).toBeGreaterThan(0);
+  });
+
+  it("does not throw when no map data loaded", () => {
+    expect(() => editor.saveMap()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-305 — loadFromFile()
+// ---------------------------------------------------------------------------
+
+describe("loadFromFile() (US-305)", () => {
+  it("loads valid map data from file", async () => {
+    const data = makeSampleMapData();
+    const mockFile = { text: vi.fn().mockResolvedValue(JSON.stringify(data)) };
+    await editor.loadFromFile(mockFile as unknown as File);
+    const result = editor.getMapData();
+    expect(result.name).toBe("test-map");
+  });
+
+  it("shows error for invalid JSON and leaves map data unchanged", async () => {
+    const mockFile = { text: vi.fn().mockResolvedValue("not-valid-json!!!") };
+    await editor.loadFromFile(mockFile as unknown as File);
+    // No throw; map data should remain the default ("untitled")
+    const result = editor.getMapData();
+    expect(result.name).toBe("untitled");
+  });
+
+  it("shows error for valid JSON that fails schema validation", async () => {
+    const bad = JSON.stringify({ name: 42, terrain: "not-an-array" });
+    const mockFile = { text: vi.fn().mockResolvedValue(bad) };
+    await editor.loadFromFile(mockFile as unknown as File);
+    const result = editor.getMapData();
+    expect(result.name).toBe("untitled"); // not replaced
+  });
+
+  it("loads data successfully and clears any previous error", async () => {
+    // First cause an error
+    const bad = { text: vi.fn().mockResolvedValue("bad-json") };
+    await editor.loadFromFile(bad as unknown as File);
+    // Then load valid data
+    const data = makeSampleMapData();
+    const good = { text: vi.fn().mockResolvedValue(JSON.stringify(data)) };
+    await editor.loadFromFile(good as unknown as File);
+    expect(editor.getMapData().name).toBe("test-map");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-305 — playMap()
+// ---------------------------------------------------------------------------
+
+describe("playMap() (US-305)", () => {
+  function makeEditorWithManager() {
+    const mockMapManager = { loadMap: vi.fn() };
+    const c2 = makeMockEl() as unknown as HTMLElement;
+    const sm = makeMockSceneManager();
+    const ed = new MapEditor(
+      c2,
+      makeMockCamera() as unknown as CameraController,
+      makeGameLifecycle(),
+      // biome-ignore lint/suspicious/noExplicitAny: test mock
+      sm as any,
+      mockMapManager,
+    );
+    ed.enable();
+    return { ed, mockMapManager };
+  }
+
+  it("calls mapManager.loadMap with current map data", () => {
+    const { ed, mockMapManager } = makeEditorWithManager();
+    const data = makeSampleMapData();
+    ed.loadMapData(data);
+    ed.playMap();
+    expect(mockMapManager.loadMap).toHaveBeenCalledOnce();
+    expect(mockMapManager.loadMap).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "test-map" }),
+    );
+    ed.dispose();
+  });
+
+  it("calls disable() after loading — editor becomes inactive", () => {
+    const { ed } = makeEditorWithManager();
+    ed.playMap();
+    expect(ed.isActive()).toBe(false);
+    ed.dispose();
+  });
+
+  it("is a no-op when mapManager is not provided", () => {
+    // The default editor (no mapManager) — playMap should not throw
+    expect(() => editor.playMap()).not.toThrow();
   });
 });

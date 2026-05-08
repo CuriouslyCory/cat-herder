@@ -1,3 +1,15 @@
+## 2026-05-08 - US-305
+- What was implemented: Map editor save/load/play. New `src/game/maps/MapDataSchema.ts` with Zod v4 schema (`mapDataSchema`, `terrainCellSchema`, `spawnPointSchema`) mirroring MapData interface. `MapManagerLike` interface added to MapEditor.ts (avoids circular import). 5th constructor parameter `mapManager: MapManagerLike | null = null` added. "File" section added to `_buildPanel()` with Save, Load (file input + button), Play buttons and red error display. Three new public methods: `saveMap()` (Blob + anchor download), `loadFromFile(file: File)` (async, Zod-validates, shows error on failure), `playMap()` (calls mapManager.loadMap then disable()). `_showError()` private helper. `dispose()` nulls `_errorDisplay` and `_fileInput`. `Game.ts` passes `this.mapManager` as 5th arg. 526 tests pass (16 new US-305 tests).
+- Files changed: src/game/maps/MapDataSchema.ts (new), src/game/maps/MapEditor.ts, src/game/engine/Game.ts, src/game/__tests__/engine/MapEditor.test.ts, prd.json
+- **Learnings for future iterations:**
+  - `MapManagerLike` interface in MapEditor.ts (1-method subset) avoids importing MapManager and keeps the dependency graph clean
+  - Mock `createElement` in tests returns `MockEl` which lacks `click()` — must add `click: vi.fn()` to the `MockEl` interface and `makeMockEl()` factory, otherwise `saveMap()` throws "a.click is not a function"
+  - `loadFromFile` is `async` — tests must `await` it; use `{ text: vi.fn().mockResolvedValue(...) }` as the File mock
+  - Zod `safeParse` on invalid enum values returns `success: false` reliably; `result.error.issues[0]?.message` gives the user-facing error string
+  - The `_fileInput` element is created via `document.createElement("input")` (goes through the mock), so it lands in `createdElements` — its `.click()` method is also on `MockEl` so `_fileInput?.click()` from Load button handler works cleanly
+
+---
+
 ## Codebase Patterns
 - US-304 added `EditorToolMode = 'move' | 'delete'` as a third, mutually exclusive tool selection alongside terrain/entity tools — setting any one clears the others
 - Move tool drags the *real* object (no ghost) — updates `obj.x/z` and `updateTransform` in real-time on mousemove; mouseup sets `_suppressNextClick` to prevent the click handler from also firing

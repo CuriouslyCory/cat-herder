@@ -139,7 +139,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Zod is already a project dependency (used in tRPC layer). The Zod schema should mirror the MapData, TerrainCell, and SpawnPoint interfaces from src/game/maps/MapData.ts exactly. The Play button workflow: getMapData() -> MapManager.loadMap(data) -> disable() -> Game.resume()."
     },
     {
