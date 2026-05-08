@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- MapEditor pattern: same dev-gate as DebugMenu (constructor returns early in production, banner ref null). Game.ts stores as `mapEditor: MapEditor | null`, constructs with `if (process.env.NODE_ENV !== "production")` guard, calls `mapEditor?.dispose()` in destroy(). Takes GameLifecycle interface { pause, resume } as callbacks to avoid circular imports.
+- Test self-referencing types: avoid `ReturnType<typeof fn>` in return expressions of the same fn — creates circular type inference error (TS7023). Define a named interface instead.
 - CatAISystem runs FIRST in the fixed-step loop and drives Idle→Active→Expired state transitions for all cats from CAT_REGISTRY data; per-cat systems (ZoomiesSystem, CuriositySystem, PounceSystem) react to states but never set them
 - CuriositySystem detects "first Active tick" via `reveal.revealedEntities.length === 0` (not via Idle state); CatAISystem transitions Idle→Active in the same frame so CuriositySystem sees Active and empty list simultaneously
 - ZoomiesTrail overlap is a manual oriented-AABB check (not PhysicsEngine trigger) — project player offset onto trail axis (along) and perpendicular (perp), compare to halfLength/halfWidth
@@ -41,4 +43,19 @@
 
 # Ralph Progress Log — Phase 4: Map Editor & Polish
 Started: 2026-05-08
+---
+
+## 2026-05-08 - US-301
+- Created src/game/maps/MapEditor.ts with full public API: enable(), disable(), isActive(), getMapData(), loadMapData(data)
+- Ctrl+E keyboard handler toggles editor; enter pauses game + setMode('free'), exit resumes + setMode('follow')
+- EDITOR MODE banner rendered as DOM overlay (top-center, z-index:9998), shown/hidden via display:block/none
+- Production-gated: constructor returns early when NODE_ENV=production, banner stays null, enable() is a no-op
+- Wired into Game.ts: imported MapEditor, added `private mapEditor: MapEditor | null`, constructed after DebugMenu with same dev-gate pattern, disposed in destroy()
+- Created src/game/__tests__/engine/MapEditor.test.ts with 27 tests covering all acceptance criteria
+- Files changed: src/game/maps/MapEditor.ts (new), src/game/__tests__/engine/MapEditor.test.ts (new), src/game/engine/Game.ts (modified)
+- **Learnings for future iterations:**
+  - GameLifecycle interface { pause, resume } passed as constructor param avoids circular import between maps/ and engine/
+  - CameraController.setMode('follow') preserves the existing targetEntity (follow restores to last-followed entity)
+  - document.body is used as fallback when container.parentElement is null/undefined (same as DebugMenu)
+  - Self-referencing types in mock helpers cause TS7023; define named interface instead of ReturnType<typeof fn>
 ---
