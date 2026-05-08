@@ -160,7 +160,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "NavigationOverlay needs read-only access to: MapManager (terrain grid), World (entity positions), and the player entity. It uses Canvas 2D context for all drawing. TerrainType colors match TERRAIN_COLORS in MapManager.ts. The overlay consumes input by stopping event propagation while active."
     },
     {
