@@ -321,6 +321,7 @@ export class Game {
         canvas,
         this.cameraController,
         { pause: () => this.pause(), resume: () => this.resume() },
+        this.sceneManager,
       );
     }
   }
