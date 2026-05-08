@@ -1,4 +1,12 @@
 ## Codebase Patterns
+- Entity tools in MapEditor use a separate `_selectedEntityTool: EntityTool | null` field — selecting one clears the other (terrain ↔ entity mutual exclusion via `selectTool`/`selectEntityTool`)
+- Entity markers use `geometry: "sphere"` (vs terrain blocks which use `geometry: "box"`) — gives immediate visual distinction between entity markers and terrain tiles
+- `RESOURCE_RESPAWN_DEFAULTS` is exported so tests can assert against it directly without magic numbers
+- Hidden terrain zones reuse the same mousedown/mouseup drag pattern as water zones — just a separate set of state vars (`_hiddenDragStart`, `_hiddenDragGhost`) feeding `createHiddenTerrainZone()`
+- Player spawn uniqueness: `_placePlayerSpawn()` removes the old handle via `sceneManager.removeMesh()` before assigning the new one — tests verify `removeMesh` is called with the prior handle
+- Entity config section (`_entityConfigSection`) is cleared via `textContent = ""` and rebuilt by `_updateEntityConfigSection()` on each `selectEntityTool()` call — avoids stale DOM refs
+
+## 2026-05-08 - US-303
 - MapEditor is dev-gated via `process.env.NODE_ENV === 'production'` guard in constructor — same pattern as DebugMenu
 - DOM overlays (banner, panel) append to `container.parentElement ?? document.body`; container is the canvas element
 - SceneManager is abstracted behind a local `SceneManagerLike` interface in MapEditor.ts to avoid importing Three.js types and keep tests clean
@@ -30,4 +38,15 @@
   - When click and drag share the same DOM event path, use a `_suppressNextClick` boolean to prevent double-firing after a drag completes in mouseup
   - `document.createElement("select")` is typed as `HTMLSelectElement` by TypeScript's lib.dom.d.ts, so no cast is needed; at runtime tests return MockEl but JavaScript allows setting arbitrary properties on it
   - dispose() must clean up ALL registered container listeners (mousemove, mousedown, mouseup, click) to avoid leaks
+---
+
+## 2026-05-08 - US-303
+- What was implemented: Entity tool palette section (5 tools: Player Spawn, Cat Spawn, Resource Node, Hidden Terrain, Yarn Pickup) added to MapEditor side panel. `EntityTool` union type exported. `EditorPlayerSpawn`, `EditorCatSpawn`, `EditorResourceNode`, `EditorHiddenTerrainZone`, `EditorYarnPickup` interfaces exported. `placeEntity()` dispatches to type-specific placement methods. Player spawn enforces uniqueness (replaces existing, removes old mesh). Resource nodes store type + respawnTime from exported `RESOURCE_RESPAWN_DEFAULTS` (Grass 30s, Sticks 45s, Water 60s). Hidden terrain uses same mousedown/mouseup drag as water zones. Entity markers render as spheres (vs box tiles). `_updateEntityConfigSection()` dynamically builds config controls per tool. All entity handles cleaned up in `dispose()`. `disable()` calls `_cancelHiddenDrag()`.
+- Files changed: src/game/maps/MapEditor.ts, src/game/__tests__/engine/MapEditor.test.ts
+- **Learnings for future iterations:**
+  - Mutual exclusion between terrain and entity tool: `selectTool()` clears `_selectedEntityTool` and vice versa — both update their respective button highlight maps
+  - Entity config section content: cleared via `textContent = ""` then rebuilt each time `selectEntityTool()` is called; refs to config inputs (respawnInput, etc.) are local to builder functions, not stored as fields
+  - Hidden terrain drag exactly mirrors water zone drag code — only difference is the color constant and the target collection (`_hiddenTerrainZones` vs `_editorWaterZones`)
+  - Exporting `RESOURCE_RESPAWN_DEFAULTS` lets tests assert against canonical values without duplicating magic numbers
+  - For dispose() tests with mesh cleanup: always `mockClear()` the `removeMesh` spy AFTER the entity is placed (not before) to isolate just the disposal calls
 ---
