@@ -1,7 +1,7 @@
 import type { MapData } from "./MapData";
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
-import { TerrainType } from "../types";
+import { TerrainType, ResourceType } from "../types";
 
 // ---------------------------------------------------------------------------
 // MapEditor — developer-facing map editor, dev builds only.
@@ -10,6 +10,8 @@ import { TerrainType } from "../types";
 // US-302a: Terrain tool palette, ghost preview, block placement
 // US-302b: Block selection, property editing (type/height), Delete key removal,
 //          water zone drag-to-define with depth input.
+// US-303: Entity placement — Player Spawn, Cat Spawn, Resource Node,
+//         Hidden Terrain Zone, Yarn Pickup.
 //
 // Gated by process.env.NODE_ENV === 'production'. Constructor returns early
 // in production, leaving all element refs null and _active always false.
@@ -39,6 +41,10 @@ interface SceneManagerLike {
   setMeshColor(handle: SceneHandle, color: string | number): void;
 }
 
+// ---------------------------------------------------------------------------
+// Terrain block types
+// ---------------------------------------------------------------------------
+
 export interface EditorBlock {
   x: number;
   z: number;
@@ -56,6 +62,57 @@ export interface EditorWaterZone {
   handle: SceneHandle | null;
 }
 
+// ---------------------------------------------------------------------------
+// Entity tool types (US-303)
+// ---------------------------------------------------------------------------
+
+export type EntityTool =
+  | "playerSpawn"
+  | "catSpawn"
+  | "resourceNode"
+  | "hiddenTerrain"
+  | "yarnPickup";
+
+export interface EditorPlayerSpawn {
+  x: number;
+  z: number;
+  handle: SceneHandle | null;
+}
+
+export interface EditorCatSpawn {
+  x: number;
+  z: number;
+  handle: SceneHandle | null;
+}
+
+export interface EditorResourceNode {
+  x: number;
+  z: number;
+  type: ResourceType;
+  respawnTime: number;
+  handle: SceneHandle | null;
+}
+
+export interface EditorHiddenTerrainZone {
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+  height: number;
+  handle: SceneHandle | null;
+}
+
+export interface EditorYarnPickup {
+  x: number;
+  z: number;
+  yarnAmount: number;
+  handle: SceneHandle | null;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 // Colors matching MapManager TERRAIN_COLORS (kept in sync manually).
 const EDITOR_TERRAIN_COLORS: Record<TerrainType, string> = {
   [TerrainType.Grass]: "#4a7c59",
@@ -65,7 +122,7 @@ const EDITOR_TERRAIN_COLORS: Record<TerrainType, string> = {
   [TerrainType.Hidden]: "#1a1a2e",
 };
 
-// Only these four types are user-placeable from the palette.
+// Only these four types are user-placeable from the terrain palette.
 const PLACEABLE_TOOLS: readonly TerrainType[] = [
   TerrainType.Grass,
   TerrainType.Dirt,
@@ -73,17 +130,55 @@ const PLACEABLE_TOOLS: readonly TerrainType[] = [
   TerrainType.Water,
 ];
 
+// Entity marker colors
+const ENTITY_COLORS: Record<EntityTool, string> = {
+  playerSpawn: "#ff6b35",   // orange — matches player color
+  catSpawn: "#9b59b6",      // purple
+  resourceNode: "#7bc67e",  // grass green (default; varies by resource type)
+  hiddenTerrain: "#4a4a8a", // dark indigo
+  yarnPickup: "#ffd700",    // gold
+};
+
+// Resource-type-specific colors for resource node markers
+const RESOURCE_NODE_COLORS: Record<ResourceType, string> = {
+  [ResourceType.Grass]: "#7bc67e",
+  [ResourceType.Sticks]: "#8b6355",
+  [ResourceType.Water]: "#4fc3f7",
+};
+
+// Default respawn times (seconds) — match Game.ts spawnTestMapResourceNodes()
+export const RESOURCE_RESPAWN_DEFAULTS: Record<ResourceType, number> = {
+  [ResourceType.Grass]: 30,
+  [ResourceType.Sticks]: 45,
+  [ResourceType.Water]: 60,
+};
+
+const ENTITY_TOOL_LABELS: Record<EntityTool, string> = {
+  playerSpawn: "Player Spawn",
+  catSpawn: "Cat Spawn",
+  resourceNode: "Resource Node",
+  hiddenTerrain: "Hidden Terrain",
+  yarnPickup: "Yarn Pickup",
+};
+
 const HEIGHT_MIN = 0.5;
 const HEIGHT_MAX = 5;
 const HEIGHT_STEP = 0.5;
 const SELECTION_EMISSIVE_COLOR = "#ffffff";
 const SELECTION_EMISSIVE_INTENSITY = 0.4;
+const DEFAULT_YARN_AMOUNT = 3;
+
+// ---------------------------------------------------------------------------
+// MapEditor class
+// ---------------------------------------------------------------------------
 
 export class MapEditor {
   private _active = false;
   private _mapData: MapData | null = null;
   private _banner: HTMLElement | null = null;
   private _panel: HTMLElement | null = null;
+
+  // Terrain tool state
   private _selectedTool: TerrainType | null = null;
   private _editorBlocks: EditorBlock[] = [];
   private _ghostHandle: SceneHandle | null = null;
@@ -104,6 +199,28 @@ export class MapEditor {
   private _propHeightInput: HTMLInputElement | null = null;
 
   private readonly _toolButtons = new Map<TerrainType, HTMLElement>();
+
+  // US-303: Entity tool state
+  private _selectedEntityTool: EntityTool | null = null;
+  private readonly _entityToolButtons = new Map<EntityTool, HTMLElement>();
+  private _selectedResourceNodeType: ResourceType = ResourceType.Grass;
+  private _selectedRespawnTime: number = RESOURCE_RESPAWN_DEFAULTS[ResourceType.Grass];
+  private _selectedHiddenTerrainHeight: number = 1;
+  private _selectedYarnAmount: number = DEFAULT_YARN_AMOUNT;
+  private _entityConfigSection: HTMLElement | null = null;
+
+  // Entity collections
+  private _playerSpawn: EditorPlayerSpawn | null = null;
+  private _catSpawns: EditorCatSpawn[] = [];
+  private _resourceNodes: EditorResourceNode[] = [];
+  private _hiddenTerrainZones: EditorHiddenTerrainZone[] = [];
+  private _yarnPickups: EditorYarnPickup[] = [];
+
+  // Hidden terrain drag state (mirrors water zone drag)
+  private _hiddenDragStart: { x: number; z: number } | null = null;
+  private _hiddenDragGhost: SceneHandle | null = null;
+
+  // Event handler refs
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private _mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
   private _mousedownHandler: ((e: MouseEvent) => void) | null = null;
@@ -123,7 +240,7 @@ export class MapEditor {
     this._registerMouseHandlers();
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Public API — lifecycle ─────────────────────────────────────────────────
 
   enable(): void {
     if (!this._banner) return; // production guard (banner null in prod)
@@ -145,6 +262,7 @@ export class MapEditor {
     if (this._panel) this._panel.style.display = "none";
     this._removeGhost();
     this._cancelWaterDrag();
+    this._cancelHiddenDrag();
   }
 
   isActive(): boolean {
@@ -165,13 +283,21 @@ export class MapEditor {
     this._mapData = { ...data, terrain: data.terrain.map((row) => [...row]) };
   }
 
+  // ── Public API — terrain tools ────────────────────────────────────────────
+
   /** Currently selected terrain tool, or null if none. */
   getSelectedTool(): TerrainType | null {
     return this._selectedTool;
   }
 
-  /** Select a tool from the palette. Pass null to deselect. */
+  /** Select a terrain tool from the palette. Pass null to deselect. Clears entity tool. */
   selectTool(type: TerrainType | null): void {
+    // Deselect entity tool when terrain tool is selected
+    if (type !== null && this._selectedEntityTool !== null) {
+      this._selectedEntityTool = null;
+      this._updateEntityToolButtons();
+      this._updateEntityConfigSection();
+    }
     this._selectedTool = type;
     if (type === null) this._removeGhost();
     this._updateToolButtons();
@@ -205,7 +331,7 @@ export class MapEditor {
     return Math.round(worldPos);
   }
 
-  // ── Selection API (US-302b) ───────────────────────────────────────────────
+  // ── Public API — block selection (US-302b) ────────────────────────────────
 
   /** Select a placed block, applying a visual highlight. Pass null to deselect. */
   selectBlock(block: EditorBlock | null): void {
@@ -297,6 +423,103 @@ export class MapEditor {
     this._editorWaterZones.push(zone);
   }
 
+  // ── Public API — entity tools (US-303) ────────────────────────────────────
+
+  /** Currently selected entity tool, or null if none. */
+  getSelectedEntityTool(): EntityTool | null {
+    return this._selectedEntityTool;
+  }
+
+  /** Select an entity tool. Pass null to deselect. Clears terrain tool. */
+  selectEntityTool(tool: EntityTool | null): void {
+    // Deselect terrain tool when entity tool is selected
+    if (tool !== null && this._selectedTool !== null) {
+      this._selectedTool = null;
+      this._removeGhost();
+      this._updateToolButtons();
+    }
+    this._selectedEntityTool = tool;
+    // Reset resource defaults when switching entity tools
+    if (tool === "resourceNode") {
+      this._selectedRespawnTime = RESOURCE_RESPAWN_DEFAULTS[this._selectedResourceNodeType];
+    }
+    this._updateEntityToolButtons();
+    this._updateEntityConfigSection();
+  }
+
+  /**
+   * Place an entity at the given world position using the currently selected
+   * entity tool. Position is snapped to the 1u grid before placement.
+   * Hidden terrain zones use drag-to-define and are not placed via this method.
+   */
+  placeEntity(worldX: number, worldZ: number): void {
+    if (this._selectedEntityTool === null || this._selectedEntityTool === "hiddenTerrain") return;
+    const x = MapEditor.snapToGrid(worldX);
+    const z = MapEditor.snapToGrid(worldZ);
+
+    switch (this._selectedEntityTool) {
+      case "playerSpawn":
+        this._placePlayerSpawn(x, z);
+        break;
+      case "catSpawn":
+        this._placeCatSpawn(x, z);
+        break;
+      case "resourceNode":
+        this._placeResourceNode(x, z);
+        break;
+      case "yarnPickup":
+        this._placeYarnPickup(x, z);
+        break;
+    }
+  }
+
+  /** The single player spawn point, or null if not yet placed. */
+  getPlayerSpawn(): EditorPlayerSpawn | null {
+    return this._playerSpawn;
+  }
+
+  /** Read-only view of placed cat spawn points. */
+  getCatSpawns(): readonly EditorCatSpawn[] {
+    return this._catSpawns;
+  }
+
+  /** Read-only view of placed resource nodes. */
+  getResourceNodes(): readonly EditorResourceNode[] {
+    return this._resourceNodes;
+  }
+
+  /** Read-only view of placed hidden terrain zones. */
+  getEditorHiddenTerrainZones(): readonly EditorHiddenTerrainZone[] {
+    return this._hiddenTerrainZones;
+  }
+
+  /** Read-only view of placed yarn pickups. */
+  getYarnPickups(): readonly EditorYarnPickup[] {
+    return this._yarnPickups;
+  }
+
+  /**
+   * Define a rectangular hidden terrain zone from two corner grid coordinates.
+   * Coordinates are normalised so x1 <= x2 and z1 <= z2.
+   */
+  createHiddenTerrainZone(x1: number, z1: number, x2: number, z2: number): void {
+    const nx1 = Math.min(x1, x2);
+    const nz1 = Math.min(z1, z2);
+    const nx2 = Math.max(x1, x2);
+    const nz2 = Math.max(z1, z2);
+    const zone: EditorHiddenTerrainZone = {
+      x1: nx1,
+      z1: nz1,
+      x2: nx2,
+      z2: nz2,
+      height: this._selectedHiddenTerrainHeight,
+      handle: this._createHiddenTerrainZoneMesh(nx1, nz1, nx2, nz2),
+    };
+    this._hiddenTerrainZones.push(zone);
+  }
+
+  // ── dispose ────────────────────────────────────────────────────────────────
+
   dispose(): void {
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
@@ -318,6 +541,8 @@ export class MapEditor {
       this.container.removeEventListener("click", this._clickHandler);
       this._clickHandler = null;
     }
+
+    // Clean up terrain meshes
     for (const zone of this._editorWaterZones) {
       if (zone.handle && this.sceneManager) {
         this.sceneManager.removeMesh(zone.handle);
@@ -325,6 +550,34 @@ export class MapEditor {
     }
     this._editorWaterZones = [];
     this._cancelWaterDrag();
+    this._cancelHiddenDrag();
+
+    // Clean up entity meshes (US-303)
+    if (this._playerSpawn?.handle && this.sceneManager) {
+      this.sceneManager.removeMesh(this._playerSpawn.handle);
+    }
+    this._playerSpawn = null;
+
+    for (const s of this._catSpawns) {
+      if (s.handle && this.sceneManager) this.sceneManager.removeMesh(s.handle);
+    }
+    this._catSpawns = [];
+
+    for (const n of this._resourceNodes) {
+      if (n.handle && this.sceneManager) this.sceneManager.removeMesh(n.handle);
+    }
+    this._resourceNodes = [];
+
+    for (const z of this._hiddenTerrainZones) {
+      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
+    }
+    this._hiddenTerrainZones = [];
+
+    for (const p of this._yarnPickups) {
+      if (p.handle && this.sceneManager) this.sceneManager.removeMesh(p.handle);
+    }
+    this._yarnPickups = [];
+
     this._selectedBlock = null;
     if (this._banner) {
       this._banner.remove();
@@ -338,7 +591,7 @@ export class MapEditor {
     this._active = false;
   }
 
-  // ── Private ─────────────────────────────────────────────────────────────────
+  // ── Private — DOM construction ─────────────────────────────────────────────
 
   private _buildBanner(): void {
     const banner = document.createElement("div");
@@ -362,17 +615,42 @@ export class MapEditor {
       "font-family:monospace;font-size:12px;display:none;flex-direction:column;" +
       "gap:8px;z-index:9997;box-sizing:border-box;overflow-y:auto;";
 
-    const title = document.createElement("div");
-    title.style.cssText =
+    // Terrain section
+    const terrainTitle = document.createElement("div");
+    terrainTitle.style.cssText =
       "font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:4px;";
-    title.textContent = "Terrain";
-    panel.appendChild(title);
+    terrainTitle.textContent = "Terrain";
+    panel.appendChild(terrainTitle);
 
     for (const type of PLACEABLE_TOOLS) {
       panel.appendChild(this._buildToolButton(type));
     }
 
     panel.appendChild(this._buildPropertiesSection());
+
+    // Entities section (US-303)
+    const entitySeparator = document.createElement("div");
+    entitySeparator.style.cssText = "border-top:1px solid #444;margin-top:4px;";
+    panel.appendChild(entitySeparator);
+
+    const entityTitle = document.createElement("div");
+    entityTitle.style.cssText =
+      "font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:4px;margin-top:4px;";
+    entityTitle.textContent = "Entities";
+    panel.appendChild(entityTitle);
+
+    const entityTools: EntityTool[] = [
+      "playerSpawn",
+      "catSpawn",
+      "resourceNode",
+      "hiddenTerrain",
+      "yarnPickup",
+    ];
+    for (const tool of entityTools) {
+      panel.appendChild(this._buildEntityToolButton(tool));
+    }
+
+    panel.appendChild(this._buildEntityConfigSection());
 
     const parent = this.container.parentElement ?? document.body;
     parent.appendChild(panel);
@@ -440,23 +718,12 @@ export class MapEditor {
     return section;
   }
 
-  private _updatePropertiesSection(): void {
-    if (!this._propertiesSection) return;
-    if (!this._selectedBlock) {
-      this._propertiesSection.style.display = "none";
-      return;
-    }
-    this._propertiesSection.style.display = "block";
-    if (this._propPosDisplay) {
-      this._propPosDisplay.textContent =
-        `X: ${this._selectedBlock.x}  Z: ${this._selectedBlock.z}`;
-    }
-    if (this._propTypeSelect) {
-      this._propTypeSelect.value = this._selectedBlock.type;
-    }
-    if (this._propHeightInput) {
-      this._propHeightInput.value = String(this._selectedBlock.height);
-    }
+  private _buildEntityConfigSection(): HTMLElement {
+    const section = document.createElement("div");
+    section.style.cssText =
+      "border-top:1px solid #444;margin-top:8px;padding-top:8px;display:none;";
+    this._entityConfigSection = section;
+    return section;
   }
 
   private _buildToolButton(type: TerrainType): HTMLElement {
@@ -485,6 +752,32 @@ export class MapEditor {
     return btn;
   }
 
+  private _buildEntityToolButton(tool: EntityTool): HTMLElement {
+    const color = ENTITY_COLORS[tool];
+    const btn = document.createElement("button");
+    btn.style.cssText =
+      "display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;" +
+      "background:#2a2a3e;border:1px solid #444;border-radius:4px;color:#fff;" +
+      "font-family:monospace;font-size:11px;cursor:pointer;text-align:left;";
+
+    const swatch = document.createElement("span");
+    swatch.style.cssText =
+      "display:inline-block;width:14px;height:14px;border-radius:50%;" +
+      `background:${color};flex-shrink:0;`;
+
+    const label = document.createElement("span");
+    label.textContent = ENTITY_TOOL_LABELS[tool];
+
+    btn.appendChild(swatch);
+    btn.appendChild(label);
+    btn.addEventListener("click", () => {
+      this.selectEntityTool(this._selectedEntityTool === tool ? null : tool);
+    });
+
+    this._entityToolButtons.set(tool, btn);
+    return btn;
+  }
+
   private _updateToolButtons(): void {
     for (const [type, btn] of this._toolButtons) {
       if (type === this._selectedTool) {
@@ -496,6 +789,162 @@ export class MapEditor {
       }
     }
   }
+
+  private _updateEntityToolButtons(): void {
+    for (const [tool, btn] of this._entityToolButtons) {
+      if (tool === this._selectedEntityTool) {
+        btn.style.background = "#4a4a6e";
+        btn.style.borderColor = "#88f";
+      } else {
+        btn.style.background = "#2a2a3e";
+        btn.style.borderColor = "#444";
+      }
+    }
+  }
+
+  private _updatePropertiesSection(): void {
+    if (!this._propertiesSection) return;
+    if (!this._selectedBlock) {
+      this._propertiesSection.style.display = "none";
+      return;
+    }
+    this._propertiesSection.style.display = "block";
+    if (this._propPosDisplay) {
+      this._propPosDisplay.textContent =
+        `X: ${this._selectedBlock.x}  Z: ${this._selectedBlock.z}`;
+    }
+    if (this._propTypeSelect) {
+      this._propTypeSelect.value = this._selectedBlock.type;
+    }
+    if (this._propHeightInput) {
+      this._propHeightInput.value = String(this._selectedBlock.height);
+    }
+  }
+
+  private _updateEntityConfigSection(): void {
+    if (!this._entityConfigSection) return;
+    // Clear existing controls
+    this._entityConfigSection.textContent = "";
+
+    if (!this._selectedEntityTool) {
+      this._entityConfigSection.style.display = "none";
+      return;
+    }
+    this._entityConfigSection.style.display = "block";
+
+    switch (this._selectedEntityTool) {
+      case "resourceNode":
+        this._buildResourceNodeConfig(this._entityConfigSection);
+        break;
+      case "hiddenTerrain":
+        this._buildHiddenTerrainConfig(this._entityConfigSection);
+        break;
+      case "yarnPickup":
+        this._buildYarnPickupConfig(this._entityConfigSection);
+        break;
+      default:
+        // playerSpawn and catSpawn have no extra config
+        break;
+    }
+  }
+
+  private _buildResourceNodeConfig(parent: HTMLElement): void {
+    const typeLabel = document.createElement("div");
+    typeLabel.textContent = "Resource Type:";
+    typeLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    parent.appendChild(typeLabel);
+
+    const typeSelect = document.createElement("select");
+    typeSelect.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;margin-bottom:6px;";
+    for (const rt of [ResourceType.Grass, ResourceType.Sticks, ResourceType.Water]) {
+      const opt = document.createElement("option");
+      opt.value = rt;
+      opt.textContent = rt;
+      typeSelect.appendChild(opt);
+    }
+    typeSelect.value = this._selectedResourceNodeType;
+    typeSelect.addEventListener("change", () => {
+      this._selectedResourceNodeType = typeSelect.value as ResourceType;
+      this._selectedRespawnTime = RESOURCE_RESPAWN_DEFAULTS[this._selectedResourceNodeType];
+      if (respawnInput) respawnInput.value = String(this._selectedRespawnTime);
+    });
+    parent.appendChild(typeSelect);
+
+    const respawnLabel = document.createElement("div");
+    respawnLabel.textContent = "Respawn (s):";
+    respawnLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    parent.appendChild(respawnLabel);
+
+    const respawnInput = document.createElement("input");
+    respawnInput.type = "number";
+    respawnInput.min = "1";
+    respawnInput.max = "300";
+    respawnInput.step = "1";
+    respawnInput.value = String(this._selectedRespawnTime);
+    respawnInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;";
+    respawnInput.addEventListener("change", () => {
+      const val = parseFloat(respawnInput.value);
+      if (!isNaN(val) && val > 0) this._selectedRespawnTime = val;
+    });
+    parent.appendChild(respawnInput);
+  }
+
+  private _buildHiddenTerrainConfig(parent: HTMLElement): void {
+    const heightLabel = document.createElement("div");
+    heightLabel.textContent = "Height:";
+    heightLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    parent.appendChild(heightLabel);
+
+    const heightInput = document.createElement("input");
+    heightInput.type = "number";
+    heightInput.min = String(HEIGHT_MIN);
+    heightInput.max = String(HEIGHT_MAX);
+    heightInput.step = String(HEIGHT_STEP);
+    heightInput.value = String(this._selectedHiddenTerrainHeight);
+    heightInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;";
+    heightInput.addEventListener("change", () => {
+      const val = parseFloat(heightInput.value);
+      if (!isNaN(val)) {
+        this._selectedHiddenTerrainHeight = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, val));
+      }
+    });
+    parent.appendChild(heightInput);
+
+    const hint = document.createElement("div");
+    hint.textContent = "Click-drag to define area";
+    hint.style.cssText = "font-size:9px;color:#888;margin-top:4px;";
+    parent.appendChild(hint);
+  }
+
+  private _buildYarnPickupConfig(parent: HTMLElement): void {
+    const amountLabel = document.createElement("div");
+    amountLabel.textContent = "Yarn Amount:";
+    amountLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    parent.appendChild(amountLabel);
+
+    const amountInput = document.createElement("input");
+    amountInput.type = "number";
+    amountInput.min = "1";
+    amountInput.max = "20";
+    amountInput.step = "1";
+    amountInput.value = String(this._selectedYarnAmount);
+    amountInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;";
+    amountInput.addEventListener("change", () => {
+      const val = parseInt(amountInput.value, 10);
+      if (!isNaN(val) && val > 0) this._selectedYarnAmount = val;
+    });
+    parent.appendChild(amountInput);
+  }
+
+  // ── Private — keyboard & mouse handlers ───────────────────────────────────
 
   private _registerKeyboard(): void {
     this._keydownHandler = (e: KeyboardEvent) => {
@@ -515,7 +964,7 @@ export class MapEditor {
   }
 
   private _registerMouseHandlers(): void {
-    // mousemove: ghost preview + water drag ghost update
+    // mousemove: ghost preview + drag ghost updates
     this._mouseMoveHandler = (e: MouseEvent) => {
       if (!this._active || !this.sceneManager) return;
       const rect = this.container.getBoundingClientRect();
@@ -528,10 +977,12 @@ export class MapEditor {
       const snappedX = MapEditor.snapToGrid(worldPos.x);
       const snappedZ = MapEditor.snapToGrid(worldPos.z);
 
+      // Terrain ghost
       if (this._selectedTool) {
         this._updateGhost(snappedX, snappedZ);
       }
 
+      // Water zone drag ghost
       if (this._selectedTool === TerrainType.Water && this._waterDragStart) {
         this._updateWaterDragGhost(
           this._waterDragStart.x,
@@ -540,12 +991,30 @@ export class MapEditor {
           snappedZ,
         );
       }
+
+      // Hidden terrain drag ghost
+      if (this._selectedEntityTool === "hiddenTerrain" && this._hiddenDragStart) {
+        this._updateHiddenDragGhost(
+          this._hiddenDragStart.x,
+          this._hiddenDragStart.z,
+          snappedX,
+          snappedZ,
+        );
+      }
+
+      // Entity ghost (point entities only)
+      if (
+        this._selectedEntityTool &&
+        this._selectedEntityTool !== "hiddenTerrain"
+      ) {
+        this._updateEntityGhost(snappedX, snappedZ);
+      }
     };
     this.container.addEventListener("mousemove", this._mouseMoveHandler);
 
-    // mousedown: start water zone drag tracking
+    // mousedown: start drag (water zones or hidden terrain)
     this._mousedownHandler = (e: MouseEvent) => {
-      if (!this._active || this._selectedTool !== TerrainType.Water) return;
+      if (!this._active) return;
       if (!this.sceneManager) return;
       const rect = this.container.getBoundingClientRect();
       const worldPos = this.sceneManager.screenToWorld(
@@ -553,50 +1022,86 @@ export class MapEditor {
         e.clientY - rect.top,
       );
       if (!worldPos) return;
-      this._waterDragStart = {
-        x: MapEditor.snapToGrid(worldPos.x),
-        z: MapEditor.snapToGrid(worldPos.z),
-      };
+      const sx = MapEditor.snapToGrid(worldPos.x);
+      const sz = MapEditor.snapToGrid(worldPos.z);
+
+      if (this._selectedTool === TerrainType.Water) {
+        this._waterDragStart = { x: sx, z: sz };
+      } else if (this._selectedEntityTool === "hiddenTerrain") {
+        this._hiddenDragStart = { x: sx, z: sz };
+      }
     };
     this.container.addEventListener("mousedown", this._mousedownHandler);
 
-    // mouseup: finalise water zone drag (if end differs from start, create zone)
+    // mouseup: finalise drag zones
     this._mouseupHandler = (e: MouseEvent) => {
-      if (!this._active || !this._waterDragStart) {
+      if (!this._active) {
         this._cancelWaterDrag();
+        this._cancelHiddenDrag();
         return;
       }
       if (!this.sceneManager) {
         this._cancelWaterDrag();
+        this._cancelHiddenDrag();
         return;
       }
       const rect = this.container.getBoundingClientRect();
-      const worldPos = this.sceneManager.screenToWorld(
-        e.clientX - rect.left,
-        e.clientY - rect.top,
-        this._waterDragGhost ? new Set([this._waterDragGhost]) : undefined,
-      );
-      const endX = worldPos
-        ? MapEditor.snapToGrid(worldPos.x)
-        : this._waterDragStart.x;
-      const endZ = worldPos
-        ? MapEditor.snapToGrid(worldPos.z)
-        : this._waterDragStart.z;
 
-      if (endX !== this._waterDragStart.x || endZ !== this._waterDragStart.z) {
-        this.createWaterZone(
-          this._waterDragStart.x,
-          this._waterDragStart.z,
-          endX,
-          endZ,
+      // Water zone finalisation
+      if (this._waterDragStart) {
+        const worldPos = this.sceneManager.screenToWorld(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          this._waterDragGhost ? new Set([this._waterDragGhost]) : undefined,
         );
-        this._suppressNextClick = true;
+        const endX = worldPos
+          ? MapEditor.snapToGrid(worldPos.x)
+          : this._waterDragStart.x;
+        const endZ = worldPos
+          ? MapEditor.snapToGrid(worldPos.z)
+          : this._waterDragStart.z;
+
+        if (endX !== this._waterDragStart.x || endZ !== this._waterDragStart.z) {
+          this.createWaterZone(
+            this._waterDragStart.x,
+            this._waterDragStart.z,
+            endX,
+            endZ,
+          );
+          this._suppressNextClick = true;
+        }
+        this._cancelWaterDrag();
       }
-      this._cancelWaterDrag();
+
+      // Hidden terrain zone finalisation
+      if (this._hiddenDragStart) {
+        const worldPos = this.sceneManager.screenToWorld(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          this._hiddenDragGhost ? new Set([this._hiddenDragGhost]) : undefined,
+        );
+        const endX = worldPos
+          ? MapEditor.snapToGrid(worldPos.x)
+          : this._hiddenDragStart.x;
+        const endZ = worldPos
+          ? MapEditor.snapToGrid(worldPos.z)
+          : this._hiddenDragStart.z;
+
+        if (endX !== this._hiddenDragStart.x || endZ !== this._hiddenDragStart.z) {
+          this.createHiddenTerrainZone(
+            this._hiddenDragStart.x,
+            this._hiddenDragStart.z,
+            endX,
+            endZ,
+          );
+          this._suppressNextClick = true;
+        }
+        this._cancelHiddenDrag();
+      }
     };
     this.container.addEventListener("mouseup", this._mouseupHandler);
 
-    // click: place block (tool active) or select existing block (no tool)
+    // click: place terrain block, place entity, or select block
     this._clickHandler = (e: MouseEvent) => {
       if (!this._active) return;
 
@@ -606,6 +1111,7 @@ export class MapEditor {
       }
 
       if (this._selectedTool) {
+        // Terrain tool active — place block
         if (this.sceneManager) {
           const rect = this.container.getBoundingClientRect();
           const worldPos = this.sceneManager.screenToWorld(
@@ -618,8 +1124,22 @@ export class MapEditor {
         } else {
           this.placeBlock(this._ghostX, this._ghostZ);
         }
+      } else if (this._selectedEntityTool && this._selectedEntityTool !== "hiddenTerrain") {
+        // Entity tool active — place entity
+        if (this.sceneManager) {
+          const rect = this.container.getBoundingClientRect();
+          const worldPos = this.sceneManager.screenToWorld(
+            e.clientX - rect.left,
+            e.clientY - rect.top,
+            this._ghostHandle ? new Set([this._ghostHandle]) : undefined,
+          );
+          if (!worldPos) return;
+          this.placeEntity(worldPos.x, worldPos.z);
+        } else {
+          this.placeEntity(this._ghostX, this._ghostZ);
+        }
       } else {
-        // No tool selected — try to find and select a block at click position.
+        // No tool selected — try to find and select a terrain block at click position.
         if (!this.sceneManager) return;
         const rect = this.container.getBoundingClientRect();
         const worldPos = this.sceneManager.screenToWorld(
@@ -637,12 +1157,78 @@ export class MapEditor {
     this.container.addEventListener("click", this._clickHandler);
   }
 
+  // ── Private — entity placement (US-303) ──────────────────────────────────
+
+  private _placePlayerSpawn(x: number, z: number): void {
+    // Only one player spawn allowed — move existing one if present
+    if (this._playerSpawn) {
+      if (this._playerSpawn.handle && this.sceneManager) {
+        this.sceneManager.removeMesh(this._playerSpawn.handle);
+      }
+      this._playerSpawn = null;
+    }
+    const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.playerSpawn);
+    this._playerSpawn = { x, z, handle };
+  }
+
+  private _placeCatSpawn(x: number, z: number): void {
+    const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.catSpawn);
+    this._catSpawns.push({ x, z, handle });
+  }
+
+  private _placeResourceNode(x: number, z: number): void {
+    const color = RESOURCE_NODE_COLORS[this._selectedResourceNodeType];
+    const handle = this._createEntityMarkerMesh(x, z, color);
+    this._resourceNodes.push({
+      x,
+      z,
+      type: this._selectedResourceNodeType,
+      respawnTime: this._selectedRespawnTime,
+      handle,
+    });
+  }
+
+  private _placeYarnPickup(x: number, z: number): void {
+    const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.yarnPickup);
+    this._yarnPickups.push({ x, z, yarnAmount: this._selectedYarnAmount, handle });
+  }
+
+  private _createEntityMarkerMesh(
+    x: number,
+    z: number,
+    color: string,
+  ): SceneHandle | null {
+    if (!this.sceneManager) return null;
+    const handle = this.sceneManager.addMesh({
+      geometry: "sphere",
+      dims: [0.5, 0.5, 0.5],
+      color,
+    });
+    this.sceneManager.updateTransform(
+      handle,
+      { x, y: 0.5, z },
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 1, z: 1 },
+    );
+    return handle;
+  }
+
+  // ── Private — drag zone helpers ────────────────────────────────────────────
+
   private _cancelWaterDrag(): void {
     if (this._waterDragGhost && this.sceneManager) {
       this.sceneManager.removeMesh(this._waterDragGhost);
     }
     this._waterDragGhost = null;
     this._waterDragStart = null;
+  }
+
+  private _cancelHiddenDrag(): void {
+    if (this._hiddenDragGhost && this.sceneManager) {
+      this.sceneManager.removeMesh(this._hiddenDragGhost);
+    }
+    this._hiddenDragGhost = null;
+    this._hiddenDragStart = null;
   }
 
   private _updateWaterDragGhost(
@@ -677,6 +1263,38 @@ export class MapEditor {
     );
   }
 
+  private _updateHiddenDragGhost(
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+  ): void {
+    if (!this.sceneManager) return;
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    const minZ = Math.min(z1, z2);
+    const maxZ = Math.max(z1, z2);
+    const width = maxX - minX + 1;
+    const depth = maxZ - minZ + 1;
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+
+    if (!this._hiddenDragGhost) {
+      this._hiddenDragGhost = this.sceneManager.addMesh({
+        geometry: "box",
+        dims: [1, 1, 1],
+        color: ENTITY_COLORS.hiddenTerrain,
+        opacity: 0.3,
+      });
+    }
+    this.sceneManager.updateTransform(
+      this._hiddenDragGhost,
+      { x: cx, y: 0.1, z: cz },
+      { x: 0, y: 0, z: 0 },
+      { x: width, y: 0.2, z: depth },
+    );
+  }
+
   private _createWaterZoneMesh(
     x1: number,
     z1: number,
@@ -703,6 +1321,34 @@ export class MapEditor {
     return handle;
   }
 
+  private _createHiddenTerrainZoneMesh(
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+  ): SceneHandle | null {
+    if (!this.sceneManager) return null;
+    const width = x2 - x1 + 1;
+    const depth = z2 - z1 + 1;
+    const cx = (x1 + x2) / 2;
+    const cz = (z1 + z2) / 2;
+    const handle = this.sceneManager.addMesh({
+      geometry: "box",
+      dims: [1, 1, 1],
+      color: ENTITY_COLORS.hiddenTerrain,
+      opacity: 0.5,
+    });
+    this.sceneManager.updateTransform(
+      handle,
+      { x: cx, y: 0.1, z: cz },
+      { x: 0, y: 0, z: 0 },
+      { x: width, y: 0.2, z: depth },
+    );
+    return handle;
+  }
+
+  // ── Private — ghost preview helpers ───────────────────────────────────────
+
   private _updateGhost(x: number, z: number): void {
     if (!this.sceneManager || !this._selectedTool) return;
     this._ghostX = x;
@@ -723,12 +1369,35 @@ export class MapEditor {
     );
   }
 
+  private _updateEntityGhost(x: number, z: number): void {
+    if (!this.sceneManager || !this._selectedEntityTool) return;
+    this._ghostX = x;
+    this._ghostZ = z;
+    if (!this._ghostHandle) {
+      const color = ENTITY_COLORS[this._selectedEntityTool];
+      this._ghostHandle = this.sceneManager.addMesh({
+        geometry: "sphere",
+        dims: [0.5, 0.5, 0.5],
+        color,
+        opacity: 0.4,
+      });
+    }
+    this.sceneManager.updateTransform(
+      this._ghostHandle,
+      { x, y: 0.5, z },
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 1, z: 1 },
+    );
+  }
+
   private _removeGhost(): void {
     if (this._ghostHandle && this.sceneManager) {
       this.sceneManager.removeMesh(this._ghostHandle);
     }
     this._ghostHandle = null;
   }
+
+  // ── Private — block mesh helpers ──────────────────────────────────────────
 
   private _createBlockMesh(
     x: number,
