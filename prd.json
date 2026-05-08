@@ -219,7 +219,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Resource configs are defined inline in Game.ts spawnTestMapResourceNodes(). Consider extracting to config.ts if values need adjustment — but only if the current structure causes issues. GameState tracks inventory with maxInventoryCapacity."
     },
     {

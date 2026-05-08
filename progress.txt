@@ -1,3 +1,13 @@
+## 2026-05-08 - US-309
+- What was implemented: `src/game/config.ts` — exported `RESOURCE_CONFIGS` constant (Grass/Sticks/Water gather times, yields, respawn timers) extracted from inline consts in `Game.ts spawnTestMapResourceNodes()`. `Game.ts` updated to import and use `RESOURCE_CONFIGS` instead of local consts. `src/game/__tests__/systems/resource-balance.test.ts` — 22 regression tests: direct config value assertions (gatherTime, yieldAmount, respawnTime per type), behavioral tests (gather completes in correct frames, cooldown applied after gather, HUD label format "+1 Type", inventory cap enforcement, resource:gathered event). All 613 tests pass.
+- Files changed: src/game/config.ts (RESOURCE_CONFIGS + ResourceNodeConfig interface added), src/game/engine/Game.ts (import + cfg usage updated), src/game/__tests__/systems/resource-balance.test.ts (new), prd.json
+- **Learnings for future iterations:**
+  - Inline `const` configs inside private methods are untestable directly — extract to `config.ts` as a named export so regression tests can import and assert against canonical values (same pattern as CONFIG for movement values)
+  - `as const satisfies Record<string, ResourceNodeConfig>` gives both literal type inference AND structural type checking in one annotation
+  - Resource balance test file belongs in `src/game/__tests__/systems/` (gathering is a system-layer concern, not engine)
+  - Behavioral timing tests use `gatherTime * 60 + 1` frames (not hardcoded frame counts) so tests stay coherent if the DT constant changes
+---
+
 ## 2026-05-08 - US-308
 - What was implemented: `src/game/__tests__/cats/cat-balance.test.ts` — 23 regression tests asserting GDD-tuned cat parameters. Covers: LoafDefinition (yarnCost=1, height=0.75u, colliderHeight=0.75u, stacking 2×=1.5u / 3×=2.25u, effectType=terrain), ZoomiesDefinition (yarnCost=2, speedMultiplier=2.0, trailLength=6, duration=8s, effectType=movement), CuriosityCatDefinition (yarnCost=2, revealRadius=5, duration=20s, effectType=utility), PounceDefinition (yarnCost=3, launchImpulse=3.5, airControlFactor=0.7, effectType=launch, ballistic apex > 0), GameState initial yarn=10, maxInventoryCapacity=10, CONFIG.maxActiveCats=3. All cat definition values matched GDD targets — no definition files changed. 591 tests pass (23 new US-308 tests).
 - Files changed: src/game/__tests__/cats/cat-balance.test.ts (new), prd.json
