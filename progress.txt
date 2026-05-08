@@ -5,6 +5,9 @@
 - Test DOM mocks: use a `createdElements[]` queue (each `createElement` call returns a fresh MockEl) so banner (index 0) and panel (index 1) are independently testable
 - For tests that need SceneManager, always use a SEPARATE container mock so event listener calls don't bleed between test setups
 - `as any` is acceptable for internal interface mocks in tests (no eslint suppression needed — rule not configured for this pattern)
+- Block meshes use unit cubes (dims: [1,1,1]) with scale.y = height — avoids geometry recreation on height changes; updateTransform(handle, {y: h/2}, rot, {y: h}) is all that's needed
+- `SceneManagerLike` in MapEditor.ts must stay in sync with the real SceneManager API (setMeshEmissive, setMeshColor, etc.) — extend both together
+- Water zone drag uses mousedown/mouseup pair; a `_suppressNextClick` flag prevents the `click` handler from double-firing after a drag completes
 
 ---
 
@@ -16,4 +19,15 @@
   - SceneManager mouse handlers must use a SEPARATE container per editor instance in tests; shared container accumulates handlers from multiple editor instances causing wrong handler to be found
   - Ghost is only created on mousemove (lazy), so ghost preview tests must fire mousemove before testing removeMesh
   - `SceneManagerLike` is intentionally unexported — internal interface for clean boundary; callers pass `as any` in tests
+---
+
+## 2026-05-08 - US-302b
+- What was implemented: Block selection (click-to-select when no tool active), visual highlight via setMeshEmissive, properties panel showing X/Z position + type dropdown + height input. updateSelectedBlockType() changes mesh color via setMeshColor. updateSelectedBlockHeight() updates scale.y (no mesh recreation). deleteSelectedBlock() removes from state + calls removeMesh. Delete key handler in keydown. EditorWaterZone type + createWaterZone() with normalised bounds. Water zone drag via mousedown/mouseup pair with _suppressNextClick flag. `_cancelWaterDrag()` cleans up drag ghost and state.
+- Files changed: src/game/maps/MapEditor.ts, src/game/__tests__/engine/MapEditor.test.ts
+- **Learnings for future iterations:**
+  - Block meshes must use unit cubes with scale.y=height so height can be updated in-place via updateTransform — geometry-backed height cannot be changed without mesh recreation
+  - `SceneManagerLike` interface must be extended whenever new SceneManager methods are used; also update `makeMockSceneManager` in tests with the new vi.fn() stubs
+  - When click and drag share the same DOM event path, use a `_suppressNextClick` boolean to prevent double-firing after a drag completes in mouseup
+  - `document.createElement("select")` is typed as `HTMLSelectElement` by TypeScript's lib.dom.d.ts, so no cast is needed; at runtime tests return MockEl but JavaScript allows setting arbitrary properties on it
+  - dispose() must clean up ALL registered container listeners (mousemove, mousedown, mouseup, click) to avoid leaks
 ---

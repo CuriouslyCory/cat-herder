@@ -84,7 +84,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Selection requires raycasting from mouse to identify which editor block was clicked. Height adjustment changes the visual box dimensions. Water zones store as rectangular areas in MapData with type=Water."
     },
     {
