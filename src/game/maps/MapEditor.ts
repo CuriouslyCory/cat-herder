@@ -12,6 +12,7 @@ import { TerrainType, ResourceType } from "../types";
 //          water zone drag-to-define with depth input.
 // US-303: Entity placement — Player Spawn, Cat Spawn, Resource Node,
 //         Hidden Terrain Zone, Yarn Pickup.
+// US-304: Move tool (M), Delete tool (D), 1-9 palette shortcuts.
 //
 // Gated by process.env.NODE_ENV === 'production'. Constructor returns early
 // in production, leaving all element refs null and _active always false.
@@ -72,6 +73,17 @@ export type EntityTool =
   | "resourceNode"
   | "hiddenTerrain"
   | "yarnPickup";
+
+// US-304: meta-tool modes that operate on already-placed objects.
+export type EditorToolMode = "move" | "delete";
+
+// Internal discriminated union for the object currently being moved.
+type MovingObject =
+  | { kind: "block"; obj: EditorBlock }
+  | { kind: "playerSpawn"; obj: EditorPlayerSpawn }
+  | { kind: "catSpawn"; obj: EditorCatSpawn }
+  | { kind: "resourceNode"; obj: EditorResourceNode }
+  | { kind: "yarnPickup"; obj: EditorYarnPickup };
 
 export interface EditorPlayerSpawn {
   x: number;
@@ -220,6 +232,12 @@ export class MapEditor {
   private _hiddenDragStart: { x: number; z: number } | null = null;
   private _hiddenDragGhost: SceneHandle | null = null;
 
+  // US-304: move / delete tool mode
+  private _editorToolMode: EditorToolMode | null = null;
+  private _movingObject: MovingObject | null = null;
+  private _moveToolBtn: HTMLElement | null = null;
+  private _deleteToolBtn: HTMLElement | null = null;
+
   // Event handler refs
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   private _mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
@@ -256,6 +274,11 @@ export class MapEditor {
     if (!this._active) return;
     this._active = false;
     this.selectBlock(null);
+    this._cancelMoveDrag();
+    if (this._editorToolMode !== null) {
+      this._editorToolMode = null;
+      this._updateEditorToolModeButtons();
+    }
     this.cameraController.setMode("follow");
     this.gameLifecycle.resume();
     if (this._banner) this._banner.style.display = "none";
@@ -290,13 +313,19 @@ export class MapEditor {
     return this._selectedTool;
   }
 
-  /** Select a terrain tool from the palette. Pass null to deselect. Clears entity tool. */
+  /** Select a terrain tool from the palette. Pass null to deselect. Clears entity tool and editor mode. */
   selectTool(type: TerrainType | null): void {
     // Deselect entity tool when terrain tool is selected
     if (type !== null && this._selectedEntityTool !== null) {
       this._selectedEntityTool = null;
       this._updateEntityToolButtons();
       this._updateEntityConfigSection();
+    }
+    // Deselect editor tool mode
+    if (type !== null && this._editorToolMode !== null) {
+      this._editorToolMode = null;
+      this._cancelMoveDrag();
+      this._updateEditorToolModeButtons();
     }
     this._selectedTool = type;
     if (type === null) this._removeGhost();
@@ -430,13 +459,19 @@ export class MapEditor {
     return this._selectedEntityTool;
   }
 
-  /** Select an entity tool. Pass null to deselect. Clears terrain tool. */
+  /** Select an entity tool. Pass null to deselect. Clears terrain tool and editor mode. */
   selectEntityTool(tool: EntityTool | null): void {
     // Deselect terrain tool when entity tool is selected
     if (tool !== null && this._selectedTool !== null) {
       this._selectedTool = null;
       this._removeGhost();
       this._updateToolButtons();
+    }
+    // Deselect editor tool mode
+    if (tool !== null && this._editorToolMode !== null) {
+      this._editorToolMode = null;
+      this._cancelMoveDrag();
+      this._updateEditorToolModeButtons();
     }
     this._selectedEntityTool = tool;
     // Reset resource defaults when switching entity tools
@@ -518,6 +553,49 @@ export class MapEditor {
     this._hiddenTerrainZones.push(zone);
   }
 
+  // ── Public API — move / delete tools (US-304) ─────────────────────────────
+
+  /** Current editor tool mode (move or delete), or null if neither is active. */
+  getEditorToolMode(): EditorToolMode | null {
+    return this._editorToolMode;
+  }
+
+  /**
+   * Activate a meta-tool mode. Setting a mode clears any selected terrain or
+   * entity tool. Setting null cancels the active mode and any in-progress drag.
+   */
+  setEditorToolMode(mode: EditorToolMode | null): void {
+    if (mode !== null) {
+      if (this._selectedTool !== null) {
+        this._selectedTool = null;
+        this._removeGhost();
+        this._updateToolButtons();
+      }
+      if (this._selectedEntityTool !== null) {
+        this._selectedEntityTool = null;
+        this._updateEntityToolButtons();
+        this._updateEntityConfigSection();
+      }
+    }
+    if (mode === null) {
+      this._cancelMoveDrag();
+    }
+    this._editorToolMode = mode;
+    this._updateEditorToolModeButtons();
+  }
+
+  /**
+   * Delete the first placed object (block or point entity) found at the given
+   * world position. Position is snapped to the 1u grid before lookup.
+   */
+  deleteObjectAtPosition(worldX: number, worldZ: number): void {
+    const gx = MapEditor.snapToGrid(worldX);
+    const gz = MapEditor.snapToGrid(worldZ);
+    const found = this._findPointObjectAt(gx, gz);
+    if (!found) return;
+    this._removeFoundObject(found);
+  }
+
   // ── dispose ────────────────────────────────────────────────────────────────
 
   dispose(): void {
@@ -551,6 +629,8 @@ export class MapEditor {
     this._editorWaterZones = [];
     this._cancelWaterDrag();
     this._cancelHiddenDrag();
+    this._cancelMoveDrag();
+    this._editorToolMode = null;
 
     // Clean up entity meshes (US-303)
     if (this._playerSpawn?.handle && this.sceneManager) {
@@ -651,6 +731,41 @@ export class MapEditor {
     }
 
     panel.appendChild(this._buildEntityConfigSection());
+
+    // US-304: Move / Delete tool buttons
+    const toolsSep = document.createElement("div");
+    toolsSep.style.cssText = "border-top:1px solid #444;margin-top:4px;";
+    panel.appendChild(toolsSep);
+
+    const toolsTitle = document.createElement("div");
+    toolsTitle.style.cssText =
+      "font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:4px;margin-top:4px;";
+    toolsTitle.textContent = "Tools";
+    panel.appendChild(toolsTitle);
+
+    const moveBtn = document.createElement("button");
+    moveBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#2a2a3e;border:1px solid #444;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    moveBtn.textContent = "Move  [M]";
+    moveBtn.addEventListener("click", () => {
+      this.setEditorToolMode(this._editorToolMode === "move" ? null : "move");
+    });
+    this._moveToolBtn = moveBtn;
+    panel.appendChild(moveBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#2a2a3e;border:1px solid #444;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;";
+    deleteBtn.textContent = "Delete  [D]";
+    deleteBtn.addEventListener("click", () => {
+      this.setEditorToolMode(this._editorToolMode === "delete" ? null : "delete");
+    });
+    this._deleteToolBtn = deleteBtn;
+    panel.appendChild(deleteBtn);
 
     const parent = this.container.parentElement ?? document.body;
     parent.appendChild(panel);
@@ -947,6 +1062,20 @@ export class MapEditor {
   // ── Private — keyboard & mouse handlers ───────────────────────────────────
 
   private _registerKeyboard(): void {
+    const PALETTE_TERRAIN: TerrainType[] = [
+      TerrainType.Grass,
+      TerrainType.Dirt,
+      TerrainType.Stone,
+      TerrainType.Water,
+    ];
+    const PALETTE_ENTITY: EntityTool[] = [
+      "playerSpawn",
+      "catSpawn",
+      "resourceNode",
+      "hiddenTerrain",
+      "yarnPickup",
+    ];
+
     this._keydownHandler = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "e" && e.ctrlKey) {
         e.preventDefault();
@@ -955,23 +1084,63 @@ export class MapEditor {
         } else {
           this.enable();
         }
+        return;
       }
-      if (this._active && e.key === "Delete") {
+
+      if (!this._active) return;
+
+      if (e.key === "Delete") {
         this.deleteSelectedBlock();
+        return;
+      }
+
+      // US-304: M / D / 1-9 — only while editor is active; consume event so
+      // game InputManager does not also process them.
+      const key = e.key.toLowerCase();
+      if (key === "m") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.setEditorToolMode(this._editorToolMode === "move" ? null : "move");
+        return;
+      }
+      if (key === "d") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.setEditorToolMode(this._editorToolMode === "delete" ? null : "delete");
+        return;
+      }
+      // 1-4 → terrain palette, 5-9 → entity palette
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= 4) {
+        e.preventDefault();
+        e.stopPropagation();
+        const type = PALETTE_TERRAIN[num - 1]!;
+        this.selectTool(this._selectedTool === type ? null : type);
+      } else if (num >= 5 && num <= 9) {
+        e.preventDefault();
+        e.stopPropagation();
+        const tool = PALETTE_ENTITY[num - 5]!;
+        this.selectEntityTool(this._selectedEntityTool === tool ? null : tool);
       }
     };
     document.addEventListener("keydown", this._keydownHandler);
   }
 
   private _registerMouseHandlers(): void {
-    // mousemove: ghost preview + drag ghost updates
+    // mousemove: ghost preview + drag ghost updates + move drag
     this._mouseMoveHandler = (e: MouseEvent) => {
       if (!this._active || !this.sceneManager) return;
       const rect = this.container.getBoundingClientRect();
+
+      // Build exclude set: ghost and any object being moved (so raycast gets ground)
+      const excludeHandles = new Set<SceneHandle>();
+      if (this._ghostHandle) excludeHandles.add(this._ghostHandle);
+      if (this._movingObject?.obj.handle) excludeHandles.add(this._movingObject.obj.handle);
+
       const worldPos = this.sceneManager.screenToWorld(
         e.clientX - rect.left,
         e.clientY - rect.top,
-        this._ghostHandle ? new Set([this._ghostHandle]) : undefined,
+        excludeHandles.size > 0 ? excludeHandles : undefined,
       );
       if (!worldPos) return;
       const snappedX = MapEditor.snapToGrid(worldPos.x);
@@ -1009,6 +1178,11 @@ export class MapEditor {
       ) {
         this._updateEntityGhost(snappedX, snappedZ);
       }
+
+      // US-304: move drag — update the moving object's position in real-time
+      if (this._editorToolMode === "move" && this._movingObject) {
+        this._updateObjectPosition(this._movingObject, snappedX, snappedZ);
+      }
     };
     this.container.addEventListener("mousemove", this._mouseMoveHandler);
 
@@ -1029,6 +1203,12 @@ export class MapEditor {
         this._waterDragStart = { x: sx, z: sz };
       } else if (this._selectedEntityTool === "hiddenTerrain") {
         this._hiddenDragStart = { x: sx, z: sz };
+      } else if (this._editorToolMode === "move") {
+        // US-304: start move drag — find object at click position
+        const found = this._findPointObjectAt(sx, sz);
+        if (found) {
+          this._movingObject = found;
+        }
       }
     };
     this.container.addEventListener("mousedown", this._mousedownHandler);
@@ -1098,15 +1278,34 @@ export class MapEditor {
         }
         this._cancelHiddenDrag();
       }
+
+      // US-304: finalize move drag
+      if (this._movingObject) {
+        this._suppressNextClick = true;
+        this._movingObject = null;
+      }
     };
     this.container.addEventListener("mouseup", this._mouseupHandler);
 
-    // click: place terrain block, place entity, or select block
+    // click: delete-mode removal, terrain placement, entity placement, or selection
     this._clickHandler = (e: MouseEvent) => {
       if (!this._active) return;
 
       if (this._suppressNextClick) {
         this._suppressNextClick = false;
+        return;
+      }
+
+      // US-304: delete tool — remove object at click position
+      if (this._editorToolMode === "delete") {
+        if (!this.sceneManager) return;
+        const rect = this.container.getBoundingClientRect();
+        const worldPos = this.sceneManager.screenToWorld(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        if (!worldPos) return;
+        this.deleteObjectAtPosition(worldPos.x, worldPos.z);
         return;
       }
 
@@ -1395,6 +1594,120 @@ export class MapEditor {
       this.sceneManager.removeMesh(this._ghostHandle);
     }
     this._ghostHandle = null;
+  }
+
+  // ── Private — US-304 helpers ───────────────────────────────────────────────
+
+  /** Find the first point object at grid position (gx, gz). Zones are excluded. */
+  private _findPointObjectAt(gx: number, gz: number): MovingObject | null {
+    const block = this._editorBlocks.find((b) => b.x === gx && b.z === gz);
+    if (block) return { kind: "block", obj: block };
+
+    if (this._playerSpawn && this._playerSpawn.x === gx && this._playerSpawn.z === gz) {
+      return { kind: "playerSpawn", obj: this._playerSpawn };
+    }
+    const cat = this._catSpawns.find((s) => s.x === gx && s.z === gz);
+    if (cat) return { kind: "catSpawn", obj: cat };
+
+    const node = this._resourceNodes.find((n) => n.x === gx && n.z === gz);
+    if (node) return { kind: "resourceNode", obj: node };
+
+    const yarn = this._yarnPickups.find((p) => p.x === gx && p.z === gz);
+    if (yarn) return { kind: "yarnPickup", obj: yarn };
+
+    return null;
+  }
+
+  /** Remove a found object from its collection and the scene. */
+  private _removeFoundObject(found: MovingObject): void {
+    switch (found.kind) {
+      case "block": {
+        if (found.obj.handle && this.sceneManager) {
+          this.sceneManager.removeMesh(found.obj.handle);
+        }
+        const idx = this._editorBlocks.indexOf(found.obj);
+        if (idx !== -1) this._editorBlocks.splice(idx, 1);
+        if (this._selectedBlock === found.obj) {
+          this._selectedBlock = null;
+          this._updatePropertiesSection();
+        }
+        break;
+      }
+      case "playerSpawn": {
+        if (found.obj.handle && this.sceneManager) {
+          this.sceneManager.removeMesh(found.obj.handle);
+        }
+        this._playerSpawn = null;
+        break;
+      }
+      case "catSpawn": {
+        if (found.obj.handle && this.sceneManager) {
+          this.sceneManager.removeMesh(found.obj.handle);
+        }
+        const idx = this._catSpawns.indexOf(found.obj);
+        if (idx !== -1) this._catSpawns.splice(idx, 1);
+        break;
+      }
+      case "resourceNode": {
+        if (found.obj.handle && this.sceneManager) {
+          this.sceneManager.removeMesh(found.obj.handle);
+        }
+        const idx = this._resourceNodes.indexOf(found.obj);
+        if (idx !== -1) this._resourceNodes.splice(idx, 1);
+        break;
+      }
+      case "yarnPickup": {
+        if (found.obj.handle && this.sceneManager) {
+          this.sceneManager.removeMesh(found.obj.handle);
+        }
+        const idx = this._yarnPickups.indexOf(found.obj);
+        if (idx !== -1) this._yarnPickups.splice(idx, 1);
+        break;
+      }
+    }
+  }
+
+  /** Update the world position of a moving object and its mesh. */
+  private _updateObjectPosition(found: MovingObject, x: number, z: number): void {
+    found.obj.x = x;
+    found.obj.z = z;
+    if (!found.obj.handle || !this.sceneManager) return;
+    if (found.kind === "block") {
+      const h = found.obj.height;
+      this.sceneManager.updateTransform(
+        found.obj.handle,
+        { x, y: h / 2, z },
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: h, z: 1 },
+      );
+    } else {
+      this.sceneManager.updateTransform(
+        found.obj.handle,
+        { x, y: 0.5, z },
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: 1, z: 1 },
+      );
+    }
+  }
+
+  /** Clear an in-progress move drag without restoring position. */
+  private _cancelMoveDrag(): void {
+    this._movingObject = null;
+  }
+
+  private _updateEditorToolModeButtons(): void {
+    if (this._moveToolBtn) {
+      this._moveToolBtn.style.background =
+        this._editorToolMode === "move" ? "#4a4a6e" : "#2a2a3e";
+      this._moveToolBtn.style.borderColor =
+        this._editorToolMode === "move" ? "#88f" : "#444";
+    }
+    if (this._deleteToolBtn) {
+      this._deleteToolBtn.style.background =
+        this._editorToolMode === "delete" ? "#6e2a2a" : "#2a2a3e";
+      this._deleteToolBtn.style.borderColor =
+        this._editorToolMode === "delete" ? "#f88" : "#444";
+    }
   }
 
   // ── Private — block mesh helpers ──────────────────────────────────────────

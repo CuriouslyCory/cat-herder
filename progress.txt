@@ -1,10 +1,25 @@
 ## Codebase Patterns
+- US-304 added `EditorToolMode = 'move' | 'delete'` as a third, mutually exclusive tool selection alongside terrain/entity tools — setting any one clears the others
+- Move tool drags the *real* object (no ghost) — updates `obj.x/z` and `updateTransform` in real-time on mousemove; mouseup sets `_suppressNextClick` to prevent the click handler from also firing
+- `_findPointObjectAt(gx, gz)` returns a discriminated `MovingObject` union that `_removeFoundObject` and `_updateObjectPosition` can switch on; zone objects (water, hidden terrain) are excluded as they're not point-clickable
+- Keyboard shortcuts M/D/1-9 call `e.stopPropagation()` while editor is active to prevent game InputManager from seeing them
+- `excludeHandles` set in mousemove now includes both `_ghostHandle` and the moving object's handle so screenToWorld hits ground geometry during drag
 - Entity tools in MapEditor use a separate `_selectedEntityTool: EntityTool | null` field — selecting one clears the other (terrain ↔ entity mutual exclusion via `selectTool`/`selectEntityTool`)
 - Entity markers use `geometry: "sphere"` (vs terrain blocks which use `geometry: "box"`) — gives immediate visual distinction between entity markers and terrain tiles
 - `RESOURCE_RESPAWN_DEFAULTS` is exported so tests can assert against it directly without magic numbers
 - Hidden terrain zones reuse the same mousedown/mouseup drag pattern as water zones — just a separate set of state vars (`_hiddenDragStart`, `_hiddenDragGhost`) feeding `createHiddenTerrainZone()`
 - Player spawn uniqueness: `_placePlayerSpawn()` removes the old handle via `sceneManager.removeMesh()` before assigning the new one — tests verify `removeMesh` is called with the prior handle
 - Entity config section (`_entityConfigSection`) is cleared via `textContent = ""` and rebuilt by `_updateEntityConfigSection()` on each `selectEntityTool()` call — avoids stale DOM refs
+
+## 2026-05-08 - US-304
+- What was implemented: `EditorToolMode = 'move' | 'delete'` meta-tool modes. `setEditorToolMode()`, `getEditorToolMode()`, `deleteObjectAtPosition()` public API. Move tool: mousedown picks object via `_findPointObjectAt`, mousemove calls `_updateObjectPosition` (updates obj.x/z + mesh transform in real-time), mouseup finalises + suppressNextClick. Delete tool: click handler routes to `deleteObjectAtPosition` → `_findPointObjectAt` → `_removeFoundObject`. Keyboard: M/D toggle modes (stopPropagation while active), 1-4 terrain palette, 5-9 entity palette. Panel: Move [M] and Delete [D] buttons added to a "Tools" section. All tools mutually exclusive. 510 tests pass.
+- Files changed: src/game/maps/MapEditor.ts, src/game/__tests__/engine/MapEditor.test.ts, prd.json
+- **Learnings for future iterations:**
+  - Move drag on real objects (no ghost) is simpler than ghost-based drag and provides direct visual feedback — mousemove updates x/z + transform immediately, mouseup just clears `_movingObject`
+  - `_findPointObjectAt` returns a discriminated union so callers don't need to check collection type; keep zones (water, hidden terrain) out of this lookup since they're defined by area not a single click point
+  - When building `excludeHandles` for screenToWorld, combine ghost handle AND moving object handle in a single Set so both are excluded during drag raycasts
+  - `e.stopPropagation()` (not just `preventDefault`) is needed on M/D/1-9 to prevent game InputManager (which also listens on document) from seeing those keys while editor is active
+---
 
 ## 2026-05-08 - US-303
 - MapEditor is dev-gated via `process.env.NODE_ENV === 'production'` guard in constructor — same pattern as DebugMenu

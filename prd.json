@@ -120,7 +120,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Move tool needs visual feedback during drag (object follows mouse at grid-snapped position). Keyboard shortcuts should be handled by MapEditor's own keydown listener that only fires when isActive(). InputManager's existing GameAction bindings for M (ToggleMap) must be suppressed while editor is active."
     },
     {

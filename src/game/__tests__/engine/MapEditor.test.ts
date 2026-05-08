@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { MapEditor, RESOURCE_RESPAWN_DEFAULTS } from "~/game/maps/MapEditor";
-import type { EditorBlock, EditorWaterZone } from "~/game/maps/MapEditor";
+import type { EditorBlock, EditorWaterZone, EditorToolMode } from "~/game/maps/MapEditor";
 import type { CameraController } from "~/game/engine/CameraController";
 import type { MapData } from "~/game/maps/MapData";
 import { TerrainType, ResourceType } from "~/game/types";
@@ -1589,5 +1589,384 @@ describe("dispose() — entity cleanup", () => {
     editor.placeEntity(4, 4);
     editor.dispose();
     expect(editor.getYarnPickups()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-304: setEditorToolMode() — mode selection
+// ---------------------------------------------------------------------------
+
+describe("setEditorToolMode()", () => {
+  it("getEditorToolMode() returns null initially", () => {
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("sets move mode", () => {
+    editor.setEditorToolMode("move");
+    expect(editor.getEditorToolMode()).toBe("move");
+  });
+
+  it("sets delete mode", () => {
+    editor.setEditorToolMode("delete");
+    expect(editor.getEditorToolMode()).toBe("delete");
+  });
+
+  it("setEditorToolMode(null) clears the mode", () => {
+    editor.setEditorToolMode("move");
+    editor.setEditorToolMode(null);
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("setting move mode clears terrain tool", () => {
+    editor.selectTool(TerrainType.Grass);
+    editor.setEditorToolMode("move");
+    expect(editor.getSelectedTool()).toBeNull();
+  });
+
+  it("setting delete mode clears entity tool", () => {
+    editor.selectEntityTool("catSpawn");
+    editor.setEditorToolMode("delete");
+    expect(editor.getSelectedEntityTool()).toBeNull();
+  });
+
+  it("selecting a terrain tool clears editor tool mode", () => {
+    editor.setEditorToolMode("move");
+    editor.selectTool(TerrainType.Dirt);
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("selecting an entity tool clears editor tool mode", () => {
+    editor.setEditorToolMode("delete");
+    editor.selectEntityTool("yarnPickup");
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("disable() clears editor tool mode", () => {
+    editor.enable();
+    editor.setEditorToolMode("move");
+    editor.disable();
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("_editorToolMode type annotation accepted by TypeScript", () => {
+    const mode: EditorToolMode | null = editor.getEditorToolMode();
+    expect(mode).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-304: keyboard shortcuts — M / D / 1–9
+// ---------------------------------------------------------------------------
+
+describe("keyboard shortcuts (US-304)", () => {
+  function getKeydownHandler(): ((e: KeyboardEvent) => void) | undefined {
+    return (vi.mocked(document).addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "keydown",
+    )?.[1] as ((e: KeyboardEvent) => void) | undefined;
+  }
+
+  function fireKey(key: string, extra: Partial<KeyboardEvent> = {}): void {
+    const handler = getKeydownHandler();
+    expect(handler).toBeDefined();
+    handler!({ key, ctrlKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...extra } as unknown as KeyboardEvent);
+  }
+
+  it("M key activates move tool when editor is active", () => {
+    editor.enable();
+    fireKey("m");
+    expect(editor.getEditorToolMode()).toBe("move");
+  });
+
+  it("M key toggles move tool off when already active", () => {
+    editor.enable();
+    fireKey("m"); // on
+    fireKey("m"); // off
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("D key activates delete tool when editor is active", () => {
+    editor.enable();
+    fireKey("d");
+    expect(editor.getEditorToolMode()).toBe("delete");
+  });
+
+  it("D key is no-op when editor is inactive", () => {
+    fireKey("d"); // editor not enabled
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("M key is no-op when editor is inactive", () => {
+    fireKey("m"); // editor not enabled
+    expect(editor.getEditorToolMode()).toBeNull();
+  });
+
+  it("'1' key selects Grass terrain tool when active", () => {
+    editor.enable();
+    fireKey("1");
+    expect(editor.getSelectedTool()).toBe(TerrainType.Grass);
+  });
+
+  it("'2' key selects Dirt terrain tool when active", () => {
+    editor.enable();
+    fireKey("2");
+    expect(editor.getSelectedTool()).toBe(TerrainType.Dirt);
+  });
+
+  it("'3' key selects Stone terrain tool when active", () => {
+    editor.enable();
+    fireKey("3");
+    expect(editor.getSelectedTool()).toBe(TerrainType.Stone);
+  });
+
+  it("'4' key selects Water terrain tool when active", () => {
+    editor.enable();
+    fireKey("4");
+    expect(editor.getSelectedTool()).toBe(TerrainType.Water);
+  });
+
+  it("'5' key selects playerSpawn entity tool when active", () => {
+    editor.enable();
+    fireKey("5");
+    expect(editor.getSelectedEntityTool()).toBe("playerSpawn");
+  });
+
+  it("'9' key selects yarnPickup entity tool when active", () => {
+    editor.enable();
+    fireKey("9");
+    expect(editor.getSelectedEntityTool()).toBe("yarnPickup");
+  });
+
+  it("'1' key is no-op when editor is inactive", () => {
+    fireKey("1");
+    expect(editor.getSelectedTool()).toBeNull();
+  });
+
+  it("pressing same palette key again deselects the tool", () => {
+    editor.enable();
+    fireKey("1"); // select Grass
+    fireKey("1"); // deselect
+    expect(editor.getSelectedTool()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-304: deleteObjectAtPosition()
+// ---------------------------------------------------------------------------
+
+describe("deleteObjectAtPosition()", () => {
+  it("deletes a terrain block at the given position", () => {
+    editor.selectTool(TerrainType.Grass);
+    editor.placeBlock(3, 3);
+    expect(editor.getEditorBlocks()).toHaveLength(1);
+    editor.deleteObjectAtPosition(3, 3);
+    expect(editor.getEditorBlocks()).toHaveLength(0);
+  });
+
+  it("position is grid-snapped before lookup", () => {
+    editor.selectTool(TerrainType.Grass);
+    editor.placeBlock(3, 3);
+    editor.deleteObjectAtPosition(3.4, 3.4); // snaps to (3, 3)
+    expect(editor.getEditorBlocks()).toHaveLength(0);
+  });
+
+  it("does nothing when no object at position", () => {
+    editor.selectTool(TerrainType.Grass);
+    editor.placeBlock(3, 3);
+    editor.deleteObjectAtPosition(5, 5); // different position
+    expect(editor.getEditorBlocks()).toHaveLength(1);
+  });
+
+  it("deletes a player spawn", () => {
+    editor.selectEntityTool("playerSpawn");
+    editor.placeEntity(2, 2);
+    editor.deleteObjectAtPosition(2, 2);
+    expect(editor.getPlayerSpawn()).toBeNull();
+  });
+
+  it("deletes a cat spawn", () => {
+    editor.selectEntityTool("catSpawn");
+    editor.placeEntity(4, 4);
+    editor.deleteObjectAtPosition(4, 4);
+    expect(editor.getCatSpawns()).toHaveLength(0);
+  });
+
+  it("deletes only the matched cat spawn when multiple exist", () => {
+    editor.selectEntityTool("catSpawn");
+    editor.placeEntity(1, 1);
+    editor.placeEntity(5, 5);
+    editor.deleteObjectAtPosition(1, 1);
+    const spawns = editor.getCatSpawns();
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]!.x).toBe(5);
+  });
+
+  it("deletes a resource node", () => {
+    editor.selectEntityTool("resourceNode");
+    editor.placeEntity(6, 6);
+    editor.deleteObjectAtPosition(6, 6);
+    expect(editor.getResourceNodes()).toHaveLength(0);
+  });
+
+  it("deletes a yarn pickup", () => {
+    editor.selectEntityTool("yarnPickup");
+    editor.placeEntity(7, 7);
+    editor.deleteObjectAtPosition(7, 7);
+    expect(editor.getYarnPickups()).toHaveLength(0);
+  });
+
+  it("calls removeMesh on the object's handle when SceneManager present", () => {
+    const sceneMgr = makeMockSceneManager({ x: 2, y: 0, z: 2 });
+    const sceneContainer = makeMockEl();
+    const sceneEditor = new MapEditor(
+      sceneContainer as unknown as HTMLElement,
+      mockCamera as unknown as CameraController,
+      lifecycle,
+      sceneMgr as any,
+    );
+    sceneEditor.selectTool(TerrainType.Grass);
+    sceneEditor.placeBlock(2, 2);
+    const handle = sceneEditor.getEditorBlocks()[0]!.handle;
+    sceneMgr.removeMesh.mockClear();
+    sceneEditor.deleteObjectAtPosition(2, 2);
+    expect(sceneMgr.removeMesh).toHaveBeenCalledWith(handle);
+    sceneEditor.dispose();
+  });
+
+  it("deselects the block if it was selected when deleted", () => {
+    editor.selectTool(TerrainType.Grass);
+    editor.placeBlock(5, 5);
+    const block = editor.getEditorBlocks()[0]!;
+    editor.selectBlock(block);
+    editor.deleteObjectAtPosition(5, 5);
+    expect(editor.getSelectedBlock()).toBeNull();
+    expect(editor.getEditorBlocks()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-304: Move tool drag via mousedown/mousemove/mouseup
+// ---------------------------------------------------------------------------
+
+describe("move tool drag", () => {
+  let sceneMgr: MockSceneMgr;
+  let sceneEditor: MapEditor;
+  let sceneContainer: MockEl;
+
+  beforeEach(() => {
+    sceneMgr = makeMockSceneManager({ x: 1, y: 0, z: 1 });
+    sceneContainer = makeMockEl();
+    sceneEditor = new MapEditor(
+      sceneContainer as unknown as HTMLElement,
+      mockCamera as unknown as CameraController,
+      lifecycle,
+      sceneMgr as any,
+    );
+  });
+
+  afterEach(() => {
+    sceneEditor.dispose();
+  });
+
+  function getHandler(event: string): ((e: MouseEvent) => void) | undefined {
+    return (sceneContainer.addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === event,
+    )?.[1] as ((e: MouseEvent) => void) | undefined;
+  }
+
+  it("mousedown in move mode starts tracking the object", () => {
+    sceneEditor.enable();
+    sceneEditor.selectTool(TerrainType.Grass);
+    sceneEditor.placeBlock(1, 1);
+    sceneEditor.setEditorToolMode("move");
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 1, y: 0, z: 1 });
+    getHandler("mousedown")!({ clientX: 0, clientY: 0 } as MouseEvent);
+
+    // Object should be moving — subsequent mousemove updates its position
+    sceneMgr.screenToWorld.mockReturnValue({ x: 4, y: 0, z: 4 });
+    getHandler("mousemove")!({ clientX: 40, clientY: 40 } as MouseEvent);
+
+    const block = sceneEditor.getEditorBlocks()[0]!;
+    expect(block.x).toBe(4);
+    expect(block.z).toBe(4);
+  });
+
+  it("mouseup finalizes the move and clears the moving object (no further moves)", () => {
+    sceneEditor.enable();
+    sceneEditor.selectTool(TerrainType.Grass);
+    sceneEditor.placeBlock(1, 1);
+    sceneEditor.setEditorToolMode("move");
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 1, y: 0, z: 1 });
+    getHandler("mousedown")!({ clientX: 0, clientY: 0 } as MouseEvent);
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 3, y: 0, z: 3 });
+    getHandler("mousemove")!({ clientX: 30, clientY: 30 } as MouseEvent);
+
+    getHandler("mouseup")!({ clientX: 30, clientY: 30 } as MouseEvent);
+
+    // After mouseup, further mousemove should not move the object
+    sceneMgr.screenToWorld.mockReturnValue({ x: 9, y: 0, z: 9 });
+    getHandler("mousemove")!({ clientX: 90, clientY: 90 } as MouseEvent);
+
+    const block = sceneEditor.getEditorBlocks()[0]!;
+    expect(block.x).toBe(3);
+    expect(block.z).toBe(3);
+  });
+
+  it("move tool updates entity position (cat spawn)", () => {
+    sceneEditor.enable();
+    sceneEditor.selectEntityTool("catSpawn");
+    sceneEditor.placeEntity(2, 2);
+    sceneEditor.setEditorToolMode("move");
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 2, y: 0, z: 2 });
+    getHandler("mousedown")!({ clientX: 0, clientY: 0 } as MouseEvent);
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 6, y: 0, z: 8 });
+    getHandler("mousemove")!({ clientX: 60, clientY: 80 } as MouseEvent);
+
+    const spawn = sceneEditor.getCatSpawns()[0]!;
+    expect(spawn.x).toBe(6);
+    expect(spawn.z).toBe(8);
+  });
+
+  it("mousedown on empty area does not start a move drag", () => {
+    sceneEditor.enable();
+    sceneEditor.setEditorToolMode("move");
+
+    // No object at (5, 5)
+    sceneMgr.screenToWorld.mockReturnValue({ x: 5, y: 0, z: 5 });
+    getHandler("mousedown")!({ clientX: 0, clientY: 0 } as MouseEvent);
+
+    // Mousemove should not throw or mutate anything
+    sceneMgr.screenToWorld.mockReturnValue({ x: 8, y: 0, z: 8 });
+    expect(() => {
+      getHandler("mousemove")!({ clientX: 80, clientY: 80 } as MouseEvent);
+    }).not.toThrow();
+  });
+
+  it("calls updateTransform on the mesh during drag", () => {
+    sceneEditor.enable();
+    sceneEditor.selectTool(TerrainType.Grass);
+    sceneEditor.placeBlock(1, 1);
+    sceneEditor.setEditorToolMode("move");
+
+    sceneMgr.screenToWorld.mockReturnValue({ x: 1, y: 0, z: 1 });
+    getHandler("mousedown")!({ clientX: 0, clientY: 0 } as MouseEvent);
+
+    sceneMgr.updateTransform.mockClear();
+    sceneMgr.screenToWorld.mockReturnValue({ x: 5, y: 0, z: 5 });
+    getHandler("mousemove")!({ clientX: 50, clientY: 50 } as MouseEvent);
+
+    expect(sceneMgr.updateTransform).toHaveBeenCalled();
+    const [, pos] = sceneMgr.updateTransform.mock.calls[0] as [
+      symbol,
+      { x: number; y: number; z: number },
+      unknown,
+      unknown,
+    ];
+    expect(pos.x).toBe(5);
+    expect(pos.z).toBe(5);
   });
 });
