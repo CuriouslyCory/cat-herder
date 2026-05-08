@@ -181,7 +181,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "The derived jumpImpulse is computed at module load: Math.sqrt(2 * Math.abs(gravity) * jumpApex). Test this derivation. runtimeConfig is a mutable copy for debug — tests should assert against the frozen CONFIG object. Browser verification: use dev-browser to navigate to /play and test movement feel."
     },
     {
