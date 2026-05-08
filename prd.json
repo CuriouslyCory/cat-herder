@@ -200,7 +200,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Cat definitions are in src/game/cats/definitions/. Each exports a CatDefinition with type, name, yarnCost, duration, and type-specific parameters. CAT_REGISTRY in src/game/cats/definitions/index.ts maps CatType -> CatDefinition. Use entityFactories.ts helpers for spawning test cats."
     },
     {

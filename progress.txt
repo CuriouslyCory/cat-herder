@@ -1,3 +1,14 @@
+## 2026-05-08 - US-308
+- What was implemented: `src/game/__tests__/cats/cat-balance.test.ts` — 23 regression tests asserting GDD-tuned cat parameters. Covers: LoafDefinition (yarnCost=1, height=0.75u, colliderHeight=0.75u, stacking 2×=1.5u / 3×=2.25u, effectType=terrain), ZoomiesDefinition (yarnCost=2, speedMultiplier=2.0, trailLength=6, duration=8s, effectType=movement), CuriosityCatDefinition (yarnCost=2, revealRadius=5, duration=20s, effectType=utility), PounceDefinition (yarnCost=3, launchImpulse=3.5, airControlFactor=0.7, effectType=launch, ballistic apex > 0), GameState initial yarn=10, maxInventoryCapacity=10, CONFIG.maxActiveCats=3. All cat definition values matched GDD targets — no definition files changed. 591 tests pass (23 new US-308 tests).
+- Files changed: src/game/__tests__/cats/cat-balance.test.ts (new), prd.json
+- **Learnings for future iterations:**
+  - CatDefinition.behavior.params is typed as `Record<string, number | string | boolean> | undefined` — access with optional chaining and cast to specific type (e.g. `as number`) for arithmetic tests
+  - CuriosityCat uses `meshConfig.size` (sphere) not `meshConfig.dims` — don't assume all cats use dims
+  - Balance pass tests for cats belong in `src/game/__tests__/cats/` to match source layout (cats are not engine-layer concerns)
+  - The Pounce ballistic apex test (v²/2|g|) uses CONFIG.gravity — test stays coherent even if gravity changes because it re-derives from CONFIG
+
+---
+
 ## 2026-05-08 - US-306
 - What was implemented: `src/game/ui/NavigationOverlay.ts` — 400×400 HTML5 canvas minimap overlay. `MapManager.getMapData()` public method added. `WorldLike`/`MapManagerLike` local interfaces (avoid Three.js transitive deps in tests). `open()`/`close()`/`toggle()`/`isVisible()`/`update(dt)`/`dispose()` public API. Capture-phase keydown listener (`document.addEventListener("keydown", …, true)`) calls `stopImmediatePropagation()` on all keys while visible (blocks InputManager bubble-phase listeners = movement suppressed). M and Escape close the overlay. `worldToPixel()` exposed publicly for tests. Renders: terrain cells (Grass/Dirt/Stone/Water, Hidden skipped), resource node dots by ResourceType color, cat circles (purple), player dot + direction triangle (#ff6b35). Game.ts: imports `GameAction`, adds `navigationOverlay` field, opens on `isActionPressed(ToggleMap) && !mapEditor?.isActive()`, calls `update(realDt)` and `dispose()`. 554 tests pass (28 new US-306 tests).
 - Files changed: src/game/ui/NavigationOverlay.ts (new), src/game/__tests__/engine/NavigationOverlay.test.ts (new), src/game/maps/MapManager.ts (getMapData added), src/game/engine/Game.ts (import + field + init + loop + dispose), prd.json
@@ -89,4 +100,13 @@
   - Hidden terrain drag exactly mirrors water zone drag code — only difference is the color constant and the target collection (`_hiddenTerrainZones` vs `_editorWaterZones`)
   - Exporting `RESOURCE_RESPAWN_DEFAULTS` lets tests assert against canonical values without duplicating magic numbers
   - For dispose() tests with mesh cleanup: always `mockClear()` the `removeMesh` spy AFTER the entity is placed (not before) to isolate just the disposal calls
+---
+
+## 2026-05-08 - US-307
+- What was implemented: `src/game/__tests__/engine/config-balance.test.ts` — 14 regression tests asserting all GDD-tuned movement, jump, and swimming config values from `CONFIG` in config.ts. Covers: walkSpeed (4.5), acceleration (0.3), deceleration (0.2), airControlFactor (0.7), jumpApex (1.2), gravity (-12), derived jumpImpulse (~5.367), coyoteFrames (5), jumpBufferFrames (5), swimSpeedSurface (3.2), swimSpeedDive (2.0), swimSpeedAscend (2.5), maxActiveCats (3), and GameState initial yarn (10). All config values already matched the GDD targets — no config.ts changes needed.
+- Files changed: src/game/__tests__/engine/config-balance.test.ts (new), prd.json
+- **Learnings for future iterations:**
+  - CONFIG is `Object.freeze({...BASE_CONFIG})` — tests can safely import and assert against it without mutation concerns
+  - The derived `jumpImpulse` field is computed at module load (after BASE_CONFIG literal) and set via `BASE_CONFIG.jumpImpulse = Math.sqrt(...)` then frozen into CONFIG — tests use `toBeCloseTo` for the float comparison
+  - Balance pass tests belong in `src/game/__tests__/engine/` alongside other engine-layer tests (config.ts is engine-level, not a system)
 ---
