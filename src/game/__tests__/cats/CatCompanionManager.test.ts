@@ -87,7 +87,9 @@ describe("CatCompanionManager", () => {
 
       manager.summon(CatType.Loaf, { x: 4, y: 0, z: 4 });
 
-      expect(world.isAlive(cat1)).toBe(false);
+      // cat1 is removed from active companions immediately but its entity stays
+      // alive for the 0.2 s scale-down animation (VisualEffectsSystem destroys it).
+      expect(manager.getActiveCompanions()).not.toContain(cat1);
       expect(manager.getActiveCompanions()).toHaveLength(3);
     });
   });
@@ -125,10 +127,12 @@ describe("CatCompanionManager", () => {
       );
     });
 
-    it("destroys the entity", () => {
+    it("removes entity from active companions immediately but keeps it alive for scale-down animation", () => {
       const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
       manager.dismiss(entity);
-      expect(world.isAlive(entity)).toBe(false);
+      // Entity stays alive: VisualEffectsSystem destroys it after the 0.2 s pop-out.
+      expect(world.isAlive(entity)).toBe(true);
+      expect(manager.getActiveCompanions()).not.toContain(entity);
     });
   });
 

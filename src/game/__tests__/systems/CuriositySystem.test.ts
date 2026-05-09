@@ -121,9 +121,9 @@ describe("CuriositySystem", () => {
 
     expect(ht.isRevealed).toBe(false);
     expect(ht.revealCount).toBe(0);
-    // Cat not dismissed yet — sceneHandle is null so opacity is already 0
-    // (no animation needed when there's no scene handle to animate).
-    expect(world.isAlive(catEntity)).toBe(false);
+    // dismiss() was called: CatBehavior removed, scale-down animation queued.
+    // Entity stays alive until VisualEffectsSystem completes the 0.2 s tween.
+    expect(world.getComponent(catEntity, "CatBehavior")).toBeNull();
   });
 
   it("handles overlapping reveal from multiple cats", () => {
@@ -208,7 +208,9 @@ describe("CuriositySystem", () => {
       }
 
       expect(ht.currentOpacity).toBe(0);
-      expect(world.isAlive(catEntity)).toBe(false);
+      // dismiss() was called once fade-out finished — CatBehavior removed,
+      // entity kept alive for VisualEffectsSystem's 0.2 s scale-down tween.
+      expect(world.getComponent(catEntity, "CatBehavior")).toBeNull();
     });
 
     it("updates scene mesh opacity each frame during fade", () => {

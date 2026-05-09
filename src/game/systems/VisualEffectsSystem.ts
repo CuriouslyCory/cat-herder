@@ -4,6 +4,7 @@ import type { SceneManager } from "../engine/SceneManager";
 import type { Renderable } from "../ecs/components/Renderable";
 import type { Transform } from "../ecs/components/Transform";
 import type { Entity } from "../ecs/Entity";
+import type { CatScaleAnimation } from "../ecs/components/CatScaleAnimation";
 import { createShadowSprite } from "../ecs/components/ShadowSprite";
 import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
@@ -32,9 +33,41 @@ export class VisualEffectsSystem implements System {
 
   update(world: World, dt: number): void {
     this.elapsed += dt;
+    this._updateScaleAnimations(world, dt);
     this._updateYarnPickups(world);
     this._updateWater(world);
     this._updateShadows(world);
+  }
+
+  private _updateScaleAnimations(world: World, dt: number): void {
+    const entitiesToDestroy: Entity[] = [];
+    const entities = world.query("CatScaleAnimation", "Transform");
+
+    for (const entity of entities) {
+      const anim = world.getComponent<CatScaleAnimation>(entity, "CatScaleAnimation")!;
+      const transform = world.getComponent<Transform>(entity, "Transform")!;
+
+      anim.elapsed += dt;
+      const t = Math.min(anim.elapsed / anim.duration, 1);
+      const scale = anim.fromScale + (anim.toScale - anim.fromScale) * t;
+
+      transform.scaleX = scale;
+      transform.scaleY = scale;
+      transform.scaleZ = scale;
+
+      if (t >= 1) {
+        if (anim.destroyOnComplete) {
+          entitiesToDestroy.push(entity);
+        } else {
+          world.removeComponent(entity, "CatScaleAnimation");
+        }
+      }
+    }
+
+    // Destroy after iteration to avoid mutating the query snapshot mid-loop.
+    for (const entity of entitiesToDestroy) {
+      world.destroyEntity(entity);
+    }
   }
 
   private _updateYarnPickups(world: World): void {

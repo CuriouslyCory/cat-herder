@@ -16,6 +16,8 @@ import { createCatBehavior } from "../ecs/components/CatBehavior";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
 import { createCuriosityReveal } from "../ecs/components/CuriosityReveal";
+import { createCatScaleAnimation } from "../ecs/components/CatScaleAnimation";
+import type { CatScaleAnimation } from "../ecs/components/CatScaleAnimation";
 import { runtimeConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -146,9 +148,10 @@ export class CatCompanionManager {
     const entity = this.world.createEntity();
 
     // Place entity so its bottom face rests on terrain (center = surfaceY + halfHeight).
+    // Scale starts at 0; VisualEffectsSystem tweens it to 1 over 0.2s (summon pop-in).
     this.world.addComponent(
       entity,
-      createTransform(position.x, centerY, position.z),
+      createTransform(position.x, centerY, position.z, 0, 0, 0, 0),
     );
 
     this.world.addComponent(entity, createRenderable(def.meshConfig));
@@ -219,6 +222,9 @@ export class CatCompanionManager {
       this.world.addComponent(entity, createCuriosityReveal(revealRadius));
     }
 
+    // Scale-up pop-in: 0 → 1 over 0.2 s, no entity destruction on complete.
+    this.world.addComponent(entity, createCatScaleAnimation(0, 1, 0.2, false));
+
     this.companions.set(entity, catType);
 
     this.eventBus.emit({ type: "cat:summoned", entity, catType, position });
@@ -238,6 +244,11 @@ export class CatCompanionManager {
       return;
     }
 
+    // Guard: if a scale-down animation is already running (destroyOnComplete=true),
+    // a second dismiss() call would double-up cleanup. Skip safely.
+    const existingAnim = this.world.getComponent<CatScaleAnimation>(entity, "CatScaleAnimation");
+    if (existingAnim?.destroyOnComplete === true) return;
+
     const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
     const catType = this.companions.get(entity);
 
@@ -247,6 +258,7 @@ export class CatCompanionManager {
     }
 
     // Remove the PhysicsEngine body if this cat had one (terrain / launch cats).
+    // Done immediately so players fall safely before the visual disappears.
     const physHandle = this.physicsHandles.get(entity);
     if (physHandle) {
       this.physics.removeBody(physHandle);
@@ -261,7 +273,18 @@ export class CatCompanionManager {
     this.trailEntities.delete(entity);
 
     this.companions.delete(entity);
-    this.world.destroyEntity(entity);
+
+    // Remove CatBehavior so CatAISystem / ZoomiesSystem / PounceSystem skip this
+    // entity during the 0.2 s dismissal animation (prevents double-dismiss).
+    this.world.removeComponent(entity, "CatBehavior");
+
+    // Remove CuriosityReveal so CuriositySystem.flushDismissals() won't call
+    // dismiss() a second time if the cat was in its pendingDismiss set.
+    this.world.removeComponent(entity, "CuriosityReveal");
+
+    // Scale-down pop-out: 1 → 0 over 0.2 s.
+    // VisualEffectsSystem calls world.destroyEntity() when the tween completes.
+    this.world.addComponent(entity, createCatScaleAnimation(1, 0, 0.2, true));
 
     if (catType !== undefined) {
       this.eventBus.emit({ type: "cat:dismissed", entity, catType });
