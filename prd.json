@@ -281,7 +281,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "VisualEffectsSystem (src/game/systems/VisualEffectsSystem.ts) already runs per frame and has access to SceneManager. RenderSystem (src/game/systems/RenderSystem.ts) creates meshes from Renderable components. Shadows can be implemented as additional child meshes. Water animation can modify material opacity via SceneManager API. TestMap cellSize=2, size 30x30 grid."
     },
     {
