@@ -297,7 +297,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "EventBus already emits 'cat:summoned' and 'cat:dismissed' events (see src/game/types.ts GameEvent union). CuriositySystem (src/game/systems/CuriositySystem.ts) currently calls SceneManager.setMeshOpacity() directly — refactor to use a tween tracked by VisualEffectsSystem. GatheringSystem.getGatherState() returns current progress percentage for the HUD."
     },
     {
