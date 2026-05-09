@@ -291,6 +291,10 @@ export class Game {
       }, 5100);
     });
 
+    this.eventBus.on("player:death", ({ entity }) => {
+      this._onPlayerDeath(entity);
+    });
+
     // 15. DebugMenu — dev-only overlay (null in production)
     if (process.env.NODE_ENV !== "production") {
       this.debugMenu = new DebugMenu(
@@ -841,6 +845,37 @@ export class Game {
         state: behavior?.state ?? "Active",
       };
     });
+  }
+
+  /**
+   * Teleport the player to the map spawn point, reset health and oxygen to
+   * full, and clear swimming components. Fires when player:death is emitted.
+   */
+  private _onPlayerDeath(entity: Entity): void {
+    const player = this.world.getComponent<PlayerControlled>(entity, "PlayerControlled");
+    if (!player) return;
+
+    player.health = player.maxHealth;
+
+    this.world.removeComponent(entity, "SwimmingState");
+    this.world.removeComponent(entity, "OxygenState");
+
+    const handle = this.physics.getHandleByEntity(entity);
+    if (handle) this.physics.setGravityEnabled(handle, true);
+
+    const spawn = this.mapManager.getSpawnPoint("player");
+    const spawnX = spawn?.x ?? 0;
+    const spawnY = 1;
+    const spawnZ = spawn?.z ?? 0;
+
+    if (handle) this.physics.setPosition(handle, { x: spawnX, y: spawnY, z: spawnZ });
+
+    const transform = this.world.getComponent<Transform>(entity, "Transform");
+    if (transform) {
+      transform.x = spawnX;
+      transform.y = spawnY;
+      transform.z = spawnZ;
+    }
   }
 
   /**

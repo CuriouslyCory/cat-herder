@@ -74,4 +74,5 @@ export type GameEvent =
   | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number }
   | { type: "save:failed"; error: string }
   | { type: "debug:value-changed"; key: string; value: unknown }
-  | { type: "cat:place:failed"; catType: CatType; position: Vec3 };
+  | { type: "cat:place:failed"; catType: CatType; position: Vec3 }
+  | { type: "player:death"; entity: number };
