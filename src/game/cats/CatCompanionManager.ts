@@ -102,24 +102,45 @@ export class CatCompanionManager {
       return null;
     }
 
-    // 3. Auto-dismiss oldest if at the active cap
+    // 3. Auto-raise: find a Y center that doesn't embed the cat inside a static body.
+    // getHighestSurfaceY finds the top of the tallest surface at this XZ position, so
+    // the default placement (surfaceY + halfHeight) is usually correct. The loop adds
+    // robustness for rare cases where the cat's bounding box still clips geometry
+    // (e.g. summoning near a wall edge where the XZ footprint straddles two surfaces).
+    const terrainY = this.mapManager.getHeightAt(position.x, position.z);
+    const physicsY = this.physics.getHighestSurfaceY(position.x, position.z);
+    const surfaceY = Math.max(terrainY, physicsY);
+    const halfHeight = getCatHalfHeight(def);
+    const halfExtents = getCatHalfExtents(def);
+
+    let centerY: number | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const tryY = surfaceY + halfHeight + attempt * 0.5;
+      if (!this.physics.isPositionOccupied(position.x, tryY, position.z, halfExtents)) {
+        centerY = tryY;
+        break;
+      }
+    }
+    if (centerY === null) {
+      console.warn(
+        `[CatCompanionManager] Cannot place ${catType} — position occupied after 3 raise attempts`,
+      );
+      this.eventBus.emit({ type: "cat:place:failed", catType, position });
+      return null;
+    }
+
+    // 4. Auto-dismiss oldest if at the active cap
     const active = this.getActiveCompanions();
     if (active.length >= runtimeConfig.maxActiveCats) {
       const oldest = active[0]!;
       this.dismiss(oldest);
     }
 
-    // 4. Deduct yarn and build the entity
+    // 5. Deduct yarn and build the entity
     if (!this.gameState.deductYarn(def.yarnCost)) {
       console.warn(`[CatCompanionManager] Failed to deduct yarn for ${catType}`);
       return null;
     }
-
-    const terrainY = this.mapManager.getHeightAt(position.x, position.z);
-    const physicsY = this.physics.getHighestSurfaceY(position.x, position.z);
-    const surfaceY = Math.max(terrainY, physicsY);
-    const halfHeight = getCatHalfHeight(def);
-    const centerY = surfaceY + halfHeight;
     const owner = this.getPlayerEntity() ?? 0;
 
     const entity = this.world.createEntity();

@@ -196,6 +196,28 @@ export class PhysicsEngine {
   }
 
   /**
+   * Returns true if an AABB centered at (x, y, z) with the given half-extents
+   * overlaps any non-trigger static physics body.
+   *
+   * Used by CatCompanionManager to validate placement positions before spawning —
+   * if the default surface Y is occupied, it tries higher positions (auto-raise).
+   */
+  isPositionOccupied(x: number, y: number, z: number, halfExtents: Vec3): boolean {
+    for (const body of this.bodies.values()) {
+      if (!body.config.isStatic || body.config.isTrigger) continue;
+      const bh = PhysicsEngine.boxHalf(body);
+      if (
+        Math.abs(x - body.position.x) < halfExtents.x + bh.x &&
+        Math.abs(y - body.position.y) < halfExtents.y + bh.y &&
+        Math.abs(z - body.position.z) < halfExtents.z + bh.z
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Returns the Y coordinate of the highest static surface at the given XZ
    * position, or 0 if no static body covers that point.
    */

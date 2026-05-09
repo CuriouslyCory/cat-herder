@@ -235,7 +235,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "CollisionSystem is in src/game/systems/CollisionSystem.ts. PhysicsEngine handles ground detection via raycasting. CatCompanionManager.isValidPosition() checks terrain validity. The Loaf cat is the primary 'stand on' cat — use it for the dismiss-while-standing test. Existing integration test in src/game/__tests__/integration/loaf-platform.test.ts may need extension."
     },
     {

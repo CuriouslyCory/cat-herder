@@ -73,4 +73,5 @@ export type GameEvent =
   | { type: "hidden:terrain:revealed"; catEntity: number; terrainEntities: number[] }
   | { type: "resource:gathered"; resourceType: ResourceType; nodeEntity: number }
   | { type: "save:failed"; error: string }
-  | { type: "debug:value-changed"; key: string; value: unknown };
+  | { type: "debug:value-changed"; key: string; value: unknown }
+  | { type: "cat:place:failed"; catType: CatType; position: Vec3 };

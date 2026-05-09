@@ -54,6 +54,47 @@ describe("loaf platform integration", () => {
     expect(pos.z).toBeCloseTo(0, 1);
   });
 
+  it("dismissing loaf cat under player allows safe fall to ground", () => {
+    // Loaf: box with same dims as the Loaf cat definition (1.2×0.75×1.2)
+    const loafHandle = physics.addBody(1, {
+      shape: "box",
+      size: 0.6,
+      halfExtents: { x: 0.6, y: 0.375, z: 0.6 },
+      isStatic: true,
+      isTrigger: false,
+      collisionLayer: 1,
+      collisionMask: 1,
+    });
+    physics.setPosition(loafHandle, { x: 0, y: 0.375, z: 0 });
+
+    const playerHandle = physics.addBody(2, {
+      shape: "circle",
+      size: 0.4,
+      isStatic: false,
+      isTrigger: false,
+      collisionLayer: 1,
+      collisionMask: 1,
+    });
+    // Player rests on top of the loaf: loafTop (0.75) + playerRadius (0.4) = 1.15
+    physics.setPosition(playerHandle, { x: 0, y: 1.15, z: 0 });
+    physics.setVelocity(playerHandle, { x: 0, y: 0, z: 0 });
+
+    // Confirm player is grounded on the loaf
+    for (let i = 0; i < 10; i++) physics.step(1 / 60);
+    expect(physics.isBodyGrounded(playerHandle)).toBe(true);
+    expect(physics.getPosition(playerHandle)!.y).toBeCloseTo(1.15, 1);
+
+    // Dismiss the loaf — remove its physics body (mirrors CatCompanionManager.dismiss)
+    physics.removeBody(loafHandle);
+
+    // Player must fall safely to the floor without clipping or freezing
+    for (let i = 0; i < 120; i++) physics.step(1 / 60);
+
+    expect(physics.isBodyGrounded(playerHandle)).toBe(true);
+    // Floor level: player centre at size (0.4) above y=0
+    expect(physics.getPosition(playerHandle)!.y).toBeCloseTo(0.4, 1);
+  });
+
   it("max jump height matches jumpApex", () => {
     const playerHandle = physics.addBody(1, {
       shape: "circle",
