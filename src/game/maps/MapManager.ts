@@ -35,6 +35,28 @@ const TERRAIN_COLORS: Record<TerrainType, string> = {
   [TerrainType.Hidden]: "#1a1a2e", // matches scene background — effectively invisible
 };
 
+/**
+ * Apply a small deterministic lightness variation (±12 units per RGB channel)
+ * to a hex color, seeded by position so adjacent merged zones look distinct.
+ * Water and Hidden terrain are excluded — they use their base colors unchanged.
+ *
+ * Uses Knuth multiplicative hashing for even distribution across the seed range.
+ */
+export function varyColor(baseHex: string, seed: number): string {
+  const r = parseInt(baseHex.slice(1, 3), 16);
+  const g = parseInt(baseHex.slice(3, 5), 16);
+  const b = parseInt(baseHex.slice(5, 7), 16);
+
+  // Knuth multiplicative hash — well-distributed, deterministic
+  const hash = ((seed * 2654435761) >>> 0) % 25;
+  const delta = hash - 12; // range: -12 to +12
+
+  const clamp = (v: number) => Math.min(255, Math.max(0, Math.round(v)));
+  const toHex = (v: number) => v.toString(16).padStart(2, "0");
+
+  return `#${toHex(clamp(r + delta))}${toHex(clamp(g + delta))}${toHex(clamp(b + delta))}`;
+}
+
 /** Visual thickness of flat terrain slabs below their surface (world units). */
 const FLOOR_THICKNESS = 0.2;
 
@@ -193,7 +215,13 @@ export class MapManager {
 
   private createTerrainEntity(zone: TerrainZone): void {
     const { cell, worldX, worldZ, width, depth } = zone;
-    const color = TERRAIN_COLORS[cell.type];
+    const baseColor = TERRAIN_COLORS[cell.type];
+    // Apply subtle positional color variation to non-water, non-hidden terrain.
+    const isVaried =
+      cell.type !== TerrainType.Water && cell.type !== TerrainType.Hidden;
+    const color = isVaried
+      ? varyColor(baseColor, Math.round(worldX * 31 + worldZ * 37))
+      : baseColor;
 
     // Elevated terrain: box from y=0 to y=height (center at height/2).
     // Flat terrain: thin slab whose top face is at y=0 (center at -FLOOR_THICKNESS/2).

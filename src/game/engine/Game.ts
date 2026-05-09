@@ -383,6 +383,13 @@ export class Game {
     // Load map (creates terrain entities in the ECS world)
     this.mapManager.loadMap(TestMap);
 
+    // Add terrain grid overlay matching the map's cell grid
+    this.sceneManager.setTerrainGrid(
+      TestMap.size.width,
+      TestMap.size.depth,
+      TestMap.cellSize,
+    );
+
     // Populate resource nodes for the test map
     this.spawnTestMapResourceNodes();
 
