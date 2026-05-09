@@ -153,6 +153,8 @@ export class Game {
   /** Current save error message; cleared after HUD displays it for 5 s. */
   private _saveError: string | null = null;
   private _saveErrorTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Unsubscribe functions for EventBus listeners registered in the constructor. */
+  private readonly _eventUnsubs: Array<() => void> = [];
 
   // ── Navigation overlay ────────────────────────────────────────────────────────
   private readonly navigationOverlay: NavigationOverlay;
@@ -282,18 +284,22 @@ export class Game {
 
     // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
-    this.eventBus.on("save:failed", (evt) => {
-      this._saveError = evt.error;
-      if (this._saveErrorTimer) clearTimeout(this._saveErrorTimer);
-      this._saveErrorTimer = setTimeout(() => {
-        this._saveError = null;
-        this._saveErrorTimer = null;
-      }, 5100);
-    });
+    this._eventUnsubs.push(
+      this.eventBus.on("save:failed", (evt) => {
+        this._saveError = evt.error;
+        if (this._saveErrorTimer) clearTimeout(this._saveErrorTimer);
+        this._saveErrorTimer = setTimeout(() => {
+          this._saveError = null;
+          this._saveErrorTimer = null;
+        }, 5100);
+      }),
+    );
 
-    this.eventBus.on("player:death", ({ entity }) => {
-      this._onPlayerDeath(entity);
-    });
+    this._eventUnsubs.push(
+      this.eventBus.on("player:death", ({ entity }) => {
+        this._onPlayerDeath(entity);
+      }),
+    );
 
     // 15. DebugMenu — dev-only overlay (null in production)
     if (process.env.NODE_ENV !== "production") {
@@ -481,6 +487,8 @@ export class Game {
     this.catPlacementSystem.dispose();
     this.uiManager.dispose();
     this.sceneManager.dispose();
+    for (const unsub of this._eventUnsubs) unsub();
+    this._eventUnsubs.length = 0;
     this.eventBus.clear();
     this.mapManager.unloadMap();
     if (typeof window !== "undefined") {

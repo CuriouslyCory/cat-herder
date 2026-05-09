@@ -43,6 +43,8 @@ export class InputManager {
   private readonly onMouseMove: (e: MouseEvent) => void;
   private readonly onMouseDown: (e: MouseEvent) => void;
   private readonly onContextMenu: (e: MouseEvent) => void;
+  private readonly onBlur: () => void;
+  private readonly onVisibilityChange: () => void;
 
   /**
    * Maps each GameAction to the key code(s) that trigger it.
@@ -113,11 +115,28 @@ export class InputManager {
       e.preventDefault();
     };
 
+    // Clear all held state when the canvas or tab loses focus so keys don't
+    // remain "stuck" as held after the player returns to the tab.
+    this.onBlur = () => {
+      this.held.clear();
+      this.pressedThisFrame.clear();
+      this.leftClickThisFrame = false;
+      this.rightClickThisFrame = false;
+    };
+
+    this.onVisibilityChange = () => {
+      if (document.hidden) {
+        this.onBlur();
+      }
+    };
+
     canvas.addEventListener("keydown", this.onKeyDown);
     canvas.addEventListener("keyup", this.onKeyUp);
     canvas.addEventListener("mousemove", this.onMouseMove);
     canvas.addEventListener("mousedown", this.onMouseDown);
     canvas.addEventListener("contextmenu", this.onContextMenu);
+    canvas.addEventListener("blur", this.onBlur);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
   }
 
   // ---------------------------------------------------------------------------
@@ -230,5 +249,7 @@ export class InputManager {
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+    this.canvas.removeEventListener("blur", this.onBlur);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
   }
 }
