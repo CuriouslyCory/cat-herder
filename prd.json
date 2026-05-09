@@ -321,7 +321,7 @@
         "pnpm test && pnpm lint && pnpm typecheck && pnpm build all pass."
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "This is a verification-only story — no new features, only fixing issues discovered during the quality gate checks. If lint/typecheck/build fail, fix the issues. If production bundle contains debug code, verify the process.env.NODE_ENV gating is correct. Production build output is in .next/ directory (Next.js)."
     }
   ]
