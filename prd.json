@@ -265,7 +265,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "InputManager.ts already handles rapid input by using Sets for held/pressed keys (inherently deduplicating). CatPlacementSystem guards against rapid clicks with cooldowns. Game.destroy() calls dispose() on all modules. The beforeunload beacon is set up by Persistence.setupBeforeUnload() — already tested in src/game/__tests__/api/beacon-save.test.ts."
     },
     {
