@@ -250,7 +250,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "OxygenSystem (src/game/systems/OxygenSystem.ts) already drains health when oxygen=0. Death respawn needs to hook into the health-reaches-0 condition. Existing swimming-oxygen integration test: src/game/__tests__/integration/swimming-oxygen.test.ts. GatheringSystem is in src/game/systems/GatheringSystem.ts — check isInventoryFull() before starting gather. SpawnPoint with role='player' defined in TestMap."
     },
     {
