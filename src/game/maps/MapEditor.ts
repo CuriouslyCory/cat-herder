@@ -2,11 +2,13 @@ import type {
   MapData,
   MapDataResourceNode,
   MapDataYarnPickup,
+  TerrainCell,
 } from "./MapData";
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
 import { TerrainType, ResourceType } from "../types";
 import { mapDataSchema } from "./MapDataSchema";
+import { cellToWorld, worldToCell, cellMeshGeometry } from "./coords";
 
 // ---------------------------------------------------------------------------
 // MapEditor — developer-facing map editor, dev builds only.
@@ -18,6 +20,8 @@ import { mapDataSchema } from "./MapDataSchema";
 // US-303: Entity placement — Player Spawn, Cat Spawn, Resource Node,
 //         Hidden Terrain Zone, Yarn Pickup.
 // US-304: Move tool (M), Delete tool (D), 1-9 palette shortcuts.
+// US-315: Cell-aware snapping — blocks snap to cell centres via coords.ts helpers;
+//         terrain is stored directly in terrain[][] (no parallel block/zone arrays).
 //
 // Gated by process.env.NODE_ENV === 'production'. Constructor returns early
 // in production, leaving all element refs null and _active always false.
@@ -54,9 +58,10 @@ interface MapManagerLike {
 }
 
 // ---------------------------------------------------------------------------
-// Terrain block types
+// Terrain block types — kept for backward-compat public API
 // ---------------------------------------------------------------------------
 
+/** @deprecated Editor terrain data now lives in terrain[][]; EditorBlock is a compat shim. */
 export interface EditorBlock {
   x: number;
   z: number;
@@ -65,6 +70,7 @@ export interface EditorBlock {
   handle: SceneHandle | null;
 }
 
+/** @deprecated Editor terrain data now lives in terrain[][]; EditorWaterZone is a compat shim. */
 export interface EditorWaterZone {
   x1: number;
   z1: number;
@@ -116,6 +122,7 @@ export interface EditorResourceNode {
   handle: SceneHandle | null;
 }
 
+/** @deprecated Editor terrain data now lives in terrain[][]; EditorHiddenTerrainZone is a compat shim. */
 export interface EditorHiddenTerrainZone {
   x1: number;
   z1: number;
@@ -191,6 +198,10 @@ const SELECTION_EMISSIVE_COLOR = "#ffffff";
 const SELECTION_EMISSIVE_INTENSITY = 0.4;
 const DEFAULT_YARN_AMOUNT = 3;
 
+// Default map dimensions (used when no map data is loaded)
+const DEFAULT_MAP_SIZE = { width: 30, depth: 30 };
+const DEFAULT_CELL_SIZE = 2;
+
 // ---------------------------------------------------------------------------
 // MapEditor class
 // ---------------------------------------------------------------------------
@@ -201,17 +212,23 @@ export class MapEditor {
   private _banner: HTMLElement | null = null;
   private _panel: HTMLElement | null = null;
 
+  // Map dimension tracking (set from _mapData on loadMapData)
+  private _mapSize: { width: number; depth: number } = { ...DEFAULT_MAP_SIZE };
+  private _cellSize: number = DEFAULT_CELL_SIZE;
+
   // Terrain tool state
   private _selectedTool: TerrainType | null = null;
-  private _editorBlocks: EditorBlock[] = [];
+  // _cellHandles replaces _editorBlocks — keyed "${col},${row}"
+  private _cellHandles: Map<string, SceneHandle> = new Map();
   private _ghostHandle: SceneHandle | null = null;
   private _ghostX = 0;
   private _ghostZ = 0;
 
   // US-302b: selection & water zones
+  // _selectedBlock is a compat shim pointing at terrain data
   private _selectedBlock: EditorBlock | null = null;
-  private _editorWaterZones: EditorWaterZone[] = [];
-  private _waterDragStart: { x: number; z: number } | null = null;
+  private _selectedCell: { col: number; row: number } | null = null;
+  private _waterDragStart: { col: number; row: number } | null = null;
   private _waterDragGhost: SceneHandle | null = null;
   private _suppressNextClick = false;
   private _selectedWaterDepth = 1;
@@ -241,16 +258,17 @@ export class MapEditor {
   private _playerSpawn: EditorPlayerSpawn | null = null;
   private _catSpawns: EditorCatSpawn[] = [];
   private _resourceNodes: EditorResourceNode[] = [];
-  private _hiddenTerrainZones: EditorHiddenTerrainZone[] = [];
   private _yarnPickups: EditorYarnPickup[] = [];
 
-  // Hidden terrain drag state (mirrors water zone drag)
-  private _hiddenDragStart: { x: number; z: number } | null = null;
+  // Hidden terrain drag state (mirrors water zone drag) — in cell coords
+  private _hiddenDragStart: { col: number; row: number } | null = null;
   private _hiddenDragGhost: SceneHandle | null = null;
 
   // US-304: move / delete tool mode
   private _editorToolMode: EditorToolMode | null = null;
   private _movingObject: MovingObject | null = null;
+  /** Cell origin of the block being dragged (for finalising block moves). */
+  private _movingBlockOrigin: { col: number; row: number } | null = null;
   private _moveToolBtn: HTMLElement | null = null;
   private _deleteToolBtn: HTMLElement | null = null;
 
@@ -317,8 +335,9 @@ export class MapEditor {
     // Base shape: preserve name/size/cellSize/terrain from _mapData; otherwise sensible defaults.
     const base = this._mapData;
     const name = base?.name ?? "untitled";
-    const size = base?.size ?? { width: 30, depth: 30 };
-    const cellSize = base?.cellSize ?? 2;
+    const size = { ...this._mapSize };
+    const cellSize = this._cellSize;
+    // Return the live terrain[][] directly (shallow copy rows)
     const terrain = base?.terrain.map((row) => [...row]) ?? [];
 
     // Serialize spawn points from live editor collections (no handles in output).
@@ -359,8 +378,23 @@ export class MapEditor {
     // Clear existing editor state and scene meshes before rebuilding.
     this._clearEditorState();
 
-    // Keep base metadata in sync.
+    // Set dimension fields from loaded data.
+    this._mapSize = { ...data.size };
+    this._cellSize = data.cellSize;
+
+    // Keep base metadata in sync (deep copy terrain rows).
     this._mapData = { ...data, terrain: data.terrain.map((row) => [...row]) };
+
+    // Rebuild cell meshes from terrain[][]
+    for (let row = 0; row < data.terrain.length; row++) {
+      for (let col = 0; col < (data.terrain[row]?.length ?? 0); col++) {
+        const cell = data.terrain[row]![col]!;
+        // Only create a mesh for non-default cells to avoid thousands of flat meshes.
+        if (cell.height > 0 || cell.type !== TerrainType.Grass) {
+          this._setCellMesh(col, row);
+        }
+      }
+    }
 
     // Rebuild spawn points.
     for (const sp of data.spawnPoints) {
@@ -391,24 +425,14 @@ export class MapEditor {
    * Used by loadMapData() before rebuilding and by dispose().
    */
   private _clearEditorState(): void {
-    // Terrain blocks
-    for (const b of this._editorBlocks) {
-      if (b.handle && this.sceneManager) this.sceneManager.removeMesh(b.handle);
+    // Cell terrain meshes (replaces _editorBlocks + _editorWaterZones + _hiddenTerrainZones)
+    for (const handle of this._cellHandles.values()) {
+      if (this.sceneManager) this.sceneManager.removeMesh(handle);
     }
-    this._editorBlocks = [];
+    this._cellHandles.clear();
+    this._selectedCell = null;
     this._selectedBlock = null;
-
-    // Water zones
-    for (const z of this._editorWaterZones) {
-      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
-    }
-    this._editorWaterZones = [];
-
-    // Hidden terrain zones
-    for (const z of this._hiddenTerrainZones) {
-      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
-    }
-    this._hiddenTerrainZones = [];
+    this._mapData = null;
 
     // Spawns and entities
     if (this._playerSpawn?.handle && this.sceneManager) {
@@ -507,34 +531,57 @@ export class MapEditor {
     this._updateWaterConfigSection();
   }
 
-  /** Read-only view of placed editor blocks. */
+  /**
+   * Read-only view of placed editor blocks (compat shim — derived from terrain[][]).
+   * Returns non-default cells (type != Grass or height != 0) as EditorBlock entries.
+   */
   getEditorBlocks(): readonly EditorBlock[] {
-    return this._editorBlocks;
+    if (!this._mapData) return [];
+    const blocks: EditorBlock[] = [];
+    for (let row = 0; row < this._mapData.terrain.length; row++) {
+      const terrainRow = this._mapData.terrain[row];
+      if (!terrainRow) continue;
+      for (let col = 0; col < terrainRow.length; col++) {
+        const cell = terrainRow[col];
+        if (!cell) continue;
+        if (cell.type === TerrainType.Grass && cell.height === 0) continue;
+        const { x, z } = this._cellCenter(col, row);
+        const key = `${col},${row}`;
+        blocks.push({
+          x,
+          z,
+          type: cell.type,
+          height: cell.height,
+          handle: this._cellHandles.get(key) ?? null,
+        });
+      }
+    }
+    return blocks;
   }
 
   /**
    * Place a block at the given world position using the currently selected
-   * tool. The position is snapped to the 1u grid before placement.
-   * If a block already exists at that grid cell, its type is updated instead.
+   * tool. The position is snapped to the cell grid before placement.
+   * If a cell already has content, its type is updated instead.
    */
   placeBlock(worldX: number, worldZ: number): void {
     if (this._selectedTool === null) return;
-    const x = MapEditor.snapToGrid(worldX);
-    const z = MapEditor.snapToGrid(worldZ);
-    const existing = this._editorBlocks.find((b) => b.x === x && b.z === z);
-    if (existing) {
-      existing.type = this._selectedTool;
-      // Finding 2: update the mesh color so the visual reflects the new type.
-      if (existing.handle && this.sceneManager) {
-        this.sceneManager.setMeshColor(existing.handle, EDITOR_TERRAIN_COLORS[this._selectedTool]);
-      }
-      return;
-    }
-    const handle = this._createBlockMesh(x, z, this._selectedTool, 1);
-    this._editorBlocks.push({ x, z, type: this._selectedTool, height: 1, handle });
+    const { col, row } = this._snapToCell(worldX, worldZ);
+    // Ensure terrain is initialised
+    this._ensureTerrain();
+    const terrain = this._mapData?.terrain;
+    if (!terrain?.[row]?.[col]) return;
+
+    terrain[row]![col]! = {
+      type: this._selectedTool,
+      height: terrain[row]![col]!.height > 0 ? terrain[row]![col]!.height : 0,
+      navigable: this._selectedTool !== TerrainType.Water && this._selectedTool !== TerrainType.Hidden,
+    };
+
+    this._setCellMesh(col, row);
   }
 
-  /** Snap a world coordinate to the nearest integer (1u grid). */
+  /** Snap a world coordinate to the nearest integer (1u grid). Static — preserved for compat. */
   static snapToGrid(worldPos: number): number {
     return Math.round(worldPos);
   }
@@ -554,6 +601,12 @@ export class MapEditor {
         SELECTION_EMISSIVE_INTENSITY,
       );
     }
+    // Sync _selectedCell from block position
+    if (block) {
+      this._selectedCell = this._snapToCell(block.x, block.z);
+    } else {
+      this._selectedCell = null;
+    }
     this._updatePropertiesSection();
   }
 
@@ -563,73 +616,120 @@ export class MapEditor {
 
   /** Update the terrain type of the currently selected block. */
   updateSelectedBlockType(type: TerrainType): void {
-    if (!this._selectedBlock) return;
+    if (!this._selectedBlock || !this._selectedCell) return;
+    const { col, row } = this._selectedCell;
+    const terrain = this._mapData?.terrain;
+    if (!terrain?.[row]?.[col]) return;
+
+    terrain[row]![col]!.type = type;
     this._selectedBlock.type = type;
-    if (this._selectedBlock.handle && this.sceneManager) {
-      this.sceneManager.setMeshColor(
-        this._selectedBlock.handle,
-        EDITOR_TERRAIN_COLORS[type],
-      );
-    }
+    this._setCellMesh(col, row);
+    // Update the compat block's handle reference after mesh recreation
+    const key = `${col},${row}`;
+    this._selectedBlock.handle = this._cellHandles.get(key) ?? null;
     this._updatePropertiesSection();
   }
 
   /**
    * Update the height of the currently selected block.
-   * Clamped to [HEIGHT_MIN, HEIGHT_MAX]. The mesh scale is updated in place
-   * (no geometry recreation needed since blocks use unit cubes + scale).
+   * Clamped to [HEIGHT_MIN, HEIGHT_MAX]. The mesh is recreated.
    */
   updateSelectedBlockHeight(height: number): void {
-    if (!this._selectedBlock) return;
+    if (!this._selectedBlock || !this._selectedCell) return;
     const clamped = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, height));
+    const { col, row } = this._selectedCell;
+    const terrain = this._mapData?.terrain;
+    if (!terrain?.[row]?.[col]) return;
+
+    terrain[row]![col]!.height = clamped;
     this._selectedBlock.height = clamped;
-    if (this._selectedBlock.handle && this.sceneManager) {
-      this.sceneManager.updateTransform(
-        this._selectedBlock.handle,
-        { x: this._selectedBlock.x, y: clamped / 2, z: this._selectedBlock.z },
-        { x: 0, y: 0, z: 0 },
-        { x: 1, y: clamped, z: 1 },
-      );
-    }
+    this._setCellMesh(col, row);
+    // Update the compat block's handle reference after mesh recreation
+    const key = `${col},${row}`;
+    this._selectedBlock.handle = this._cellHandles.get(key) ?? null;
     this._updatePropertiesSection();
   }
 
   /** Remove the currently selected block from editor state and scene. */
   deleteSelectedBlock(): void {
-    if (!this._selectedBlock) return;
-    if (this._selectedBlock.handle && this.sceneManager) {
-      this.sceneManager.removeMesh(this._selectedBlock.handle);
+    if (!this._selectedBlock || !this._selectedCell) return;
+    const { col, row } = this._selectedCell;
+    const key = `${col},${row}`;
+
+    // Remove mesh
+    const handle = this._cellHandles.get(key);
+    if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+    this._cellHandles.delete(key);
+
+    // Reset terrain cell to default
+    const terrain = this._mapData?.terrain;
+    if (terrain?.[row]?.[col]) {
+      terrain[row]![col]! = { type: TerrainType.Grass, height: 0, navigable: true };
     }
-    const idx = this._editorBlocks.indexOf(this._selectedBlock);
-    if (idx !== -1) this._editorBlocks.splice(idx, 1);
+
     this._selectedBlock = null;
+    this._selectedCell = null;
     this._updatePropertiesSection();
   }
 
-  /** Read-only view of placed water zones. */
+  /**
+   * Read-only view of placed water zones (compat shim — derived from terrain[][]).
+   * Returns rects of contiguous Water cells as EditorWaterZone entries.
+   * Note: this is a simplified scanner that returns one zone per Water cell,
+   * which is sufficient for the compat API.
+   */
   getEditorWaterZones(): readonly EditorWaterZone[] {
-    return this._editorWaterZones;
+    if (!this._mapData) return [];
+    const zones: EditorWaterZone[] = [];
+    for (let row = 0; row < this._mapData.terrain.length; row++) {
+      const terrainRow = this._mapData.terrain[row];
+      if (!terrainRow) continue;
+      for (let col = 0; col < terrainRow.length; col++) {
+        const cell = terrainRow[col];
+        if (!cell || cell.type !== TerrainType.Water) continue;
+        const { x, z } = this._cellCenter(col, row);
+        const key = `${col},${row}`;
+        zones.push({
+          x1: x,
+          z1: z,
+          x2: x,
+          z2: z,
+          depth: cell.depth ?? this._selectedWaterDepth,
+          handle: this._cellHandles.get(key) ?? null,
+        });
+      }
+    }
+    return zones;
   }
 
   /**
-   * Define a rectangular water zone from two corner grid coordinates.
-   * Coordinates are normalised so x1 <= x2 and z1 <= z2.
+   * Define a rectangular water zone from two corner world/grid coordinates.
+   * Internally converts to cell coords and paints each cell in terrain[][].
    */
   createWaterZone(x1: number, z1: number, x2: number, z2: number): void {
-    const nx1 = Math.min(x1, x2);
-    const nz1 = Math.min(z1, z2);
-    const nx2 = Math.max(x1, x2);
-    const nz2 = Math.max(z1, z2);
-    const zone: EditorWaterZone = {
-      x1: nx1,
-      z1: nz1,
-      x2: nx2,
-      z2: nz2,
-      // Finding 3: use the current selected water depth instead of hard-coded 1.
-      depth: this._selectedWaterDepth,
-      handle: this._createWaterZoneMesh(nx1, nz1, nx2, nz2),
-    };
-    this._editorWaterZones.push(zone);
+    const c1 = this._snapToCell(x1, z1);
+    const c2 = this._snapToCell(x2, z2);
+    const minCol = Math.min(c1.col, c2.col);
+    const maxCol = Math.max(c1.col, c2.col);
+    const minRow = Math.min(c1.row, c2.row);
+    const maxRow = Math.max(c1.row, c2.row);
+
+    this._ensureTerrain();
+    const terrain = this._mapData?.terrain;
+    if (!terrain) return;
+
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        if (!terrain[row]?.[col]) continue;
+        terrain[row]![col]! = {
+          type: TerrainType.Water,
+          height: 0,
+          navigable: false,
+          depth: this._selectedWaterDepth,
+        };
+        this._setCellMesh(col, row);
+      }
+    }
   }
 
   /** Get the current water depth setting (used when creating water zones). */
@@ -674,13 +774,13 @@ export class MapEditor {
 
   /**
    * Place an entity at the given world position using the currently selected
-   * entity tool. Position is snapped to the 1u grid before placement.
+   * entity tool. Position is snapped to the cell center before placement.
    * Hidden terrain zones use drag-to-define and are not placed via this method.
    */
   placeEntity(worldX: number, worldZ: number): void {
     if (this._selectedEntityTool === null || this._selectedEntityTool === "hiddenTerrain") return;
-    const x = MapEditor.snapToGrid(worldX);
-    const z = MapEditor.snapToGrid(worldZ);
+    const { col, row } = this._snapToCell(worldX, worldZ);
+    const { x, z } = this._cellCenter(col, row);
 
     switch (this._selectedEntityTool) {
       case "playerSpawn":
@@ -713,9 +813,31 @@ export class MapEditor {
     return this._resourceNodes;
   }
 
-  /** Read-only view of placed hidden terrain zones. */
+  /**
+   * Read-only view of hidden terrain zones (compat shim — derived from terrain[][]).
+   */
   getEditorHiddenTerrainZones(): readonly EditorHiddenTerrainZone[] {
-    return this._hiddenTerrainZones;
+    if (!this._mapData) return [];
+    const zones: EditorHiddenTerrainZone[] = [];
+    for (let row = 0; row < this._mapData.terrain.length; row++) {
+      const terrainRow = this._mapData.terrain[row];
+      if (!terrainRow) continue;
+      for (let col = 0; col < terrainRow.length; col++) {
+        const cell = terrainRow[col];
+        if (!cell || cell.type !== TerrainType.Hidden) continue;
+        const { x, z } = this._cellCenter(col, row);
+        const key = `${col},${row}`;
+        zones.push({
+          x1: x,
+          z1: z,
+          x2: x,
+          z2: z,
+          height: cell.height,
+          handle: this._cellHandles.get(key) ?? null,
+        });
+      }
+    }
+    return zones;
   }
 
   /** Read-only view of placed yarn pickups. */
@@ -724,23 +846,32 @@ export class MapEditor {
   }
 
   /**
-   * Define a rectangular hidden terrain zone from two corner grid coordinates.
-   * Coordinates are normalised so x1 <= x2 and z1 <= z2.
+   * Define a rectangular hidden terrain zone from two corner world/grid coordinates.
+   * Internally converts to cell coords and paints each cell in terrain[][].
    */
   createHiddenTerrainZone(x1: number, z1: number, x2: number, z2: number): void {
-    const nx1 = Math.min(x1, x2);
-    const nz1 = Math.min(z1, z2);
-    const nx2 = Math.max(x1, x2);
-    const nz2 = Math.max(z1, z2);
-    const zone: EditorHiddenTerrainZone = {
-      x1: nx1,
-      z1: nz1,
-      x2: nx2,
-      z2: nz2,
-      height: this._selectedHiddenTerrainHeight,
-      handle: this._createHiddenTerrainZoneMesh(nx1, nz1, nx2, nz2),
-    };
-    this._hiddenTerrainZones.push(zone);
+    const c1 = this._snapToCell(x1, z1);
+    const c2 = this._snapToCell(x2, z2);
+    const minCol = Math.min(c1.col, c2.col);
+    const maxCol = Math.max(c1.col, c2.col);
+    const minRow = Math.min(c1.row, c2.row);
+    const maxRow = Math.max(c1.row, c2.row);
+
+    this._ensureTerrain();
+    const terrain = this._mapData?.terrain;
+    if (!terrain) return;
+
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        if (!terrain[row]?.[col]) continue;
+        terrain[row]![col]! = {
+          type: TerrainType.Hidden,
+          height: this._selectedHiddenTerrainHeight,
+          navigable: false,
+        };
+        this._setCellMesh(col, row);
+      }
+    }
   }
 
   // ── Public API — move / delete tools (US-304) ─────────────────────────────
@@ -776,14 +907,14 @@ export class MapEditor {
 
   /**
    * Delete the first placed object (block or point entity) found at the given
-   * world position. Position is snapped to the 1u grid before lookup.
+   * world position. Position is snapped to the cell grid before lookup.
    */
   deleteObjectAtPosition(worldX: number, worldZ: number): void {
-    const gx = MapEditor.snapToGrid(worldX);
-    const gz = MapEditor.snapToGrid(worldZ);
-    const found = this._findPointObjectAt(gx, gz);
+    const { col, row } = this._snapToCell(worldX, worldZ);
+    const { x, z } = this._cellCenter(col, row);
+    const found = this._findPointObjectAt(x, z, col, row);
     if (!found) return;
-    this._removeFoundObject(found);
+    this._removeFoundObject(found, col, row);
   }
 
   // ── dispose ────────────────────────────────────────────────────────────────
@@ -810,7 +941,7 @@ export class MapEditor {
       this._clickHandler = null;
     }
 
-    // Finding 4: clear ALL editor collections (including _editorBlocks) and remove their meshes.
+    // Clear ALL editor collections (including cell handles) and remove their meshes.
     this._clearEditorState();
     this._cancelWaterDrag();
     this._cancelHiddenDrag();
@@ -828,6 +959,76 @@ export class MapEditor {
     this._fileInput = null;
     this._removeGhost();
     this._active = false;
+  }
+
+  // ── Private — coordinate helpers ──────────────────────────────────────────
+
+  /** Snap world (x, z) to the nearest cell (col, row). */
+  private _snapToCell(worldX: number, worldZ: number): { col: number; row: number } {
+    return worldToCell(worldX, worldZ, this._cellSize, this._mapSize.width, this._mapSize.depth);
+  }
+
+  /** Convert cell (col, row) to world-space center coordinates. */
+  private _cellCenter(col: number, row: number): { x: number; z: number } {
+    return cellToWorld(col, row, this._cellSize, this._mapSize.width, this._mapSize.depth);
+  }
+
+  // ── Private — cell mesh helpers ────────────────────────────────────────────
+
+  /**
+   * Create or replace the cell mesh for (col, row) based on terrain[][].
+   * Uses cellMeshGeometry for vertical alignment and cellSize for footprint.
+   */
+  private _setCellMesh(col: number, row: number): void {
+    const key = `${col},${row}`;
+    const cell = this._mapData?.terrain[row]?.[col];
+    if (!cell || !this.sceneManager) return;
+
+    // Remove old mesh if present
+    const old = this._cellHandles.get(key);
+    if (old) this.sceneManager.removeMesh(old);
+
+    const { x, z } = this._cellCenter(col, row);
+    const { boxHeight, centerY } = cellMeshGeometry(cell.height);
+    const color = EDITOR_TERRAIN_COLORS[cell.type];
+
+    const handle = this.sceneManager.addMesh({
+      geometry: "box",
+      dims: [this._cellSize, boxHeight, this._cellSize],
+      color,
+    });
+    this.sceneManager.updateTransform(
+      handle,
+      { x, y: centerY, z },
+      { x: 0, y: 0, z: 0 },
+      { x: 1, y: 1, z: 1 },
+    );
+    this._cellHandles.set(key, handle);
+  }
+
+  /**
+   * Lazily initialise terrain[][] if _mapData is null.
+   * Uses the current _mapSize and _cellSize.
+   */
+  private _ensureTerrain(): void {
+    if (this._mapData) return;
+    const rows = Math.round(this._mapSize.depth / this._cellSize);
+    const cols = Math.round(this._mapSize.width / this._cellSize);
+    this._mapData = {
+      name: "untitled",
+      size: { ...this._mapSize },
+      cellSize: this._cellSize,
+      terrain: Array.from({ length: rows }, () =>
+        Array.from({ length: cols }, (): TerrainCell => ({
+          type: TerrainType.Grass,
+          height: 0,
+          navigable: true,
+        }))
+      ),
+      spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
+    };
   }
 
   // ── Private — DOM construction ─────────────────────────────────────────────
@@ -1400,8 +1601,10 @@ export class MapEditor {
         excludeHandles.size > 0 ? excludeHandles : undefined,
       );
       if (!worldPos) return;
-      const snappedX = MapEditor.snapToGrid(worldPos.x);
-      const snappedZ = MapEditor.snapToGrid(worldPos.z);
+
+      // Snap to cell center for ghost positioning
+      const { col, row } = this._snapToCell(worldPos.x, worldPos.z);
+      const { x: snappedX, z: snappedZ } = this._cellCenter(col, row);
 
       // Terrain ghost
       if (this._selectedTool) {
@@ -1411,20 +1614,20 @@ export class MapEditor {
       // Water zone drag ghost
       if (this._selectedTool === TerrainType.Water && this._waterDragStart) {
         this._updateWaterDragGhost(
-          this._waterDragStart.x,
-          this._waterDragStart.z,
-          snappedX,
-          snappedZ,
+          this._waterDragStart.col,
+          this._waterDragStart.row,
+          col,
+          row,
         );
       }
 
       // Hidden terrain drag ghost
       if (this._selectedEntityTool === "hiddenTerrain" && this._hiddenDragStart) {
         this._updateHiddenDragGhost(
-          this._hiddenDragStart.x,
-          this._hiddenDragStart.z,
-          snappedX,
-          snappedZ,
+          this._hiddenDragStart.col,
+          this._hiddenDragStart.row,
+          col,
+          row,
         );
       }
 
@@ -1453,18 +1656,21 @@ export class MapEditor {
         e.clientY - rect.top,
       );
       if (!worldPos) return;
-      const sx = MapEditor.snapToGrid(worldPos.x);
-      const sz = MapEditor.snapToGrid(worldPos.z);
+      const { col, row } = this._snapToCell(worldPos.x, worldPos.z);
+      const { x: sx, z: sz } = this._cellCenter(col, row);
 
       if (this._selectedTool === TerrainType.Water) {
-        this._waterDragStart = { x: sx, z: sz };
+        this._waterDragStart = { col, row };
       } else if (this._selectedEntityTool === "hiddenTerrain") {
-        this._hiddenDragStart = { x: sx, z: sz };
+        this._hiddenDragStart = { col, row };
       } else if (this._editorToolMode === "move") {
         // US-304: start move drag — find object at click position
-        const found = this._findPointObjectAt(sx, sz);
+        const found = this._findPointObjectAt(sx, sz, col, row);
         if (found) {
           this._movingObject = found;
+          if (found.kind === "block") {
+            this._movingBlockOrigin = { col, row };
+          }
         }
       }
     };
@@ -1482,6 +1688,7 @@ export class MapEditor {
         this._cancelHiddenDrag();
         return;
       }
+
       const rect = this.container.getBoundingClientRect();
 
       // Water zone finalisation
@@ -1491,19 +1698,19 @@ export class MapEditor {
           e.clientY - rect.top,
           this._waterDragGhost ? new Set([this._waterDragGhost]) : undefined,
         );
-        const endX = worldPos
-          ? MapEditor.snapToGrid(worldPos.x)
-          : this._waterDragStart.x;
-        const endZ = worldPos
-          ? MapEditor.snapToGrid(worldPos.z)
-          : this._waterDragStart.z;
+        const endCell = worldPos
+          ? this._snapToCell(worldPos.x, worldPos.z)
+          : this._waterDragStart;
 
-        if (endX !== this._waterDragStart.x || endZ !== this._waterDragStart.z) {
+        if (endCell.col !== this._waterDragStart.col || endCell.row !== this._waterDragStart.row) {
+          // Convert back to world coords for createWaterZone (which re-converts internally)
+          const startWorld = this._cellCenter(this._waterDragStart.col, this._waterDragStart.row);
+          const endWorld = this._cellCenter(endCell.col, endCell.row);
           this.createWaterZone(
-            this._waterDragStart.x,
-            this._waterDragStart.z,
-            endX,
-            endZ,
+            startWorld.x,
+            startWorld.z,
+            endWorld.x,
+            endWorld.z,
           );
           this._suppressNextClick = true;
         }
@@ -1517,19 +1724,18 @@ export class MapEditor {
           e.clientY - rect.top,
           this._hiddenDragGhost ? new Set([this._hiddenDragGhost]) : undefined,
         );
-        const endX = worldPos
-          ? MapEditor.snapToGrid(worldPos.x)
-          : this._hiddenDragStart.x;
-        const endZ = worldPos
-          ? MapEditor.snapToGrid(worldPos.z)
-          : this._hiddenDragStart.z;
+        const endCell = worldPos
+          ? this._snapToCell(worldPos.x, worldPos.z)
+          : this._hiddenDragStart;
 
-        if (endX !== this._hiddenDragStart.x || endZ !== this._hiddenDragStart.z) {
+        if (endCell.col !== this._hiddenDragStart.col || endCell.row !== this._hiddenDragStart.row) {
+          const startWorld = this._cellCenter(this._hiddenDragStart.col, this._hiddenDragStart.row);
+          const endWorld = this._cellCenter(endCell.col, endCell.row);
           this.createHiddenTerrainZone(
-            this._hiddenDragStart.x,
-            this._hiddenDragStart.z,
-            endX,
-            endZ,
+            startWorld.x,
+            startWorld.z,
+            endWorld.x,
+            endWorld.z,
           );
           this._suppressNextClick = true;
         }
@@ -1539,7 +1745,34 @@ export class MapEditor {
       // US-304: finalize move drag
       if (this._movingObject) {
         this._suppressNextClick = true;
+        // For terrain blocks: commit the move to terrain[][]
+        if (this._movingObject.kind === "block" && this._movingBlockOrigin) {
+          const orig = this._movingBlockOrigin;
+          const newPos = this._snapToCell(this._movingObject.obj.x, this._movingObject.obj.z);
+          const terrain = this._mapData?.terrain;
+          if (terrain && (newPos.col !== orig.col || newPos.row !== orig.row)) {
+            const srcCell = terrain[orig.row]?.[orig.col];
+            if (srcCell) {
+              // Clear old cell
+              terrain[orig.row]![orig.col]! = { type: TerrainType.Grass, height: 0, navigable: true };
+              const oldKey = `${orig.col},${orig.row}`;
+              const oldHandle = this._cellHandles.get(oldKey);
+              if (oldHandle && this.sceneManager) this.sceneManager.removeMesh(oldHandle);
+              this._cellHandles.delete(oldKey);
+              // Write to new cell
+              if (terrain[newPos.row]?.[newPos.col] !== undefined) {
+                terrain[newPos.row]![newPos.col]! = { ...srcCell };
+                this._setCellMesh(newPos.col, newPos.row);
+                // Update the block's x/z to the finalized cell center
+                const { x, z } = this._cellCenter(newPos.col, newPos.row);
+                this._movingObject.obj.x = x;
+                this._movingObject.obj.z = z;
+              }
+            }
+          }
+        }
         this._movingObject = null;
+        this._movingBlockOrigin = null;
       }
     };
     this.container.addEventListener("mouseup", this._mouseupHandler);
@@ -1603,11 +1836,23 @@ export class MapEditor {
           e.clientY - rect.top,
         );
         if (!worldPos) return;
-        const gx = MapEditor.snapToGrid(worldPos.x);
-        const gz = MapEditor.snapToGrid(worldPos.z);
-        const block =
-          this._editorBlocks.find((b) => b.x === gx && b.z === gz) ?? null;
-        this.selectBlock(block);
+        const { col, row } = this._snapToCell(worldPos.x, worldPos.z);
+        const terrain = this._mapData?.terrain;
+        const cell = terrain?.[row]?.[col];
+        if (cell && (cell.type !== TerrainType.Grass || cell.height !== 0)) {
+          const { x, z } = this._cellCenter(col, row);
+          const key = `${col},${row}`;
+          const block: EditorBlock = {
+            x,
+            z,
+            type: cell.type,
+            height: cell.height,
+            handle: this._cellHandles.get(key) ?? null,
+          };
+          this.selectBlock(block);
+        } else {
+          this.selectBlock(null);
+        }
       }
     };
     this.container.addEventListener("click", this._clickHandler);
@@ -1688,20 +1933,23 @@ export class MapEditor {
   }
 
   private _updateWaterDragGhost(
-    x1: number,
-    z1: number,
-    x2: number,
-    z2: number,
+    col1: number,
+    row1: number,
+    col2: number,
+    row2: number,
   ): void {
     if (!this.sceneManager) return;
-    const minX = Math.min(x1, x2);
-    const maxX = Math.max(x1, x2);
-    const minZ = Math.min(z1, z2);
-    const maxZ = Math.max(z1, z2);
-    const width = maxX - minX + 1;
-    const depth = maxZ - minZ + 1;
-    const cx = (minX + maxX) / 2;
-    const cz = (minZ + maxZ) / 2;
+    const minCol = Math.min(col1, col2);
+    const maxCol = Math.max(col1, col2);
+    const minRow = Math.min(row1, row2);
+    const maxRow = Math.max(row1, row2);
+
+    const topLeft = this._cellCenter(minCol, minRow);
+    const bottomRight = this._cellCenter(maxCol, maxRow);
+    const width = (maxCol - minCol + 1) * this._cellSize;
+    const depth = (maxRow - minRow + 1) * this._cellSize;
+    const cx = (topLeft.x + bottomRight.x) / 2;
+    const cz = (topLeft.z + bottomRight.z) / 2;
 
     if (!this._waterDragGhost) {
       this._waterDragGhost = this.sceneManager.addMesh({
@@ -1720,20 +1968,23 @@ export class MapEditor {
   }
 
   private _updateHiddenDragGhost(
-    x1: number,
-    z1: number,
-    x2: number,
-    z2: number,
+    col1: number,
+    row1: number,
+    col2: number,
+    row2: number,
   ): void {
     if (!this.sceneManager) return;
-    const minX = Math.min(x1, x2);
-    const maxX = Math.max(x1, x2);
-    const minZ = Math.min(z1, z2);
-    const maxZ = Math.max(z1, z2);
-    const width = maxX - minX + 1;
-    const depth = maxZ - minZ + 1;
-    const cx = (minX + maxX) / 2;
-    const cz = (minZ + maxZ) / 2;
+    const minCol = Math.min(col1, col2);
+    const maxCol = Math.max(col1, col2);
+    const minRow = Math.min(row1, row2);
+    const maxRow = Math.max(row1, row2);
+
+    const topLeft = this._cellCenter(minCol, minRow);
+    const bottomRight = this._cellCenter(maxCol, maxRow);
+    const width = (maxCol - minCol + 1) * this._cellSize;
+    const depth = (maxRow - minRow + 1) * this._cellSize;
+    const cx = (topLeft.x + bottomRight.x) / 2;
+    const cz = (topLeft.z + bottomRight.z) / 2;
 
     if (!this._hiddenDragGhost) {
       this._hiddenDragGhost = this.sceneManager.addMesh({
@@ -1751,58 +2002,6 @@ export class MapEditor {
     );
   }
 
-  private _createWaterZoneMesh(
-    x1: number,
-    z1: number,
-    x2: number,
-    z2: number,
-  ): SceneHandle | null {
-    if (!this.sceneManager) return null;
-    const width = x2 - x1 + 1;
-    const depth = z2 - z1 + 1;
-    const cx = (x1 + x2) / 2;
-    const cz = (z1 + z2) / 2;
-    const handle = this.sceneManager.addMesh({
-      geometry: "box",
-      dims: [1, 1, 1],
-      color: EDITOR_TERRAIN_COLORS[TerrainType.Water],
-      opacity: 0.5,
-    });
-    this.sceneManager.updateTransform(
-      handle,
-      { x: cx, y: 0.1, z: cz },
-      { x: 0, y: 0, z: 0 },
-      { x: width, y: 0.2, z: depth },
-    );
-    return handle;
-  }
-
-  private _createHiddenTerrainZoneMesh(
-    x1: number,
-    z1: number,
-    x2: number,
-    z2: number,
-  ): SceneHandle | null {
-    if (!this.sceneManager) return null;
-    const width = x2 - x1 + 1;
-    const depth = z2 - z1 + 1;
-    const cx = (x1 + x2) / 2;
-    const cz = (z1 + z2) / 2;
-    const handle = this.sceneManager.addMesh({
-      geometry: "box",
-      dims: [1, 1, 1],
-      color: ENTITY_COLORS.hiddenTerrain,
-      opacity: 0.5,
-    });
-    this.sceneManager.updateTransform(
-      handle,
-      { x: cx, y: 0.1, z: cz },
-      { x: 0, y: 0, z: 0 },
-      { x: width, y: 0.2, z: depth },
-    );
-    return handle;
-  }
-
   // ── Private — ghost preview helpers ───────────────────────────────────────
 
   private _updateGhost(x: number, z: number): void {
@@ -1812,14 +2011,14 @@ export class MapEditor {
     if (!this._ghostHandle) {
       this._ghostHandle = this.sceneManager.addMesh({
         geometry: "box",
-        dims: [1, 1, 1],
+        dims: [this._cellSize, this._cellSize, this._cellSize],
         color: EDITOR_TERRAIN_COLORS[this._selectedTool],
         opacity: 0.4,
       });
     }
     this.sceneManager.updateTransform(
       this._ghostHandle,
-      { x, y: 0.5, z },
+      { x, y: this._cellSize / 2, z },
       { x: 0, y: 0, z: 0 },
       { x: 1, y: 1, z: 1 },
     );
@@ -1855,37 +2054,62 @@ export class MapEditor {
 
   // ── Private — US-304 helpers ───────────────────────────────────────────────
 
-  /** Find the first point object at grid position (gx, gz). Zones are excluded. */
-  private _findPointObjectAt(gx: number, gz: number): MovingObject | null {
-    const block = this._editorBlocks.find((b) => b.x === gx && b.z === gz);
-    if (block) return { kind: "block", obj: block };
+  /**
+   * Find the first point object at the given world position or cell (col, row).
+   * Terrain cells are found via the cell grid; entities are found by proximity to cell center.
+   */
+  private _findPointObjectAt(worldX: number, worldZ: number, col: number, row: number): MovingObject | null {
+    // Check terrain cell (non-default)
+    const terrain = this._mapData?.terrain;
+    const cell = terrain?.[row]?.[col];
+    if (cell && (cell.type !== TerrainType.Grass || cell.height !== 0)) {
+      const { x, z } = this._cellCenter(col, row);
+      const key = `${col},${row}`;
+      const block: EditorBlock = {
+        x,
+        z,
+        type: cell.type,
+        height: cell.height,
+        handle: this._cellHandles.get(key) ?? null,
+      };
+      return { kind: "block", obj: block };
+    }
 
-    if (this._playerSpawn && this._playerSpawn.x === gx && this._playerSpawn.z === gz) {
+    // Check point entities by proximity (using exact world-space coords)
+    if (this._playerSpawn && Math.abs(this._playerSpawn.x - worldX) < this._cellSize / 2 && Math.abs(this._playerSpawn.z - worldZ) < this._cellSize / 2) {
       return { kind: "playerSpawn", obj: this._playerSpawn };
     }
-    const cat = this._catSpawns.find((s) => s.x === gx && s.z === gz);
+    const cat = this._catSpawns.find((s) => Math.abs(s.x - worldX) < this._cellSize / 2 && Math.abs(s.z - worldZ) < this._cellSize / 2);
     if (cat) return { kind: "catSpawn", obj: cat };
 
-    const node = this._resourceNodes.find((n) => n.x === gx && n.z === gz);
+    const node = this._resourceNodes.find((n) => Math.abs(n.x - worldX) < this._cellSize / 2 && Math.abs(n.z - worldZ) < this._cellSize / 2);
     if (node) return { kind: "resourceNode", obj: node };
 
-    const yarn = this._yarnPickups.find((p) => p.x === gx && p.z === gz);
+    const yarn = this._yarnPickups.find((p) => Math.abs(p.x - worldX) < this._cellSize / 2 && Math.abs(p.z - worldZ) < this._cellSize / 2);
     if (yarn) return { kind: "yarnPickup", obj: yarn };
 
     return null;
   }
 
   /** Remove a found object from its collection and the scene. */
-  private _removeFoundObject(found: MovingObject): void {
+  private _removeFoundObject(found: MovingObject, col?: number, row?: number): void {
     switch (found.kind) {
       case "block": {
-        if (found.obj.handle && this.sceneManager) {
-          this.sceneManager.removeMesh(found.obj.handle);
+        // Determine col/row from the block's world position if not provided
+        const c = col ?? this._snapToCell(found.obj.x, found.obj.z).col;
+        const r = row ?? this._snapToCell(found.obj.x, found.obj.z).row;
+        const key = `${c},${r}`;
+        const handle = this._cellHandles.get(key);
+        if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+        this._cellHandles.delete(key);
+        // Reset terrain cell to default
+        const terrain = this._mapData?.terrain;
+        if (terrain?.[r]?.[c]) {
+          terrain[r]![c]! = { type: TerrainType.Grass, height: 0, navigable: true };
         }
-        const idx = this._editorBlocks.indexOf(found.obj);
-        if (idx !== -1) this._editorBlocks.splice(idx, 1);
-        if (this._selectedBlock === found.obj) {
+        if (this._selectedBlock === found.obj || (this._selectedCell?.col === c && this._selectedCell?.row === r)) {
           this._selectedBlock = null;
+          this._selectedCell = null;
           this._updatePropertiesSection();
         }
         break;
@@ -1930,13 +2154,16 @@ export class MapEditor {
     found.obj.z = z;
     if (!found.obj.handle || !this.sceneManager) return;
     if (found.kind === "block") {
-      const h = found.obj.height;
+      const { boxHeight, centerY } = cellMeshGeometry(found.obj.height);
       this.sceneManager.updateTransform(
         found.obj.handle,
-        { x, y: h / 2, z },
+        { x, y: centerY, z },
         { x: 0, y: 0, z: 0 },
-        { x: 1, y: h, z: 1 },
+        { x: 1, y: 1, z: 1 },
       );
+      // Update dims to match (the mesh was already created with correct dims)
+      // The handle retains the old dims; this only updates position
+      void boxHeight; // suppress unused warning
     } else {
       this.sceneManager.updateTransform(
         found.obj.handle,
@@ -1977,28 +2204,5 @@ export class MapEditor {
       this._deleteToolBtn.style.borderColor =
         this._editorToolMode === "delete" ? "#f88" : "#444";
     }
-  }
-
-  // ── Private — block mesh helpers ──────────────────────────────────────────
-
-  private _createBlockMesh(
-    x: number,
-    z: number,
-    type: TerrainType,
-    height: number,
-  ): SceneHandle | null {
-    if (!this.sceneManager) return null;
-    const handle = this.sceneManager.addMesh({
-      geometry: "box",
-      dims: [1, 1, 1], // unit cube — height controlled via scale.y
-      color: EDITOR_TERRAIN_COLORS[type],
-    });
-    this.sceneManager.updateTransform(
-      handle,
-      { x, y: height / 2, z },
-      { x: 0, y: 0, z: 0 },
-      { x: 1, y: height, z: 1 },
-    );
-    return handle;
   }
 }
