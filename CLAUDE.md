@@ -40,3 +40,17 @@ dev-browser was a skill at one point, but is now a cli command. Run `dev-browser
 ### Suggest skills
 
 If you need tools for testing or debugging, suggest them to the user during planning phases to ensure the agents have the necessary tooling to verify their work during implementation.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (`CuriouslyCory/cat-herder`) via the `gh` CLI. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
