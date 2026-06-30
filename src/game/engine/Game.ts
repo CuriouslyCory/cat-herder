@@ -41,6 +41,7 @@ import { createYarnPickup } from "../ecs/components/YarnPickup";
 import { CatType, ResourceType, GameAction } from "../types";
 import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
+import type { MapData } from "../maps/MapData";
 import type { Transform } from "../ecs/components/Transform";
 import type { OxygenState } from "../ecs/components/OxygenState";
 import type { PlayerControlled } from "../ecs/components/PlayerControlled";
@@ -391,17 +392,17 @@ export class Game {
       TestMap.cellSize,
     );
 
-    // Populate resource nodes for the test map
-    this.spawnTestMapResourceNodes();
+    // Populate resource nodes from map data
+    this.spawnMapResourceNodes(TestMap);
 
-    // Apply saved cooldowns to resource nodes (must run after spawnTestMapResourceNodes
+    // Apply saved cooldowns to resource nodes (must run after spawnMapResourceNodes
     // so _nodeIdMap is populated).
     if (saveData?.world.resourceNodeCooldowns.length) {
       this._applyResourceNodeCooldowns(saveData.world.resourceNodeCooldowns);
     }
 
-    // Spawn yarn pickups (+3 each) scattered around the test map
-    this.spawnTestMapYarnPickups();
+    // Spawn yarn pickups from map data
+    this.spawnMapYarnPickups(TestMap);
 
     // Set camera map bounds for focus clamping
     this.cameraController.setMapBounds({
@@ -599,51 +600,26 @@ export class Game {
   // Private — map population
   // ---------------------------------------------------------------------------
 
-  /**
-   * Creates resource node entities for the TestMap.
-   *
-   * Cell-center formula:  x = -29 + col*2,  z = -29 + row*2
-   * (TestMap: 30×30 grid, cellSize=2, half-offset of map 30u)
-   *
-   * Node counts:
-   *   Grass  — 9  nodes, scattered on flat ground
-   *   Sticks — 4  nodes, NE "forest" area
-   *   Water  — 2  nodes, near the SW water zone
-   */
-  private spawnTestMapResourceNodes(): void {
+  // Per-type render colors for resource nodes (stable lookup, avoids inline literals)
+  private static readonly _RESOURCE_NODE_COLORS: Record<ResourceType, string> = {
+    [ResourceType.Grass]:  "#7bc67e",
+    [ResourceType.Sticks]: "#8b6355",
+    [ResourceType.Water]:  "#4fc3f7",
+  };
 
-    // Node height: base node center is at y=0.5 (half of 1u sphere diameter)
+  /**
+   * Spawns resource node entities from map data.
+   * gatherTime and yieldAmount come from RESOURCE_CONFIGS; respawnTime from the
+   * node itself (allows per-node tuning, currently matches RESOURCE_CONFIGS defaults).
+   * Cooldown id: node_${x}_${z} — byte-identical to the old hardcoded spawner.
+   */
+  private spawnMapResourceNodes(data: MapData): void {
     const NODE_Y = 0.5;
 
-    const nodes: Array<{
-      x: number;
-      z: number;
-      type: ResourceType;
-      color: string;
-    }> = [
-      // ── Grass nodes (9) — scattered across flat ground ────────────────────
-      { x: -29 + 15 * 2, z: -29 + 5 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (1, -19)
-      { x: -29 + 18 * 2, z: -29 + 8 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (7, -13)
-      { x: -29 + 5  * 2, z: -29 + 12 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-19, -5)
-      { x: -29 + 12 * 2, z: -29 + 15 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-5, 1)
-      { x: -29 + 15 * 2, z: -29 + 18 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 7)
-      { x: -29 + 20 * 2, z: -29 + 20 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (11, 11)
-      { x: -29 + 15 * 2, z: -29 + 22 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 15)
-      { x: -29 + 10 * 2, z: -29 + 25 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-9, 21)
-      { x: -29 + 24 * 2, z: -29 + 10 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (19, -9)
-
-      // ── Sticks nodes (4) — NE grass area before stone platform ───────────
-      { x: -29 + 21 * 2, z: -29 + 8 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (13, -13)
-      { x: -29 + 23 * 2, z: -29 + 10 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (17, -9)
-      { x: -29 + 20 * 2, z: -29 + 12 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (11, -5)
-      { x: -29 + 18 * 2, z: -29 + 9 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (7, -11)
-
-      // ── Water-source nodes (2) — near the SW water zone ──────────────────
-      { x: -29 + 5 * 2, z: -29 + 11 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-19, -7)
-      { x: -29 + 9 * 2, z: -29 + 10 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-11, -9)
-    ];
-
-    for (const { x, z, type, color } of nodes) {
+    for (const node of data.resourceNodes) {
+      const { x, z, type, respawnTime } = node;
+      const color = Game._RESOURCE_NODE_COLORS[type as ResourceType] ?? "#888888";
+      const cfg = RESOURCE_CONFIGS[type as keyof typeof RESOURCE_CONFIGS];
       const entity = this.world.createEntity();
 
       this.world.addComponent(entity, createTransform(x, NODE_Y, z));
@@ -671,16 +647,9 @@ export class Game {
         }),
       );
 
-      const cfg =
-        type === ResourceType.Grass
-          ? RESOURCE_CONFIGS.Grass
-          : type === ResourceType.Sticks
-          ? RESOURCE_CONFIGS.Sticks
-          : RESOURCE_CONFIGS.Water;
-
       this.world.addComponent(
         entity,
-        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, cfg.respawnTime),
+        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, respawnTime),
       );
 
       // Track position-based nodeId so cooldowns can be restored on load.
@@ -689,25 +658,14 @@ export class Game {
   }
 
   /**
-   * Spawns 3 yarn pickup entities on the test map.
-   * Each pickup grants +3 yarn on player contact and is auto-destroyed.
-   *
-   * Positions chosen on flat, accessible ground away from resource nodes.
+   * Spawns yarn pickup entities from map data.
+   * Each pickup grants yarnAmount yarn on player contact and is auto-destroyed.
    */
-  private spawnTestMapYarnPickups(): void {
+  private spawnMapYarnPickups(data: MapData): void {
     const YARN_Y = 0.5; // center above floor (half of ~0.4u sphere)
-    const YARN_AMOUNT = 3;
 
-    const pickups: Array<{ x: number; z: number }> = [
-      // Near the map center, easy to find
-      { x: -29 + 14 * 2, z: -29 + 14 * 2 }, // (-1, -1) near spawn
-      // NE area near Sticks nodes
-      { x: -29 + 22 * 2, z: -29 + 14 * 2 }, // (15, -1)
-      // SW area near water zone
-      { x: -29 + 7 * 2, z: -29 + 18 * 2 }, // (-15, 7)
-    ];
-
-    for (const { x, z } of pickups) {
+    for (const pickup of data.yarnPickups) {
+      const { x, z, yarnAmount } = pickup;
       const entity = this.world.createEntity();
 
       this.world.addComponent(entity, createTransform(x, YARN_Y, z));
@@ -723,7 +681,7 @@ export class Game {
           outlineCategory: "pickup",
         }),
       );
-      this.world.addComponent(entity, createYarnPickup(YARN_AMOUNT));
+      this.world.addComponent(entity, createYarnPickup(yarnAmount));
     }
   }
 

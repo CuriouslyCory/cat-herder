@@ -1,9 +1,6 @@
 import type {
   MapData,
-  MapDataBlock,
-  MapDataHiddenTerrainZone,
   MapDataResourceNode,
-  MapDataWaterZone,
   MapDataYarnPickup,
 } from "./MapData";
 import type { CameraController } from "../engine/CameraController";
@@ -333,30 +330,7 @@ export class MapEditor {
       spawnPoints.push({ x: s.x, z: s.z, role: "cat" as const });
     }
 
-    // Serialize optional editor-only collections (strip handles).
-    const blocks: MapDataBlock[] = this._editorBlocks.map((b) => ({
-      x: b.x,
-      z: b.z,
-      type: b.type,
-      height: b.height,
-    }));
-
-    const waterZones: MapDataWaterZone[] = this._editorWaterZones.map((z) => ({
-      x1: z.x1,
-      z1: z.z1,
-      x2: z.x2,
-      z2: z.z2,
-      depth: z.depth,
-    }));
-
-    const hiddenTerrainZones: MapDataHiddenTerrainZone[] = this._hiddenTerrainZones.map((z) => ({
-      x1: z.x1,
-      z1: z.z1,
-      x2: z.x2,
-      z2: z.z2,
-      height: z.height,
-    }));
-
+    // Serialize resource nodes and yarn pickups (now required fields on MapData).
     const resourceNodes: MapDataResourceNode[] = this._resourceNodes.map((n) => ({
       x: n.x,
       z: n.z,
@@ -376,11 +350,8 @@ export class MapEditor {
       terrain,
       cellSize,
       spawnPoints,
-      ...(blocks.length > 0 ? { blocks } : {}),
-      ...(waterZones.length > 0 ? { waterZones } : {}),
-      ...(hiddenTerrainZones.length > 0 ? { hiddenTerrainZones } : {}),
-      ...(resourceNodes.length > 0 ? { resourceNodes } : {}),
-      ...(yarnPickups.length > 0 ? { yarnPickups } : {}),
+      resourceNodes,
+      yarnPickups,
     };
   }
 
@@ -402,29 +373,14 @@ export class MapEditor {
       }
     }
 
-    // Rebuild optional editor collections.
-    for (const b of data.blocks ?? []) {
-      const handle = this._createBlockMesh(b.x, b.z, b.type, b.height);
-      this._editorBlocks.push({ x: b.x, z: b.z, type: b.type, height: b.height, handle });
-    }
-
-    for (const wz of data.waterZones ?? []) {
-      const handle = this._createWaterZoneMesh(wz.x1, wz.z1, wz.x2, wz.z2);
-      this._editorWaterZones.push({ x1: wz.x1, z1: wz.z1, x2: wz.x2, z2: wz.z2, depth: wz.depth, handle });
-    }
-
-    for (const hz of data.hiddenTerrainZones ?? []) {
-      const handle = this._createHiddenTerrainZoneMesh(hz.x1, hz.z1, hz.x2, hz.z2);
-      this._hiddenTerrainZones.push({ x1: hz.x1, z1: hz.z1, x2: hz.x2, z2: hz.z2, height: hz.height, handle });
-    }
-
-    for (const rn of data.resourceNodes ?? []) {
+    // Rebuild resource nodes and yarn pickups from map data.
+    for (const rn of data.resourceNodes) {
       const color = RESOURCE_NODE_COLORS[rn.type];
       const handle = this._createEntityMarkerMesh(rn.x, rn.z, color);
       this._resourceNodes.push({ x: rn.x, z: rn.z, type: rn.type, respawnTime: rn.respawnTime, handle });
     }
 
-    for (const yp of data.yarnPickups ?? []) {
+    for (const yp of data.yarnPickups) {
       const handle = this._createEntityMarkerMesh(yp.x, yp.z, ENTITY_COLORS.yarnPickup);
       this._yarnPickups.push({ x: yp.x, z: yp.z, yarnAmount: yp.yarnAmount, handle });
     }

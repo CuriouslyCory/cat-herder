@@ -88,6 +88,8 @@ function makeSampleMapData(): MapData {
     ],
     cellSize: 5,
     spawnPoints: [{ x: 0, z: 0, role: "player" }],
+    resourceNodes: [],
+    yarnPickups: [],
   };
 }
 
@@ -297,6 +299,8 @@ describe("worldToPixel()", () => {
     terrain: [],
     cellSize: 1,
     spawnPoints: [],
+    resourceNodes: [],
+    yarnPickups: [],
   };
 
   it("maps world center (0,0) to canvas center (200,200)", () => {
@@ -330,6 +334,8 @@ describe("worldToPixel()", () => {
       terrain: [],
       cellSize: 1,
       spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
     };
     // World x=0 (center) → px=200; world z=0 (center) → py=200
     const { px, py } = overlay.worldToPixel(0, 0, rectMap);
@@ -391,6 +397,8 @@ describe("rendering with map data", () => {
       terrain: [[{ type: TerrainType.Hidden, height: 1, navigable: false }]],
       cellSize: 10,
       spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
     };
     const mapManager = makeMapManager(mapWithHidden);
     const world = makeWorld();
