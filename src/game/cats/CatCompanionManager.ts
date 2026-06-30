@@ -82,9 +82,12 @@ export class CatCompanionManager {
    *
    * Validation order:
    *   1. Definition must exist in registry.
-   *   2. Sufficient yarn.
+   *   2. Sufficient yarn (non-mutating check).
    *   3. Position on valid (non-void, non-water) terrain.
-   *   4. Cat limit — if at cap, oldest cat is auto-dismissed before creating the new one.
+   *   4. Cat limit — if at cap, oldest cat is auto-dismissed BEFORE the placement probe
+   *      so the probe sees the post-eviction physics world.
+   *   5. Placement probe (surfaceY + occupancy loop).
+   *   6. Yarn deduction + entity creation.
    *
    * Returns the new entity on success, null on validation failure.
    */
@@ -104,7 +107,18 @@ export class CatCompanionManager {
       return null;
     }
 
-    // 3. Auto-raise: find a Y center that doesn't embed the cat inside a static body.
+    // 3. Auto-dismiss oldest if at the active cap — must happen BEFORE computing
+    // surfaceY and probing occupancy so the oldest cat's PhysicsEngine static body
+    // has already been removed when we query getHighestSurfaceY / isPositionOccupied.
+    // Guard: only evict if the summon is otherwise viable (type ✓, position ✓, yarn ✓).
+    // Yarn is confirmed non-mutating above; actual deduction happens in step 5.
+    const active = this.getActiveCompanions();
+    if (active.length >= runtimeConfig.maxActiveCats) {
+      const oldest = active[0]!;
+      this.dismiss(oldest);
+    }
+
+    // 4. Auto-raise: find a Y center that doesn't embed the cat inside a static body.
     // getHighestSurfaceY finds the top of the tallest surface at this XZ position, so
     // the default placement (surfaceY + halfHeight) is usually correct. The loop adds
     // robustness for rare cases where the cat's bounding box still clips geometry
@@ -131,14 +145,7 @@ export class CatCompanionManager {
       return null;
     }
 
-    // 4. Auto-dismiss oldest if at the active cap
-    const active = this.getActiveCompanions();
-    if (active.length >= runtimeConfig.maxActiveCats) {
-      const oldest = active[0]!;
-      this.dismiss(oldest);
-    }
-
-    // 5. Deduct yarn and build the entity
+    // 5. Deduct yarn and build the entity (single deduction point)
     if (!this.gameState.deductYarn(def.yarnCost)) {
       console.warn(`[CatCompanionManager] Failed to deduct yarn for ${catType}`);
       return null;
