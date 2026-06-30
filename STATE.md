@@ -1,8 +1,8 @@
 # Orchestration State: Map Editor & Library (#12–#17)
 
-**Last updated**: 2026-06-29 (Wave 2 COMPLETE; Wave 3 next)  
-**Current wave**: 3 (Waves 1-2 fully merged)  
-**Merge count**: 3 items merged (#12, #13, #14)
+**Last updated**: 2026-06-29 (Wave 3 COMPLETE; Wave 4 next)  
+**Current wave**: 4 (Waves 1-3 fully merged)  
+**Merge count**: 5 items merged (#12, #13, #14, #16, #15)
 
 ### Integration re-verify log
 | After merge | test | lint | typecheck | build |
@@ -11,6 +11,7 @@
 | #13 | ✅ 750 | ✅ | ✅ | ✅ |
 | #14 | ✅ 782 | ✅ | ✅ | ✅ |
 | #16 | ✅ 800 | ✅ | ✅ | ✅ |
+| #15 | ✅ 811 | ✅ | ✅ | ✅ |
 
 ### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
 - #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
@@ -44,10 +45,10 @@
 ## Wave 3: Parallel (conditional on shared-surface check)
 
 - **#15** `feat/15-map-editor` — Cell-aware map editor (fixes alignment)
-  - Status: 🔵 Implementing (plan `plans/15.md`; impl agent in wt-15) — confined to MapEditor.ts + tests
+  - Status: ✅ Merged (commit f6d0855; MapEditor.ts + tests only; 793→811 integration; editor absent from prod bundle)
   - Dependencies: #12 ✅, #14 ✅
-  - Branch: `feat/15-map-editor` (wt-15)
-  - Merged: no
+  - Branch: `feat/15-map-editor`
+  - Merged: YES → feat/map-library
   
 - **#16** `feat/16-db-map-library` — DB map library + default-map-at-boot
   - Status: ✅ Merged (commit 4637049 + index fix; +790; 18 router tests; gates green)
