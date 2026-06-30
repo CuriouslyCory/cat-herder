@@ -120,3 +120,27 @@ Started: 2026-05-08
   round trip via dev-browser per US-312 acceptance criteria. Recommend a quick dev-browser
   pass on /play before tagging the slice shippable.
 ---
+
+## 2026-06-29 - Post-review bug fixes (CodeRabbit findings on PR #11)
+CodeRabbit reviewed PR #11 and surfaced real bugs that the passing test suite had NOT
+caught (green-but-hollow). Fixed via three sequential specialist agents, each verified
+green before commit (worktrees skipped: isolated worktrees lack node_modules, and
+concurrent commits to one branch are unsafe — so fixes ran sequentially in the main tree):
+- 0949ecb (US-302b/US-305): MapEditor save/load round-trip was a no-op — getMapData()
+  returned a stale stub and loadMapData() never rebuilt editor collections/meshes.
+  Extended MapData + Zod schema with optional blocks/waterZones/hiddenTerrainZones/
+  resourceNodes/yarnPickups; getMapData() now serializes live collections, loadMapData()
+  clears + rebuilds (collections + scene meshes) via shared _clearEditorState(). Also:
+  water-zone depth now configurable (UI + state), repaint updates mesh color, dispose()
+  no longer leaks block meshes, schema rejects non-positive size/cellSize. +26 tests
+  incl. a real place→save→load→deep-equal round-trip test.
+- 33632eb (US-310b): respawn now zeroes physics velocity (was sliding/falling off spawn);
+  terrain grid overlay refreshes on runtime map change (MapEditor "Play").
+- 988cac6 (US-310a): cat roster cap now evicts the oldest BEFORE the surface/occupancy
+  probe (guarded by non-mutating yarn affordability check) so summons aren't mis-placed
+  or falsely rejected.
+Full gate after fixes: pnpm test (724) / typecheck / lint / build all green;
+DebugMenu/MapEditor still 0 hits in .next/static (tree-shaken).
+NOT fixed (intentional): ship-it SKILL.md branch-cleanup nit (tooling doc, not game code);
+US-312's manual in-browser dev-browser verification (FPS/auth/save-load) remains OUTSTANDING
+— it cannot run headless here and should be done before declaring the slice fully shippable.
