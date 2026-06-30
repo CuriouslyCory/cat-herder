@@ -90,3 +90,18 @@
 - Plans stored in `plans/<item>.md`
 - Merge model: local merge to integration, no PR until all items merged
 - Verification gates: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build` + acceptance criteria per item
+
+## Finalization (DONE)
+
+- [x] All 6 items show merged (#12, #13, #14, #16, #15, #17)
+- [x] Final full suite green on `feat/map-library` @ 141c3e7 — **816 tests**, lint, typecheck, build
+- [x] Single PR opened into `main`: **#19** (https://github.com/CuriouslyCory/cat-herder/pull/19), mergeable
+- [x] PR body includes `Closes #12`–`Closes #17`
+- [x] PR body summarizes ADR 0001 (admin role) + ADR 0002 (terrain format) for sign-off, and the db:push schema changes
+- [x] All worktrees removed; all 6 merged item branches deleted
+- [x] PR left for human review (orchestrator did NOT self-merge)
+
+### Items needing reviewer sign-off
+- ADR 0001 admin-role model (boolean `users.isAdmin` + `adminProcedure`)
+- ADR 0002 canonical `terrain[][]` format (`[row][col]`; required resourceNodes/yarnPickups)
+- DB applied via `db:push` to dev Neon (`cat-herder_user`, `cat-herder_map` + partial unique index). Other envs must `db:push`.
