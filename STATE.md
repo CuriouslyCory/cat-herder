@@ -1,19 +1,28 @@
 # Orchestration State: Map Editor & Library (#12–#17)
 
-**Last updated**: 2026-06-29 (session start)  
-**Current wave**: 1 (Wave 1 setup in progress)  
-**Merge count**: 0 items complete
+**Last updated**: 2026-06-29 (Wave 1: #12 merged)  
+**Current wave**: 1  
+**Merge count**: 1 item merged (#12)
+
+### Integration re-verify log
+| After merge | test | lint | typecheck | build |
+| --- | --- | --- | --- | --- |
+| #12 | ✅ 742 | ✅ | ✅ | ✅ |
+
+**Baseline (main @ 5533da0)**: ✅ test 724 pass · lint clean · typecheck clean · build OK. Integration branch `feat/map-library` exists & pushed (tip 473fdff = STATE tracker).
+
+**Planning method note**: `/bulletproof-plan` is interactive (plan-mode approval) and unsuitable for this autonomous run; per-item planning is delegated to a dedicated planning agent that applies the same rigor (validate vs CLAUDE.md / docs / ADRs, explicit review + verification steps) and writes `plans/<item>.md`.
 
 ## Wave 1: Parallel setup
 
 - **#12** `feat/12-coord-helpers` — Prefactor: shared cell↔world coordinate helpers
-  - Status: 🟡 Planning
-  - Branch: (pending)
-  - Merged: no
+  - Status: ✅ Merged (commit 4ba636f; +198/-13; 18 new coords tests; gates green)
+  - Branch: `feat/12-coord-helpers`
+  - Merged: YES → feat/map-library
   
 - **#13** `feat/13-admin-role` — Admin role foundation (`users.isAdmin` + `adminProcedure`)
-  - Status: 🟡 Planning
-  - Branch: (pending)
+  - Status: 🟡 Planning (agent running)
+  - Branch: `feat/13-admin-role` (worktree `../wt-13` ready: real install + env)
   - Merged: no
 
 **Wave 1 shared-surface check**: Clean. Coordinate math (#12) vs auth/tRPC (#13) do not overlap.
