@@ -59,3 +59,28 @@ Started: 2026-05-08
   - document.body is used as fallback when container.parentElement is null/undefined (same as DebugMenu)
   - Self-referencing types in mock helpers cause TS7023; define named interface instead of ReturnType<typeof fn>
 ---
+
+## 2026-06-29 - US-302a
+- Verified terrain tool palette & placement implementation in src/game/maps/MapEditor.ts.
+  Side panel (left, 160px) built in _buildPanel() with a "Terrain" section; _buildToolButton()
+  renders one button per PLACEABLE_TOOLS type (Grass/Dirt/Stone/Water), each with a color swatch
+  (EDITOR_TERRAIN_COLORS, kept in sync with MapManager TERRAIN_COLORS) + type-name label.
+- selectTool()/getSelectedTool() manage tool state; clicking a tool toggles selection and
+  highlights the active button. Panel shown (display:flex) on enable(), hidden on disable().
+- placeBlock(worldX, worldZ) snaps via static snapToGrid() = Math.round(); blocks stored in
+  internal _editorBlocks[] (default height 1u). Re-placing on an occupied cell updates type.
+- Ghost preview (_updateGhost) is a semi-transparent (opacity 0.4) box that follows the cursor
+  at the snapped position via the mousemove handler; only present while a terrain tool is selected,
+  removed on deselect/disable.
+- Quality gate all green: pnpm test (694 passing), pnpm lint, pnpm typecheck, pnpm build.
+- Files: src/game/maps/MapEditor.ts, src/game/__tests__/engine/MapEditor.test.ts (both pre-existing
+  on this branch; US-302a was already committed as d410bb4). Marked passes=true in scripts/prd.json.
+- **Learnings for future iterations:**
+  - EDITOR_TERRAIN_COLORS in MapEditor.ts must stay in sync with TERRAIN_COLORS in MapManager.ts
+    (no shared constant — duplicated to avoid the maps/→engine/ import; update both together).
+  - SceneManager is an optional ctor arg (null in unit tests); placeBlock/ghost guard on it so
+    state logic is testable without Three.js. Tests pass a MockSceneMgr (returns Symbol handles)
+    when verifying addMesh/updateTransform/opacity calls.
+  - Ghost/placement mouse handlers exclude the ghost handle from screenToWorld() raycasts so the
+    ghost mesh doesn't occlude the ground pick.
+---
