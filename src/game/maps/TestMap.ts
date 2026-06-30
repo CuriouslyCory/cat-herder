@@ -1,4 +1,4 @@
-import { TerrainType } from "../types";
+import { TerrainType, ResourceType } from "../types";
 import type { MapData, TerrainCell } from "./MapData";
 
 // ---------------------------------------------------------------------------
@@ -109,5 +109,32 @@ export const TestMap: MapData = {
     { x: 0, z: 0, role: "player" },    // Map centre
     { x: -10, z: 10, role: "cat" },    // Near water zone
     { x: 10, z: -10, role: "cat" },    // NE side
+  ],
+  // Resource nodes — respawnTime mirrors RESOURCE_CONFIGS defaults and is map-owned.
+  // Cooldown ids are node_${x}_${z} — byte-identical to the old hardcoded spawner.
+  resourceNodes: [
+    // Grass nodes (9)
+    { x: 1,   z: -19, type: ResourceType.Grass,  respawnTime: 30 },
+    { x: 7,   z: -13, type: ResourceType.Grass,  respawnTime: 30 },
+    { x: -19, z: -5,  type: ResourceType.Grass,  respawnTime: 30 },
+    { x: -5,  z: 1,   type: ResourceType.Grass,  respawnTime: 30 },
+    { x: 1,   z: 7,   type: ResourceType.Grass,  respawnTime: 30 },
+    { x: 11,  z: 11,  type: ResourceType.Grass,  respawnTime: 30 },
+    { x: 1,   z: 15,  type: ResourceType.Grass,  respawnTime: 30 },
+    { x: -9,  z: 21,  type: ResourceType.Grass,  respawnTime: 30 },
+    { x: 19,  z: -9,  type: ResourceType.Grass,  respawnTime: 30 },
+    // Sticks nodes (4)
+    { x: 13,  z: -13, type: ResourceType.Sticks, respawnTime: 45 },
+    { x: 17,  z: -9,  type: ResourceType.Sticks, respawnTime: 45 },
+    { x: 11,  z: -5,  type: ResourceType.Sticks, respawnTime: 45 },
+    { x: 7,   z: -11, type: ResourceType.Sticks, respawnTime: 45 },
+    // Water-source nodes (2)
+    { x: -19, z: -7,  type: ResourceType.Water,  respawnTime: 60 },
+    { x: -11, z: -9,  type: ResourceType.Water,  respawnTime: 60 },
+  ],
+  yarnPickups: [
+    { x: -1,  z: -1, yarnAmount: 3 },  // near spawn
+    { x: 15,  z: -1, yarnAmount: 3 },  // NE area near Sticks
+    { x: -15, z: 7,  yarnAmount: 3 },  // SW area near water
   ],
 };

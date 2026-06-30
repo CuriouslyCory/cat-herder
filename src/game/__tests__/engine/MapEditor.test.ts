@@ -92,10 +92,12 @@ function makeGameLifecycle() {
 function makeSampleMapData(): MapData {
   return {
     name: "test-map",
-    size: { width: 10, depth: 10 },
+    size: { width: 1, depth: 1 },
     terrain: [[{ type: TerrainType.Grass, height: 1, navigable: true }]],
     cellSize: 1,
     spawnPoints: [{ x: 0, z: 0, role: "player" }],
+    resourceNodes: [],
+    yarnPickups: [],
   };
 }
 
@@ -307,7 +309,7 @@ describe("getMapData() / loadMapData()", () => {
     editor.loadMapData(data);
     const result = editor.getMapData();
     expect(result.name).toBe("test-map");
-    expect(result.size).toEqual({ width: 10, depth: 10 });
+    expect(result.size).toEqual({ width: 1, depth: 1 });
     expect(result.spawnPoints).toHaveLength(1);
   });
 
@@ -2007,16 +2009,18 @@ describe("mapDataSchema (US-305)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts empty terrain and spawnPoints", () => {
+  it("rejects empty terrain (terrain must have at least one row)", () => {
     const data: MapData = {
       name: "empty",
       size: { width: 10, depth: 10 },
       terrain: [],
       cellSize: 1,
       spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
     };
     const result = mapDataSchema.safeParse(data);
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -2161,6 +2165,8 @@ describe("playMap() (US-305)", () => {
       terrain: [],
       cellSize: 3,
       spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
     };
     const mockMapManager = { loadMap: vi.fn() };
     const c2 = makeMockEl() as unknown as HTMLElement;
@@ -2208,7 +2214,7 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
   it("ROUND-TRIP: place all entity types then loadMapData on a fresh editor yields identical data", () => {
     const { ed: ed1 } = makeRoundTripEditor();
 
-    // Place a terrain block
+    // Place a terrain block (editor-internal state; not serialized to MapData)
     ed1.selectTool(TerrainType.Grass);
     ed1.placeBlock(3, 5);
     const block = ed1.getEditorBlocks()[0]!;
@@ -2216,11 +2222,11 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     ed1.updateSelectedBlockHeight(2.5);
     ed1.updateSelectedBlockType(TerrainType.Stone);
 
-    // Place a water zone with non-default depth
+    // Place a water zone with non-default depth (editor-internal state)
     ed1.setSelectedWaterDepth(3.5);
     ed1.createWaterZone(1, 1, 4, 4);
 
-    // Place a hidden terrain zone
+    // Place a hidden terrain zone (editor-internal state)
     ed1.createHiddenTerrainZone(10, 10, 15, 15);
 
     // Place a player spawn
@@ -2244,13 +2250,7 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     // Export map data from the first editor
     const exported = ed1.getMapData();
 
-    // Verify the exported data has the right shape (handles excluded)
-    expect(exported.blocks).toHaveLength(1);
-    expect(exported.blocks![0]).toEqual({ x: 3, z: 5, type: TerrainType.Stone, height: 2.5 });
-    expect(exported.waterZones).toHaveLength(1);
-    expect(exported.waterZones![0]!.depth).toBe(3.5);
-    expect(exported.hiddenTerrainZones).toHaveLength(1);
-    expect(exported.hiddenTerrainZones![0]).toEqual({ x1: 10, z1: 10, x2: 15, z2: 15, height: 1 });
+    // blocks/waterZones/hiddenTerrainZones are editor-internal state — not in MapData
     // Spawn points: player + cat
     expect(exported.spawnPoints).toHaveLength(2);
     const playerSp = exported.spawnPoints.find((s) => s.role === "player");
@@ -2258,19 +2258,16 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     expect(playerSp).toEqual({ x: 0, z: 0, role: "player" });
     expect(catSp).toEqual({ x: 2, z: 2, role: "cat" });
     expect(exported.resourceNodes).toHaveLength(1);
-    expect(exported.resourceNodes![0]).toEqual({ x: 7, z: 7, type: ResourceType.Grass, respawnTime: 30 });
+    expect(exported.resourceNodes[0]).toEqual({ x: 7, z: 7, type: ResourceType.Grass, respawnTime: 30 });
     expect(exported.yarnPickups).toHaveLength(1);
-    expect(exported.yarnPickups![0]).toEqual({ x: 9, z: 9, yarnAmount: 3 });
+    expect(exported.yarnPickups[0]).toEqual({ x: 9, z: 9, yarnAmount: 3 });
 
     // Load into a FRESH editor
     const { ed: ed2 } = makeRoundTripEditor();
     ed2.loadMapData(exported);
 
-    // Export again and compare — both exports must be deeply equal
+    // Export again and compare — both exports must be deeply equal for MapData fields
     const reexported = ed2.getMapData();
-    expect(reexported.blocks).toEqual(exported.blocks);
-    expect(reexported.waterZones).toEqual(exported.waterZones);
-    expect(reexported.hiddenTerrainZones).toEqual(exported.hiddenTerrainZones);
     expect(reexported.spawnPoints).toEqual(expect.arrayContaining(exported.spawnPoints));
     expect(reexported.spawnPoints).toHaveLength(exported.spawnPoints.length);
     expect(reexported.resourceNodes).toEqual(exported.resourceNodes);
@@ -2283,10 +2280,7 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
   it("ROUND-TRIP: loadMapData() recreates scene meshes for all entity types", () => {
     const { ed: ed1 } = makeRoundTripEditor();
 
-    ed1.selectTool(TerrainType.Dirt);
-    ed1.placeBlock(1, 1);
-    ed1.createWaterZone(0, 0, 2, 2);
-    ed1.createHiddenTerrainZone(5, 5, 7, 7);
+    // blocks/waterZones/hiddenTerrainZones are editor-internal and don't flow through MapData
     ed1.selectEntityTool("playerSpawn");
     ed1.placeEntity(3, 3);
     ed1.selectEntityTool("catSpawn");
@@ -2303,8 +2297,8 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     ed2.loadMapData(exported);
 
     // addMesh should have been called for each recreated entity:
-    // block + waterZone + hiddenTerrainZone + playerSpawn + catSpawn + resourceNode + yarnPickup = 7
-    expect(sm2.addMesh).toHaveBeenCalledTimes(7);
+    // playerSpawn + catSpawn + resourceNode + yarnPickup = 4
+    expect(sm2.addMesh).toHaveBeenCalledTimes(4);
 
     ed1.dispose();
     ed2.dispose();
@@ -2320,19 +2314,19 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     ed.placeEntity(2, 2);
     ed.placeEntity(3, 3);
 
-    // Now load a completely different map
+    // Now load a completely different map (blocks are editor-internal state — not in MapData)
     ed.loadMapData({
       name: "replacement",
       size: { width: 20, depth: 20 },
       terrain: [],
       cellSize: 1,
       spawnPoints: [{ x: 5, z: 5, role: "player" }],
-      blocks: [{ x: 9, z: 9, type: TerrainType.Stone, height: 1 }],
+      resourceNodes: [],
+      yarnPickups: [],
     });
 
-    // Old blocks gone, new ones in place
-    expect(ed.getEditorBlocks()).toHaveLength(1);
-    expect(ed.getEditorBlocks()[0]!.x).toBe(9);
+    // Old editor blocks were cleared (they're editor-internal state)
+    expect(ed.getEditorBlocks()).toHaveLength(0);
     // Old cat spawns gone; new player spawn present
     expect(ed.getCatSpawns()).toHaveLength(0);
     expect(ed.getPlayerSpawn()).not.toBeNull();
@@ -2341,15 +2335,13 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
     ed.dispose();
   });
 
-  it("ROUND-TRIP: getMapData() returns empty optional arrays when nothing is placed", () => {
+  it("ROUND-TRIP: getMapData() returns empty arrays for resourceNodes and yarnPickups when nothing is placed", () => {
     const { ed } = makeRoundTripEditor();
     const data = ed.getMapData();
-    // Optional arrays should be absent (not present or empty)
-    expect(data.blocks ?? []).toHaveLength(0);
-    expect(data.waterZones ?? []).toHaveLength(0);
-    expect(data.hiddenTerrainZones ?? []).toHaveLength(0);
-    expect(data.resourceNodes ?? []).toHaveLength(0);
-    expect(data.yarnPickups ?? []).toHaveLength(0);
+    // resourceNodes and yarnPickups are required fields — empty when nothing placed
+    expect(data.resourceNodes).toHaveLength(0);
+    expect(data.yarnPickups).toHaveLength(0);
+    // blocks/waterZones/hiddenTerrainZones are editor-internal state — not on MapData
     ed.dispose();
   });
 
@@ -2367,6 +2359,8 @@ describe("getMapData() / loadMapData() round-trip (Finding 1 regression)", () =>
         // "item" role is ignored (not a cat or player spawn)
         { x: 7, z: 8, role: "item" },
       ],
+      resourceNodes: [],
+      yarnPickups: [],
     });
 
     expect(ed.getPlayerSpawn()).toEqual({ x: 1, z: 2, handle: expect.anything() });
@@ -2471,7 +2465,7 @@ describe("water zone depth (Finding 3 regression)", () => {
     expect(editor.getEditorWaterZones()[0]!.depth).toBe(1);
   });
 
-  it("water depth survives round-trip through getMapData/loadMapData", () => {
+  it("water depth is stored in editor-internal state (not serialized through MapData)", () => {
     const sm1 = makeMockSceneManager({ x: 0, y: 0, z: 0 });
     const ed1 = new MapEditor(
       makeMockEl() as unknown as HTMLElement,
@@ -2482,21 +2476,13 @@ describe("water zone depth (Finding 3 regression)", () => {
 
     ed1.setSelectedWaterDepth(7.5);
     ed1.createWaterZone(0, 0, 5, 5);
+    // Water zone depth is held in editor-internal state
+    expect(ed1.getEditorWaterZones()[0]!.depth).toBe(7.5);
+    // MapData no longer serializes waterZones (editor-internal only)
     const exported = ed1.getMapData();
-    expect(exported.waterZones![0]!.depth).toBe(7.5);
-
-    const sm2 = makeMockSceneManager({ x: 0, y: 0, z: 0 });
-    const ed2 = new MapEditor(
-      makeMockEl() as unknown as HTMLElement,
-      makeMockCamera() as unknown as CameraController,
-      makeGameLifecycle(),
-      sm2 as any,
-    );
-    ed2.loadMapData(exported);
-    expect(ed2.getEditorWaterZones()[0]!.depth).toBe(7.5);
+    expect(exported.resourceNodes).toHaveLength(0);
 
     ed1.dispose();
-    ed2.dispose();
   });
 });
 
@@ -2615,53 +2601,44 @@ describe("mapDataSchema positive constraints (Finding 5 regression)", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts positive width, depth, and cellSize", () => {
+  it("accepts valid map with correct terrain dimensions", () => {
     const result = mapDataSchema.safeParse({
       name: "good",
-      size: { width: 30, depth: 20 },
-      terrain: [],
-      cellSize: 2,
+      size: { width: 4, depth: 2 },
+      terrain: [
+        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
+        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
+      ],
+      cellSize: 1,
       spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
     });
     expect(result.success).toBe(true);
   });
 
-  it("accepts optional editor extension arrays when valid", () => {
+  it("accepts valid resourceNodes and yarnPickups arrays", () => {
     const result = mapDataSchema.safeParse({
-      name: "with-extras",
-      size: { width: 10, depth: 10 },
-      terrain: [],
+      name: "with-entities",
+      size: { width: 1, depth: 1 },
+      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
       cellSize: 1,
       spawnPoints: [],
-      blocks: [{ x: 1, z: 2, type: TerrainType.Grass, height: 1 }],
-      waterZones: [{ x1: 0, z1: 0, x2: 3, z2: 3, depth: 2 }],
-      hiddenTerrainZones: [{ x1: 4, z1: 4, x2: 6, z2: 6, height: 1.5 }],
       resourceNodes: [{ x: 5, z: 5, type: ResourceType.Grass, respawnTime: 30 }],
       yarnPickups: [{ x: 7, z: 7, yarnAmount: 5 }],
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects invalid TerrainType in blocks array", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad-block",
-      size: { width: 10, depth: 10 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-      blocks: [{ x: 1, z: 2, type: "InvalidType", height: 1 }],
-    });
-    expect(result.success).toBe(false);
-  });
-
   it("rejects invalid ResourceType in resourceNodes array", () => {
     const result = mapDataSchema.safeParse({
       name: "bad-resource",
-      size: { width: 10, depth: 10 },
-      terrain: [],
+      size: { width: 1, depth: 1 },
+      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
       cellSize: 1,
       spawnPoints: [],
       resourceNodes: [{ x: 1, z: 2, type: "BadResource", respawnTime: 30 }],
+      yarnPickups: [],
     });
     expect(result.success).toBe(false);
   });
