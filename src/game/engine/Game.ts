@@ -83,6 +83,7 @@ export interface GameOpts {
   user: GameUser;
   trpc: GameTrpcAdapter;
   character?: PlayerCharacterConfig;
+  initialMap?: MapData;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +327,7 @@ export class Game {
         // US-208: map reload callback (unload + reload without respawning nodes/player)
         () => {
           this.mapManager.unloadMap();
-          this.mapManager.loadMap(TestMap);
+          this.mapManager.loadMap(this.opts.initialMap ?? TestMap);
         },
         // US-208: sceneManager for wireframe toggle
         this.sceneManager,
@@ -377,23 +378,27 @@ export class Game {
    * wire persistence, and begin the render loop.
    */
   private _boot(saveData: ExternalSaveData | null): void {
+    // Use the DB-supplied map if available; fall back to built-in TestMap so
+    // boot stays synchronous and works even when the DB is unreachable.
+    const activeMap: MapData = this.opts.initialMap ?? TestMap;
+
     // Restore game state BEFORE spawning entities so stat/position values are correct.
     if (saveData) {
       this.persistence.restoreFromSave(saveData);
     }
 
     // Load map (creates terrain entities in the ECS world)
-    this.mapManager.loadMap(TestMap);
+    this.mapManager.loadMap(activeMap);
 
     // Add terrain grid overlay matching the map's cell grid
     this.sceneManager.setTerrainGrid(
-      TestMap.size.width,
-      TestMap.size.depth,
-      TestMap.cellSize,
+      activeMap.size.width,
+      activeMap.size.depth,
+      activeMap.cellSize,
     );
 
     // Populate resource nodes from map data
-    this.spawnMapResourceNodes(TestMap);
+    this.spawnMapResourceNodes(activeMap);
 
     // Apply saved cooldowns to resource nodes (must run after spawnMapResourceNodes
     // so _nodeIdMap is populated).
@@ -402,14 +407,14 @@ export class Game {
     }
 
     // Spawn yarn pickups from map data
-    this.spawnMapYarnPickups(TestMap);
+    this.spawnMapYarnPickups(activeMap);
 
     // Set camera map bounds for focus clamping
     this.cameraController.setMapBounds({
-      minX: -TestMap.size.width / 2,
-      maxX: TestMap.size.width / 2,
-      minZ: -TestMap.size.depth / 2,
-      maxZ: TestMap.size.depth / 2,
+      minX: -activeMap.size.width / 2,
+      maxX: activeMap.size.width / 2,
+      minZ: -activeMap.size.depth / 2,
+      maxZ: activeMap.size.depth / 2,
     });
 
     // Determine player spawn position: saved position (from restore) or map spawn.

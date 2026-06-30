@@ -9,11 +9,13 @@ import {
   type PlayerCharacterConfig,
 } from "~/game/engine/Game";
 import { api } from "~/trpc/react";
+import type { MapData } from "~/game/maps/MapData";
 
 import { CharacterCreator } from "./CharacterCreator";
 
 interface GameCanvasProps {
   user: GameUser;
+  initialMap?: MapData;
 }
 
 type StartState =
@@ -34,7 +36,7 @@ type StartState =
  *     - on error → show retry / start-new-game options (user consents to save loss).
  *  4. If the game is already running and a new character is set → call spawnPlayer().
  */
-export function GameCanvas({ user }: GameCanvasProps) {
+export function GameCanvas({ user, initialMap }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
   const [startState, setStartState] = useState<StartState>({ phase: "idle" });
@@ -159,7 +161,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
-    const game = new Game(canvas, { user, character, trpc: trpcAdapter });
+    const game = new Game(canvas, { user, character, trpc: trpcAdapter, initialMap });
     gameRef.current = game;
 
     let cancelled = false;
