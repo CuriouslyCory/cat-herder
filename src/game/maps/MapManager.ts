@@ -8,6 +8,7 @@ import { createWaterTrigger } from "../ecs/components/WaterTrigger";
 import { createHiddenTerrain } from "../ecs/components/HiddenTerrain";
 import type { MapData, TerrainCell, SpawnPoint } from "./MapData";
 import { TerrainType } from "../types";
+import { cellToWorld, worldToCell, cellMeshGeometry, FLOOR_THICKNESS } from "./coords";
 
 // ---------------------------------------------------------------------------
 // MapManager — loads MapData into the ECS world as terrain entities
@@ -56,9 +57,6 @@ export function varyColor(baseHex: string, seed: number): string {
 
   return `#${toHex(clamp(r + delta))}${toHex(clamp(g + delta))}${toHex(clamp(b + delta))}`;
 }
-
-/** Visual thickness of flat terrain slabs below their surface (world units). */
-const FLOOR_THICKNESS = 0.2;
 
 /** Height of boundary walls (world units). */
 const WALL_HEIGHT = 5;
@@ -117,8 +115,7 @@ export class MapManager {
   getTerrainAt(x: number, z: number): TerrainCell | null {
     if (!this.mapData) return null;
     const { terrain, size, cellSize } = this.mapData;
-    const col = Math.floor((x + size.width / 2) / cellSize);
-    const row = Math.floor((z + size.depth / 2) / cellSize);
+    const { col, row } = worldToCell(x, z, cellSize, size.width, size.depth);
     return terrain[row]?.[col] ?? null;
   }
 
@@ -152,8 +149,6 @@ export class MapManager {
     const ROWS = data.terrain.length;
     const COLS = data.terrain[0]?.length ?? 0;
     const cs = data.cellSize;
-    const halfW = data.size.width / 2;
-    const halfD = data.size.depth / 2;
 
     const visited: boolean[][] = Array.from({ length: ROWS }, () =>
       new Array<boolean>(COLS).fill(false),
@@ -203,8 +198,12 @@ export class MapManager {
 
         const width = (c2 - c + 1) * cs;
         const depth = (r2 - r + 1) * cs;
-        const worldX = -halfW + c * cs + width / 2;
-        const worldZ = -halfD + r * cs + depth / 2;
+        // cellToWorld gives the center of the top-left cell (c,r).
+        // For a merged zone spanning (c2-c+1)×(r2-r+1) cells, offset by half
+        // the remaining cells' span to find the zone center.
+        const { x: cellX, z: cellZ } = cellToWorld(c, r, cs, data.size.width, data.size.depth);
+        const worldX = cellX + ((c2 - c) * cs) / 2;
+        const worldZ = cellZ + ((r2 - r) * cs) / 2;
 
         zones.push({ cell, worldX, worldZ, width, depth });
       }
@@ -225,10 +224,7 @@ export class MapManager {
 
     // Elevated terrain: box from y=0 to y=height (center at height/2).
     // Flat terrain: thin slab whose top face is at y=0 (center at -FLOOR_THICKNESS/2).
-    const boxHeight =
-      cell.height > 0 ? cell.height : FLOOR_THICKNESS;
-    const centerY =
-      cell.height > 0 ? cell.height / 2 : -FLOOR_THICKNESS / 2;
+    const { boxHeight, centerY } = cellMeshGeometry(cell.height);
 
     const entity = this.world.createEntity();
 
