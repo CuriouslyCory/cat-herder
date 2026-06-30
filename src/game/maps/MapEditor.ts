@@ -32,6 +32,21 @@ interface GameLifecycle {
   resume(): void;
 }
 
+// Minimal adapter for map DB operations — mirrors the map methods in GameTrpcAdapter
+// (Game.ts). Defined here as a structural subset to avoid circular imports.
+interface MapTrpcAdapter {
+  mapList(): Promise<Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>>;
+  mapGet(input: { id: number }): Promise<{ id: number; name: string; mapData: unknown; isDefault: boolean }>;
+  mapSave(input: { id?: number; name: string; mapData: MapData }): Promise<{ id: number; name: string }>;
+  mapSetDefault(input: { id: number }): Promise<void>;
+  mapDelete(input: { id: number }): Promise<void>;
+}
+
+// Minimal user info the editor needs to determine admin status.
+interface EditorUser {
+  isAdmin: boolean;
+}
+
 // Minimal subset of SceneManager needed by the editor — avoids Three.js import.
 interface SceneManagerLike {
   addMesh(config: MeshConfig): SceneHandle;
@@ -274,7 +289,16 @@ export class MapEditor {
 
   // US-305: save / load / play
   private _errorDisplay: HTMLElement | null = null;
-  private _fileInput: HTMLInputElement | null = null;
+  private _statusDisplay: HTMLElement | null = null;
+
+  // DB panel state (US-17)
+  private _currentMapId: number | null = null;
+  private _currentMapName: string = "untitled";
+  private _mapNameInput: HTMLInputElement | null = null;
+  private _mapListSelect: HTMLSelectElement | null = null;
+  private _mapListCache: Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }> = [];
+  private _setDefaultBtn: HTMLButtonElement | null = null;
+  private _deleteBtn: HTMLButtonElement | null = null;
 
   // Event handler refs
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -289,6 +313,8 @@ export class MapEditor {
     private readonly gameLifecycle: GameLifecycle,
     private readonly sceneManager: SceneManagerLike | null = null,
     private readonly mapManager: MapManagerLike | null = null,
+    private readonly _trpcAdapter: MapTrpcAdapter | null = null,
+    private readonly _user: EditorUser | null = null,
   ) {
     if (process.env.NODE_ENV === "production") return;
     this._buildBanner();
@@ -456,41 +482,134 @@ export class MapEditor {
     this._yarnPickups = [];
   }
 
-  // ── Public API — US-305: save / load / play ───────────────────────────────
+  // ── Public API — US-305/17: DB save / load / play ─────────────────────────
 
-  /** Export the current map as a JSON file download. */
-  saveMap(): void {
-    const data = this.getMapData();
-    const json = JSON.stringify(data, null, 2);
-    const timestamp = new Date().toISOString();
-    const filename = `map-${data.name}-${timestamp}.json`;
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  /**
+   * Save the current map to the database.
+   * On first save (no _currentMapId) a new row is created; subsequent calls
+   * update the existing row.  The returned id is stored and reused across saves.
+   */
+  async saveMapToDB(name?: string): Promise<void> {
+    if (!this._trpcAdapter) {
+      this._showError("No DB adapter available");
+      return;
+    }
+    const saveName = name ?? this._mapNameInput?.value ?? this._currentMapName;
+    try {
+      const result = await this._trpcAdapter.mapSave({
+        id: this._currentMapId ?? undefined,
+        name: saveName,
+        mapData: this.getMapData(),
+      });
+      this._currentMapId = result.id;
+      this._currentMapName = result.name;
+      if (this._mapNameInput) this._mapNameInput.value = result.name;
+      this._showError(null);
+      this._showStatus("Saved");
+    } catch (err: unknown) {
+      this._showError(err instanceof Error ? err.message : "Save failed");
+    }
   }
 
-  /** Load map data from a JSON File, validate with Zod, then call loadMapData(). */
-  async loadFromFile(file: File): Promise<void> {
+  /**
+   * Refresh the internal map list from the database.
+   */
+  async refreshMapList(): Promise<void> {
+    if (!this._trpcAdapter) {
+      this._showError("No DB adapter available");
+      return;
+    }
     try {
-      const text = await file.text();
-      const raw = JSON.parse(text) as unknown;
-      const result = mapDataSchema.safeParse(raw);
+      const list = await this._trpcAdapter.mapList();
+      this._mapListCache = list;
+      this._populateMapListSelect(list);
+      this._showError(null);
+      this._updateDeleteButton();
+    } catch (err: unknown) {
+      this._showError(err instanceof Error ? err.message : "Failed to load map list");
+    }
+  }
+
+  /**
+   * Load a map by id from the database and apply it to the editor.
+   */
+  async loadMapFromDB(id: number): Promise<void> {
+    if (!this._trpcAdapter) {
+      this._showError("No DB adapter available");
+      return;
+    }
+    try {
+      const row = await this._trpcAdapter.mapGet({ id });
+      const result = mapDataSchema.safeParse(row.mapData);
       if (!result.success) {
         const msg = result.error.issues[0]?.message ?? "schema validation failed";
-        this._showError(`Invalid map: ${msg}`);
+        this._showError(`Invalid map data: ${msg}`);
         return;
       }
       this._showError(null);
       this.loadMapData(result.data);
-    } catch {
-      this._showError("Failed to read file: invalid JSON");
+      this._currentMapId = row.id;
+      this._currentMapName = row.name;
+      if (this._mapNameInput) this._mapNameInput.value = row.name;
+      this._showStatus("Loaded");
+    } catch (err: unknown) {
+      this._showError(err instanceof Error ? err.message : "Load failed");
     }
+  }
+
+  /**
+   * Set the currently loaded map as the default map.
+   */
+  async setCurrentMapAsDefault(): Promise<void> {
+    if (!this._trpcAdapter || this._currentMapId === null) {
+      this._showError("No map loaded");
+      return;
+    }
+    try {
+      await this._trpcAdapter.mapSetDefault({ id: this._currentMapId });
+      this._showError(null);
+      this._showStatus("Set as default");
+      await this.refreshMapList();
+    } catch (err: unknown) {
+      this._showError(err instanceof Error ? err.message : "Set default failed");
+    }
+  }
+
+  /**
+   * Delete the currently loaded map from the database.
+   * Client-side guard mirrors server-side: blocks delete for default or only map.
+   */
+  async deleteCurrentMap(): Promise<void> {
+    if (!this._trpcAdapter || this._currentMapId === null) {
+      this._showError("No map loaded");
+      return;
+    }
+    if (this.isDeleteDisabled()) {
+      this._showError("Cannot delete the default map or the only map");
+      return;
+    }
+    try {
+      await this._trpcAdapter.mapDelete({ id: this._currentMapId });
+      this._currentMapId = null;
+      this._showError(null);
+      this._showStatus("Deleted");
+      await this.refreshMapList();
+    } catch (err: unknown) {
+      this._showError(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
+  /**
+   * Returns true if delete should be blocked (mirrors server guard).
+   * Blocked when: no map loaded, current map is default, or only one map in list.
+   */
+  isDeleteDisabled(): boolean {
+    if (this._currentMapId === null) return true;
+    const list = this._mapListCache;
+    if (list.length <= 1) return true;
+    const current = list.find((m) => m.id === this._currentMapId);
+    if (current?.isDefault) return true;
+    return false;
   }
 
   /** Load the current editor map into the game and exit editor mode. */
@@ -956,7 +1075,11 @@ export class MapEditor {
       this._panel = null;
     }
     this._errorDisplay = null;
-    this._fileInput = null;
+    this._statusDisplay = null;
+    this._mapNameInput = null;
+    this._mapListSelect = null;
+    this._setDefaultBtn = null;
+    this._deleteBtn = null;
     this._removeGhost();
     this._active = false;
   }
@@ -1128,49 +1251,150 @@ export class MapEditor {
     this._deleteToolBtn = deleteBtn;
     panel.appendChild(deleteBtn);
 
-    // US-305: Save / Load / Play
-    const fileSep = document.createElement("div");
-    fileSep.style.cssText = "border-top:1px solid #444;margin-top:4px;";
-    panel.appendChild(fileSep);
+    // US-17: Database section (replaces JSON file save/load)
+    const dbSep = document.createElement("div");
+    dbSep.style.cssText = "border-top:1px solid #444;margin-top:4px;";
+    panel.appendChild(dbSep);
 
-    const fileTitle = document.createElement("div");
-    fileTitle.style.cssText =
+    const dbTitle = document.createElement("div");
+    dbTitle.style.cssText =
       "font-weight:bold;font-size:13px;letter-spacing:1px;margin-bottom:4px;margin-top:4px;";
-    fileTitle.textContent = "File";
-    panel.appendChild(fileTitle);
+    dbTitle.textContent = "Database";
+    panel.appendChild(dbTitle);
 
-    const saveBtn = document.createElement("button");
-    saveBtn.style.cssText =
+    const isAdmin = this._user?.isAdmin ?? false;
+
+    // Name input
+    const nameLabel = document.createElement("div");
+    nameLabel.style.cssText = "font-size:10px;color:#aaa;margin-bottom:2px;";
+    nameLabel.textContent = "Map name:";
+    panel.appendChild(nameLabel);
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = this._currentMapName;
+    nameInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;margin-bottom:4px;box-sizing:border-box;";
+    if (!isAdmin) nameInput.disabled = true;
+    this._mapNameInput = nameInput as unknown as HTMLInputElement;
+    panel.appendChild(nameInput);
+
+    // Save button
+    const dbSaveBtn = document.createElement("button");
+    dbSaveBtn.style.cssText =
       "width:100%;padding:6px 8px;background:#2a4a2a;border:1px solid #4a8;" +
       "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
       "cursor:pointer;text-align:left;margin-bottom:4px;";
-    saveBtn.textContent = "Save";
-    saveBtn.addEventListener("click", () => {
-      this.saveMap();
+    dbSaveBtn.textContent = "Save to DB";
+    if (!isAdmin) {
+      dbSaveBtn.disabled = true;
+      dbSaveBtn.title = "Admin only";
+    }
+    dbSaveBtn.addEventListener("click", () => {
+      dbSaveBtn.disabled = true;
+      void this.saveMapToDB().finally(() => {
+        dbSaveBtn.disabled = !isAdmin;
+      });
     });
-    panel.appendChild(saveBtn);
+    panel.appendChild(dbSaveBtn);
 
-    const fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.accept = ".json";
-    fileInput.style.display = "none";
-    fileInput.addEventListener("change", () => {
-      const file = (fileInput as unknown as { files: FileList | null }).files?.[0];
-      if (file) void this.loadFromFile(file);
+    // Separator
+    const listSep = document.createElement("div");
+    listSep.style.cssText = "border-top:1px solid #333;margin-top:4px;margin-bottom:4px;";
+    panel.appendChild(listSep);
+
+    // Refresh list button
+    const refreshBtn = document.createElement("button");
+    refreshBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#2a2a3e;border:1px solid #444;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    refreshBtn.textContent = "Refresh List";
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.disabled = true;
+      void this.refreshMapList().finally(() => {
+        refreshBtn.disabled = false;
+      });
     });
-    this._fileInput = fileInput as unknown as HTMLInputElement;
-    panel.appendChild(fileInput);
+    panel.appendChild(refreshBtn);
 
-    const loadBtn = document.createElement("button");
-    loadBtn.style.cssText =
+    // Map list select
+    const mapSelect = document.createElement("select");
+    mapSelect.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;margin-bottom:4px;";
+    this._mapListSelect = mapSelect as unknown as HTMLSelectElement;
+    panel.appendChild(mapSelect);
+
+    // Load selected button
+    const loadSelectedBtn = document.createElement("button");
+    loadSelectedBtn.style.cssText =
       "width:100%;padding:6px 8px;background:#2a2a4a;border:1px solid #44a;" +
       "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
       "cursor:pointer;text-align:left;margin-bottom:4px;";
-    loadBtn.textContent = "Load";
-    loadBtn.addEventListener("click", () => {
-      this._fileInput?.click();
+    loadSelectedBtn.textContent = "Load Selected";
+    loadSelectedBtn.addEventListener("click", () => {
+      const idStr = (this._mapListSelect as unknown as HTMLSelectElement | null)?.value;
+      if (!idStr) return;
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) return;
+      loadSelectedBtn.disabled = true;
+      void this.loadMapFromDB(id).finally(() => {
+        loadSelectedBtn.disabled = false;
+        this._updateDeleteButton();
+        this._updateSetDefaultButton();
+      });
     });
-    panel.appendChild(loadBtn);
+    panel.appendChild(loadSelectedBtn);
+
+    // Separator
+    const actionSep = document.createElement("div");
+    actionSep.style.cssText = "border-top:1px solid #333;margin-top:4px;margin-bottom:4px;";
+    panel.appendChild(actionSep);
+
+    // Set as default button
+    const setDefaultBtn = document.createElement("button");
+    setDefaultBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#3a2a4a;border:1px solid #84a;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    setDefaultBtn.textContent = "Set as Default";
+    setDefaultBtn.disabled = !isAdmin || this._currentMapId === null;
+    if (!isAdmin) setDefaultBtn.title = "Admin only";
+    setDefaultBtn.addEventListener("click", () => {
+      setDefaultBtn.disabled = true;
+      void this.setCurrentMapAsDefault().finally(() => {
+        setDefaultBtn.disabled = !isAdmin || this._currentMapId === null;
+      });
+    });
+    this._setDefaultBtn = setDefaultBtn as unknown as HTMLButtonElement;
+    panel.appendChild(setDefaultBtn);
+
+    // Delete button
+    const deleteDbBtn = document.createElement("button");
+    deleteDbBtn.style.cssText =
+      "width:100%;padding:6px 8px;background:#4a2a2a;border:1px solid #a44;" +
+      "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
+      "cursor:pointer;text-align:left;margin-bottom:4px;";
+    deleteDbBtn.textContent = "Delete Map";
+    deleteDbBtn.disabled = !isAdmin || this.isDeleteDisabled();
+    if (!isAdmin) deleteDbBtn.title = "Admin only";
+    deleteDbBtn.addEventListener("click", () => {
+      if (this.isDeleteDisabled()) return;
+      if (!confirm("Delete this map? This cannot be undone.")) return;
+      deleteDbBtn.disabled = true;
+      void this.deleteCurrentMap().finally(() => {
+        deleteDbBtn.disabled = !isAdmin || this.isDeleteDisabled();
+      });
+    });
+    this._deleteBtn = deleteDbBtn as unknown as HTMLButtonElement;
+    panel.appendChild(deleteDbBtn);
+
+    // Play button (preserved)
+    const playSep = document.createElement("div");
+    playSep.style.cssText = "border-top:1px solid #444;margin-top:4px;";
+    panel.appendChild(playSep);
 
     const playBtn = document.createElement("button");
     playBtn.style.cssText =
@@ -1182,6 +1406,13 @@ export class MapEditor {
       this.playMap();
     });
     panel.appendChild(playBtn);
+
+    // Status display (transient success/info, green)
+    const statusDisplay = document.createElement("div");
+    statusDisplay.style.cssText =
+      "font-size:10px;color:#4f8;display:none;word-wrap:break-word;";
+    this._statusDisplay = statusDisplay;
+    panel.appendChild(statusDisplay);
 
     const errorDisplay = document.createElement("div");
     errorDisplay.style.cssText =
@@ -2183,6 +2414,51 @@ export class MapEditor {
     if (!this._errorDisplay) return;
     this._errorDisplay.textContent = msg ?? "";
     this._errorDisplay.style.display = msg ? "block" : "none";
+  }
+
+  private _statusClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private _showStatus(msg: string): void {
+    if (!this._statusDisplay) return;
+    if (this._statusClearTimer !== null) {
+      clearTimeout(this._statusClearTimer);
+      this._statusClearTimer = null;
+    }
+    this._statusDisplay.textContent = msg;
+    this._statusDisplay.style.display = "block";
+    this._statusClearTimer = setTimeout(() => {
+      if (this._statusDisplay) {
+        this._statusDisplay.style.display = "none";
+        this._statusDisplay.textContent = "";
+      }
+      this._statusClearTimer = null;
+    }, 3000);
+  }
+
+  private _populateMapListSelect(
+    list: Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>,
+  ): void {
+    if (!this._mapListSelect) return;
+    // Clear existing options
+    const sel = this._mapListSelect;
+    // Remove existing children via replaceChildren if available, else manual
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    for (const entry of list) {
+      const opt = document.createElement("option");
+      opt.value = String(entry.id);
+      opt.textContent = entry.isDefault ? `${entry.name} (default)` : entry.name;
+      sel.appendChild(opt);
+    }
+  }
+
+  private _updateDeleteButton(): void {
+    if (!this._deleteBtn) return;
+    this._deleteBtn.disabled = this.isDeleteDisabled();
+  }
+
+  private _updateSetDefaultButton(): void {
+    if (!this._setDefaultBtn) return;
+    this._setDefaultBtn.disabled = this._currentMapId === null;
   }
 
   private _updateWaterConfigSection(): void {
