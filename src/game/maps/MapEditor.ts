@@ -1,4 +1,11 @@
-import type { MapData } from "./MapData";
+import type {
+  MapData,
+  MapDataBlock,
+  MapDataHiddenTerrainZone,
+  MapDataResourceNode,
+  MapDataWaterZone,
+  MapDataYarnPickup,
+} from "./MapData";
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
 import { TerrainType, ResourceType } from "../types";
@@ -209,12 +216,17 @@ export class MapEditor {
   private _waterDragStart: { x: number; z: number } | null = null;
   private _waterDragGhost: SceneHandle | null = null;
   private _suppressNextClick = false;
+  private _selectedWaterDepth = 1;
 
   // Properties section DOM refs
   private _propertiesSection: HTMLElement | null = null;
   private _propPosDisplay: HTMLElement | null = null;
   private _propTypeSelect: HTMLSelectElement | null = null;
   private _propHeightInput: HTMLInputElement | null = null;
+
+  // Water depth config DOM refs (Finding 3)
+  private _waterConfigSection: HTMLElement | null = null;
+  private _waterDepthInput: HTMLInputElement | null = null;
 
   private readonly _toolButtons = new Map<TerrainType, HTMLElement>();
 
@@ -304,17 +316,163 @@ export class MapEditor {
   }
 
   getMapData(): MapData {
-    return this._mapData ?? {
-      name: "untitled",
-      size: { width: 30, depth: 30 },
-      terrain: [],
-      cellSize: 2,
-      spawnPoints: [],
+    // Base shape: preserve name/size/cellSize/terrain from _mapData; otherwise sensible defaults.
+    const base = this._mapData;
+    const name = base?.name ?? "untitled";
+    const size = base?.size ?? { width: 30, depth: 30 };
+    const cellSize = base?.cellSize ?? 2;
+    const terrain = base?.terrain.map((row) => [...row]) ?? [];
+
+    // Serialize spawn points from live editor collections (no handles in output).
+    const spawnPoints = [];
+    if (this._playerSpawn) {
+      spawnPoints.push({ x: this._playerSpawn.x, z: this._playerSpawn.z, role: "player" as const });
+    }
+    for (const s of this._catSpawns) {
+      spawnPoints.push({ x: s.x, z: s.z, role: "cat" as const });
+    }
+
+    // Serialize optional editor-only collections (strip handles).
+    const blocks: MapDataBlock[] = this._editorBlocks.map((b) => ({
+      x: b.x,
+      z: b.z,
+      type: b.type,
+      height: b.height,
+    }));
+
+    const waterZones: MapDataWaterZone[] = this._editorWaterZones.map((z) => ({
+      x1: z.x1,
+      z1: z.z1,
+      x2: z.x2,
+      z2: z.z2,
+      depth: z.depth,
+    }));
+
+    const hiddenTerrainZones: MapDataHiddenTerrainZone[] = this._hiddenTerrainZones.map((z) => ({
+      x1: z.x1,
+      z1: z.z1,
+      x2: z.x2,
+      z2: z.z2,
+      height: z.height,
+    }));
+
+    const resourceNodes: MapDataResourceNode[] = this._resourceNodes.map((n) => ({
+      x: n.x,
+      z: n.z,
+      type: n.type,
+      respawnTime: n.respawnTime,
+    }));
+
+    const yarnPickups: MapDataYarnPickup[] = this._yarnPickups.map((p) => ({
+      x: p.x,
+      z: p.z,
+      yarnAmount: p.yarnAmount,
+    }));
+
+    return {
+      name,
+      size,
+      terrain,
+      cellSize,
+      spawnPoints,
+      ...(blocks.length > 0 ? { blocks } : {}),
+      ...(waterZones.length > 0 ? { waterZones } : {}),
+      ...(hiddenTerrainZones.length > 0 ? { hiddenTerrainZones } : {}),
+      ...(resourceNodes.length > 0 ? { resourceNodes } : {}),
+      ...(yarnPickups.length > 0 ? { yarnPickups } : {}),
     };
   }
 
   loadMapData(data: MapData): void {
+    // Clear existing editor state and scene meshes before rebuilding.
+    this._clearEditorState();
+
+    // Keep base metadata in sync.
     this._mapData = { ...data, terrain: data.terrain.map((row) => [...row]) };
+
+    // Rebuild spawn points.
+    for (const sp of data.spawnPoints) {
+      if (sp.role === "player") {
+        const handle = this._createEntityMarkerMesh(sp.x, sp.z, ENTITY_COLORS.playerSpawn);
+        this._playerSpawn = { x: sp.x, z: sp.z, handle };
+      } else if (sp.role === "cat") {
+        const handle = this._createEntityMarkerMesh(sp.x, sp.z, ENTITY_COLORS.catSpawn);
+        this._catSpawns.push({ x: sp.x, z: sp.z, handle });
+      }
+    }
+
+    // Rebuild optional editor collections.
+    for (const b of data.blocks ?? []) {
+      const handle = this._createBlockMesh(b.x, b.z, b.type, b.height);
+      this._editorBlocks.push({ x: b.x, z: b.z, type: b.type, height: b.height, handle });
+    }
+
+    for (const wz of data.waterZones ?? []) {
+      const handle = this._createWaterZoneMesh(wz.x1, wz.z1, wz.x2, wz.z2);
+      this._editorWaterZones.push({ x1: wz.x1, z1: wz.z1, x2: wz.x2, z2: wz.z2, depth: wz.depth, handle });
+    }
+
+    for (const hz of data.hiddenTerrainZones ?? []) {
+      const handle = this._createHiddenTerrainZoneMesh(hz.x1, hz.z1, hz.x2, hz.z2);
+      this._hiddenTerrainZones.push({ x1: hz.x1, z1: hz.z1, x2: hz.x2, z2: hz.z2, height: hz.height, handle });
+    }
+
+    for (const rn of data.resourceNodes ?? []) {
+      const color = RESOURCE_NODE_COLORS[rn.type];
+      const handle = this._createEntityMarkerMesh(rn.x, rn.z, color);
+      this._resourceNodes.push({ x: rn.x, z: rn.z, type: rn.type, respawnTime: rn.respawnTime, handle });
+    }
+
+    for (const yp of data.yarnPickups ?? []) {
+      const handle = this._createEntityMarkerMesh(yp.x, yp.z, ENTITY_COLORS.yarnPickup);
+      this._yarnPickups.push({ x: yp.x, z: yp.z, yarnAmount: yp.yarnAmount, handle });
+    }
+  }
+
+  /**
+   * Tear down all live editor collections and remove their scene meshes.
+   * Used by loadMapData() before rebuilding and by dispose().
+   */
+  private _clearEditorState(): void {
+    // Terrain blocks
+    for (const b of this._editorBlocks) {
+      if (b.handle && this.sceneManager) this.sceneManager.removeMesh(b.handle);
+    }
+    this._editorBlocks = [];
+    this._selectedBlock = null;
+
+    // Water zones
+    for (const z of this._editorWaterZones) {
+      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
+    }
+    this._editorWaterZones = [];
+
+    // Hidden terrain zones
+    for (const z of this._hiddenTerrainZones) {
+      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
+    }
+    this._hiddenTerrainZones = [];
+
+    // Spawns and entities
+    if (this._playerSpawn?.handle && this.sceneManager) {
+      this.sceneManager.removeMesh(this._playerSpawn.handle);
+    }
+    this._playerSpawn = null;
+
+    for (const s of this._catSpawns) {
+      if (s.handle && this.sceneManager) this.sceneManager.removeMesh(s.handle);
+    }
+    this._catSpawns = [];
+
+    for (const n of this._resourceNodes) {
+      if (n.handle && this.sceneManager) this.sceneManager.removeMesh(n.handle);
+    }
+    this._resourceNodes = [];
+
+    for (const p of this._yarnPickups) {
+      if (p.handle && this.sceneManager) this.sceneManager.removeMesh(p.handle);
+    }
+    this._yarnPickups = [];
   }
 
   // ── Public API — US-305: save / load / play ───────────────────────────────
@@ -385,6 +543,7 @@ export class MapEditor {
     this._selectedTool = type;
     if (type === null) this._removeGhost();
     this._updateToolButtons();
+    this._updateWaterConfigSection();
   }
 
   /** Read-only view of placed editor blocks. */
@@ -404,6 +563,10 @@ export class MapEditor {
     const existing = this._editorBlocks.find((b) => b.x === x && b.z === z);
     if (existing) {
       existing.type = this._selectedTool;
+      // Finding 2: update the mesh color so the visual reflects the new type.
+      if (existing.handle && this.sceneManager) {
+        this.sceneManager.setMeshColor(existing.handle, EDITOR_TERRAIN_COLORS[this._selectedTool]);
+      }
       return;
     }
     const handle = this._createBlockMesh(x, z, this._selectedTool, 1);
@@ -501,10 +664,21 @@ export class MapEditor {
       z1: nz1,
       x2: nx2,
       z2: nz2,
-      depth: 1,
+      // Finding 3: use the current selected water depth instead of hard-coded 1.
+      depth: this._selectedWaterDepth,
       handle: this._createWaterZoneMesh(nx1, nz1, nx2, nz2),
     };
     this._editorWaterZones.push(zone);
+  }
+
+  /** Get the current water depth setting (used when creating water zones). */
+  getSelectedWaterDepth(): number {
+    return this._selectedWaterDepth;
+  }
+
+  /** Set the water depth for subsequent createWaterZone() calls. Clamped to [0.5, 10]. */
+  setSelectedWaterDepth(depth: number): void {
+    this._selectedWaterDepth = Math.max(0.5, Math.min(10, depth));
   }
 
   // ── Public API — entity tools (US-303) ────────────────────────────────────
@@ -675,45 +849,12 @@ export class MapEditor {
       this._clickHandler = null;
     }
 
-    // Clean up terrain meshes
-    for (const zone of this._editorWaterZones) {
-      if (zone.handle && this.sceneManager) {
-        this.sceneManager.removeMesh(zone.handle);
-      }
-    }
-    this._editorWaterZones = [];
+    // Finding 4: clear ALL editor collections (including _editorBlocks) and remove their meshes.
+    this._clearEditorState();
     this._cancelWaterDrag();
     this._cancelHiddenDrag();
     this._cancelMoveDrag();
     this._editorToolMode = null;
-
-    // Clean up entity meshes (US-303)
-    if (this._playerSpawn?.handle && this.sceneManager) {
-      this.sceneManager.removeMesh(this._playerSpawn.handle);
-    }
-    this._playerSpawn = null;
-
-    for (const s of this._catSpawns) {
-      if (s.handle && this.sceneManager) this.sceneManager.removeMesh(s.handle);
-    }
-    this._catSpawns = [];
-
-    for (const n of this._resourceNodes) {
-      if (n.handle && this.sceneManager) this.sceneManager.removeMesh(n.handle);
-    }
-    this._resourceNodes = [];
-
-    for (const z of this._hiddenTerrainZones) {
-      if (z.handle && this.sceneManager) this.sceneManager.removeMesh(z.handle);
-    }
-    this._hiddenTerrainZones = [];
-
-    for (const p of this._yarnPickups) {
-      if (p.handle && this.sceneManager) this.sceneManager.removeMesh(p.handle);
-    }
-    this._yarnPickups = [];
-
-    this._selectedBlock = null;
     if (this._banner) {
       this._banner.remove();
       this._banner = null;
@@ -763,6 +904,7 @@ export class MapEditor {
       panel.appendChild(this._buildToolButton(type));
     }
 
+    panel.appendChild(this._buildWaterConfigSection());
     panel.appendChild(this._buildPropertiesSection());
 
     // Entities section (US-303)
@@ -947,6 +1089,42 @@ export class MapEditor {
     });
     this._propHeightInput = heightInput;
     section.appendChild(heightInput);
+
+    return section;
+  }
+
+  private _buildWaterConfigSection(): HTMLElement {
+    const section = document.createElement("div");
+    section.style.cssText =
+      "border-top:1px solid #444;margin-top:8px;padding-top:8px;display:none;";
+    this._waterConfigSection = section;
+
+    const title = document.createElement("div");
+    title.textContent = "Water Settings";
+    title.style.cssText =
+      "font-weight:bold;font-size:11px;margin-bottom:6px;color:#aaa;";
+    section.appendChild(title);
+
+    const depthLabel = document.createElement("div");
+    depthLabel.textContent = "Depth:";
+    depthLabel.style.cssText = "font-size:10px;margin-bottom:2px;";
+    section.appendChild(depthLabel);
+
+    const depthInput = document.createElement("input");
+    depthInput.type = "number";
+    depthInput.min = "0.5";
+    depthInput.max = "10";
+    depthInput.step = "0.5";
+    depthInput.value = String(this._selectedWaterDepth);
+    depthInput.style.cssText =
+      "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
+      "border-radius:3px;font-size:10px;padding:2px;";
+    depthInput.addEventListener("change", () => {
+      const val = parseFloat(depthInput.value);
+      if (!isNaN(val)) this.setSelectedWaterDepth(val);
+    });
+    this._waterDepthInput = depthInput as unknown as HTMLInputElement;
+    section.appendChild(depthInput);
 
     return section;
   }
@@ -1817,6 +1995,12 @@ export class MapEditor {
     if (!this._errorDisplay) return;
     this._errorDisplay.textContent = msg ?? "";
     this._errorDisplay.style.display = msg ? "block" : "none";
+  }
+
+  private _updateWaterConfigSection(): void {
+    if (!this._waterConfigSection) return;
+    this._waterConfigSection.style.display =
+      this._selectedTool === TerrainType.Water ? "block" : "none";
   }
 
   private _updateEditorToolModeButtons(): void {
