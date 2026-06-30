@@ -95,6 +95,7 @@ describe("ZoomiesSystem", () => {
 
     zoomiesSystem.update(world, DT);
 
-    expect(world.isAlive(catEntity)).toBe(false);
+    // dismiss() removes CatBehavior; entity stays alive for the 0.2 s scale-down tween.
+    expect(world.getComponent(catEntity, "CatBehavior")).toBeNull();
   });
 });

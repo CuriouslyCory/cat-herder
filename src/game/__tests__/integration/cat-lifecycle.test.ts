@@ -69,7 +69,8 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
     const yarnBeforeDismiss = gameState.yarn;
     zoomiesSystem.update(world, DT);
 
-    expect(world.isAlive(entity)).toBe(false);
+    // Entity stays alive for the 0.2 s scale-down animation; removed from companions.
+    expect(catManager.getActiveCompanions()).not.toContain(entity);
     expect(gameState.yarn).toBe(yarnBeforeDismiss);
   });
 
@@ -95,7 +96,9 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
     expect(world.isAlive(entity)).toBe(true);
 
     catManager.dismiss(entity);
-    expect(world.isAlive(entity)).toBe(false);
+    // Entity stays alive for 0.2 s scale-down animation; removed from companions.
+    expect(world.isAlive(entity)).toBe(true);
+    expect(catManager.getActiveCompanions()).not.toContain(entity);
   });
 
 });

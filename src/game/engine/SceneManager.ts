@@ -66,6 +66,7 @@ export class SceneManager {
   private readonly resizeObserver: ResizeObserver;
   private postProcessing: PostProcessingManager | null = null;
   private visualConfig: VisualConfig | null = null;
+  private _grid: THREE.GridHelper | null = null;
 
   /** Camera is settable so CameraController can swap it in. */
   camera: THREE.Camera;
@@ -327,6 +328,39 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
   }
 
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Terrain grid
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Add a subtle grid overlay to the scene matching the terrain's cell grid.
+   * Positioned at y=0.01 (just above the terrain surface) so it's visible
+   * without z-fighting. Replaces any existing grid.
+   */
+  setTerrainGrid(totalWidth: number, totalDepth: number, cellSize: number): void {
+    this.removeTerrainGrid();
+    const divisions = Math.max(1, Math.round(totalWidth / cellSize));
+    const size = Math.max(totalWidth, totalDepth);
+    this._grid = new THREE.GridHelper(size, divisions, 0x333344, 0x333344);
+    this._grid.position.y = 0.01;
+    this.scene.add(this._grid);
+  }
+
+  /** Remove the terrain grid from the scene and release GPU resources. */
+  removeTerrainGrid(): void {
+    if (!this._grid) return;
+    this.scene.remove(this._grid);
+    this._grid.geometry.dispose();
+    const mat = this._grid.material;
+    if (Array.isArray(mat)) {
+      mat.forEach((m) => m.dispose());
+    } else {
+      (mat as THREE.Material).dispose();
+    }
+    this._grid = null;
+  }
+
+  // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
@@ -334,6 +368,8 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
     this.resizeObserver.disconnect();
     this.postProcessing?.dispose();
     this.postProcessing = null;
+
+    this.removeTerrainGrid();
 
     for (const handle of [...this.meshes.keys()]) {
       this.removeMesh(handle);

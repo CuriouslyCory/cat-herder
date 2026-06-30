@@ -87,8 +87,67 @@ describe("CatCompanionManager", () => {
 
       manager.summon(CatType.Loaf, { x: 4, y: 0, z: 4 });
 
-      expect(world.isAlive(cat1)).toBe(false);
+      // cat1 is removed from active companions immediately but its entity stays
+      // alive for the 0.2 s scale-down animation (VisualEffectsSystem destroys it).
+      expect(manager.getActiveCompanions()).not.toContain(cat1);
       expect(manager.getActiveCompanions()).toHaveLength(3);
+    });
+
+    it("dismisses oldest BEFORE placement probe so new cat placed on evicted tile is not stacked on it", () => {
+      // Fill roster with Loaf cats that register PhysicsEngine static bodies.
+      // cat1 occupies tile (3, 3).  cat2/cat3 are elsewhere.
+      const cat1 = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
+      manager.summon(CatType.Loaf, { x: 10, y: 0, z: 10 });
+      manager.summon(CatType.Loaf, { x: 20, y: 0, z: 20 });
+
+      expect(manager.getActiveCompanions()).toHaveLength(3);
+
+      // Summon a new Loaf onto exactly cat1's tile.
+      // With the bug: cat1's body is still present during the probe → new cat stacks on top.
+      // With the fix:  cat1's body is removed BEFORE the probe → new cat lands at surface Y.
+      const placedFailHandler = vi.fn();
+      eventBus.on("cat:place:failed", placedFailHandler);
+
+      const newCat = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
+
+      // 1. Summon must succeed (no false failure)
+      expect(newCat).not.toBeNull();
+      // 2. cat:place:failed must NOT fire
+      expect(placedFailHandler).not.toHaveBeenCalled();
+      // 3. Oldest cat (cat1) must be evicted
+      expect(manager.getActiveCompanions()).not.toContain(cat1);
+      // 4. Roster stays at cap
+      expect(manager.getActiveCompanions()).toHaveLength(3);
+      // 5. New cat's centerY should be ground-level (0 + halfHeight = 0.375),
+      //    NOT stacked on top of the evicted cat (which would be ~1.125).
+      const transform = world.getComponent<Transform>(newCat!, "Transform")!;
+      expect(transform.y).toBeCloseTo(0.375, 2);
+    });
+
+    it("does NOT dismiss any cat when yarn affordability check fails", () => {
+      // Fill the roster to cap.
+      const cat1 = manager.summon(CatType.Loaf, { x: 1, y: 0, z: 1 })!;
+      manager.summon(CatType.Loaf, { x: 2, y: 0, z: 2 });
+      manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
+
+      expect(manager.getActiveCompanions()).toHaveLength(3);
+
+      // Drain yarn so the next summon cannot afford a Loaf (cost = 1).
+      gameState.deductYarn(gameState.yarn);
+      expect(gameState.yarn).toBe(0);
+
+      const dismissHandler = vi.fn();
+      eventBus.on("cat:dismissed", dismissHandler);
+
+      const result = manager.summon(CatType.Loaf, { x: 5, y: 0, z: 5 });
+
+      // Summon must fail (no yarn)
+      expect(result).toBeNull();
+      // No wrongful eviction — cat1 must still be present
+      expect(manager.getActiveCompanions()).toContain(cat1);
+      expect(manager.getActiveCompanions()).toHaveLength(3);
+      // No dismiss event should have fired
+      expect(dismissHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -125,10 +184,12 @@ describe("CatCompanionManager", () => {
       );
     });
 
-    it("destroys the entity", () => {
+    it("removes entity from active companions immediately but keeps it alive for scale-down animation", () => {
       const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
       manager.dismiss(entity);
-      expect(world.isAlive(entity)).toBe(false);
+      // Entity stays alive: VisualEffectsSystem destroys it after the 0.2 s pop-out.
+      expect(world.isAlive(entity)).toBe(true);
+      expect(manager.getActiveCompanions()).not.toContain(entity);
     });
   });
 

@@ -1,4 +1,4 @@
-import type { TerrainType } from "../types";
+import type { ResourceType, TerrainType } from "../types";
 
 // ---------------------------------------------------------------------------
 // MapData — terrain cell and map structure types
@@ -20,6 +20,48 @@ export interface SpawnPoint {
   role: "player" | "cat" | "item";
 }
 
+// ---------------------------------------------------------------------------
+// Optional editor-extension fields (serialized from MapEditor live state).
+// These are OPTIONAL so existing maps (TestMap) remain valid without them.
+// MapManager.loadMap() ignores unknown fields, so adding them is safe.
+// ---------------------------------------------------------------------------
+
+export interface MapDataBlock {
+  x: number;
+  z: number;
+  type: TerrainType;
+  height: number;
+}
+
+export interface MapDataWaterZone {
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+  depth: number;
+}
+
+export interface MapDataHiddenTerrainZone {
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+  height: number;
+}
+
+export interface MapDataResourceNode {
+  x: number;
+  z: number;
+  type: ResourceType;
+  respawnTime: number;
+}
+
+export interface MapDataYarnPickup {
+  x: number;
+  z: number;
+  yarnAmount: number;
+}
+
 export interface MapData {
   name: string;
   /** Total map size in world units */
@@ -33,4 +75,11 @@ export interface MapData {
   /** World units per grid cell */
   cellSize: number;
   spawnPoints: SpawnPoint[];
+
+  // Optional editor-serialized collections (absent in hand-authored maps)
+  blocks?: MapDataBlock[];
+  waterZones?: MapDataWaterZone[];
+  hiddenTerrainZones?: MapDataHiddenTerrainZone[];
+  resourceNodes?: MapDataResourceNode[];
+  yarnPickups?: MapDataYarnPickup[];
 }

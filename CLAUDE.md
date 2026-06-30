@@ -24,9 +24,6 @@ Every new module, system, or behavior change MUST have tests. This is not option
 
 **NEVER** use an override or change a rule to get a test to "pass". Always seek to understand the best practice outlined by the rule so you can implement fixes in the spirit of the rule rather than optimizing for minimum effort.
 
-### Codebase navigation
-
-Lean on dedicated tools — Read, Glob, Grep unless the Bash command provides critical benefit.
 
 ### RTFM as a practice
 

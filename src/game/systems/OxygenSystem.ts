@@ -63,6 +63,9 @@ export class OxygenSystem implements System {
         if (hpLoss > 0) {
           oxygen.healthDrainAccum -= hpLoss;
           player.health = Math.max(0, player.health - hpLoss);
+          if (player.health === 0) {
+            this.eventBus.emit({ type: "player:death", entity });
+          }
         }
       } else {
         // Oxygen above 0 — clear accumulated damage and allow re-emitting warning

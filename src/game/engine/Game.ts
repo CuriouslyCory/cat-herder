@@ -24,8 +24,10 @@ import { CatCompanionManager } from "../cats/CatCompanionManager";
 import { CAT_REGISTRY } from "../cats/definitions";
 import { UIManager } from "../ui/UIManager";
 import { DebugMenu } from "../ui/DebugMenu";
+import { NavigationOverlay } from "../ui/NavigationOverlay";
+import { MapEditor } from "../maps/MapEditor";
 import { TestMap } from "../maps/TestMap";
-import { CONFIG, runtimeConfig } from "../config";
+import { CONFIG, runtimeConfig, RESOURCE_CONFIGS } from "../config";
 import { Persistence } from "../state/Persistence";
 import type { SaveData as ExternalSaveData } from "../state/SaveData";
 import { createTransform } from "../ecs/components/Transform";
@@ -36,7 +38,7 @@ import { createCollider } from "../ecs/components/Collider";
 import { createResourceNode } from "../ecs/components/ResourceNode";
 import type { ResourceNode } from "../ecs/components/ResourceNode";
 import { createYarnPickup } from "../ecs/components/YarnPickup";
-import { CatType, ResourceType } from "../types";
+import { CatType, ResourceType, GameAction } from "../types";
 import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { Transform } from "../ecs/components/Transform";
@@ -151,9 +153,15 @@ export class Game {
   /** Current save error message; cleared after HUD displays it for 5 s. */
   private _saveError: string | null = null;
   private _saveErrorTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Unsubscribe functions for EventBus listeners registered in the constructor. */
+  private readonly _eventUnsubs: Array<() => void> = [];
+
+  // ── Navigation overlay ────────────────────────────────────────────────────────
+  private readonly navigationOverlay: NavigationOverlay;
 
   // ── Debug (dev-only, null in production) ─────────────────────────────────────
   private debugMenu: DebugMenu | null = null;
+  private mapEditor: MapEditor | null = null;
 
   // ── Resource node ID lookup (nodeId → entity) for cooldown restoration ───────
   private readonly _nodeIdMap = new Map<string, Entity>();
@@ -266,16 +274,32 @@ export class Game {
     this.uiManager = new UIManager(canvas);
     this.uiManager.setCatCatalog(this.catCompanionManager.getCatalog());
 
+    // 13a. NavigationOverlay — 2D minimap (M key, gameplay mode only)
+    this.navigationOverlay = new NavigationOverlay(
+      canvas,
+      this.world,
+      this.mapManager,
+      () => this.playerEntity,
+    );
+
     // 14. Persistence — save/load/auto-save (depends on gameState, trpc, eventBus)
     this.persistence = new Persistence(this.gameState, opts.trpc, this.eventBus);
-    this.eventBus.on("save:failed", (evt) => {
-      this._saveError = evt.error;
-      if (this._saveErrorTimer) clearTimeout(this._saveErrorTimer);
-      this._saveErrorTimer = setTimeout(() => {
-        this._saveError = null;
-        this._saveErrorTimer = null;
-      }, 5100);
-    });
+    this._eventUnsubs.push(
+      this.eventBus.on("save:failed", (evt) => {
+        this._saveError = evt.error;
+        if (this._saveErrorTimer) clearTimeout(this._saveErrorTimer);
+        this._saveErrorTimer = setTimeout(() => {
+          this._saveError = null;
+          this._saveErrorTimer = null;
+        }, 5100);
+      }),
+    );
+
+    this._eventUnsubs.push(
+      this.eventBus.on("player:death", ({ entity }) => {
+        this._onPlayerDeath(entity);
+      }),
+    );
 
     // 15. DebugMenu — dev-only overlay (null in production)
     if (process.env.NODE_ENV !== "production") {
@@ -310,6 +334,17 @@ export class Game {
         () => {
           if (typeof window !== "undefined") window.location.reload();
         },
+      );
+    }
+
+    // 16. MapEditor — dev-only map editing overlay (null in production)
+    if (process.env.NODE_ENV !== "production") {
+      this.mapEditor = new MapEditor(
+        canvas,
+        this.cameraController,
+        { pause: () => this.pause(), resume: () => this.resume() },
+        this.sceneManager,
+        this.mapManager,
       );
     }
   }
@@ -347,6 +382,13 @@ export class Game {
 
     // Load map (creates terrain entities in the ECS world)
     this.mapManager.loadMap(TestMap);
+
+    // Add terrain grid overlay matching the map's cell grid
+    this.sceneManager.setTerrainGrid(
+      TestMap.size.width,
+      TestMap.size.depth,
+      TestMap.cellSize,
+    );
 
     // Populate resource nodes for the test map
     this.spawnTestMapResourceNodes();
@@ -442,7 +484,9 @@ export class Game {
       clearTimeout(this._saveErrorTimer);
       this._saveErrorTimer = null;
     }
+    this.mapEditor?.dispose();
     this.debugMenu?.dispose();
+    this.navigationOverlay.dispose();
     this.persistence.dispose();
     this.cameraController.dispose();
     this.inputManager.dispose();
@@ -450,6 +494,8 @@ export class Game {
     this.catPlacementSystem.dispose();
     this.uiManager.dispose();
     this.sceneManager.dispose();
+    for (const unsub of this._eventUnsubs) unsub();
+    this._eventUnsubs.length = 0;
     this.eventBus.clear();
     this.mapManager.unloadMap();
     if (typeof window !== "undefined") {
@@ -564,10 +610,6 @@ export class Game {
    *   Water  — 2  nodes, near the SW water zone
    */
   private spawnTestMapResourceNodes(): void {
-    // gatherTime / yieldAmount / respawnTime per resource type
-    const GRASS_CONFIG  = { gatherTime: 1.5, yield: 1, respawn: 30 } as const;
-    const STICKS_CONFIG = { gatherTime: 1.5, yield: 1, respawn: 45 } as const;
-    const WATER_CONFIG  = { gatherTime: 2.0, yield: 1, respawn: 60 } as const;
 
     // Node height: base node center is at y=0.5 (half of 1u sphere diameter)
     const NODE_Y = 0.5;
@@ -630,14 +672,14 @@ export class Game {
 
       const cfg =
         type === ResourceType.Grass
-          ? GRASS_CONFIG
+          ? RESOURCE_CONFIGS.Grass
           : type === ResourceType.Sticks
-          ? STICKS_CONFIG
-          : WATER_CONFIG;
+          ? RESOURCE_CONFIGS.Sticks
+          : RESOURCE_CONFIGS.Water;
 
       this.world.addComponent(
         entity,
-        createResourceNode(type, cfg.gatherTime, cfg.yield, cfg.respawn),
+        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, cfg.respawnTime),
       );
 
       // Track position-based nodeId so cooldowns can be restored on load.
@@ -783,6 +825,14 @@ export class Game {
     this.visualEffectsSystem.update(this.world, realDt);
     this.uiManager.update(realDt, this.buildHUDState());
     this.debugMenu?.update(realDt);
+    // Toggle minimap on M key — only in gameplay mode (editor suppresses M when active)
+    if (
+      this.inputManager.isActionPressed(GameAction.ToggleMap) &&
+      !this.mapEditor?.isActive()
+    ) {
+      this.navigationOverlay.open();
+    }
+    this.navigationOverlay.update(realDt);
     this.sceneManager.render();
 
     // ── Input bookkeeping (end of frame) ───────────────────────────────────────
@@ -810,6 +860,38 @@ export class Game {
         state: behavior?.state ?? "Active",
       };
     });
+  }
+
+  /**
+   * Teleport the player to the map spawn point, reset health and oxygen to
+   * full, and clear swimming components. Fires when player:death is emitted.
+   */
+  private _onPlayerDeath(entity: Entity): void {
+    const player = this.world.getComponent<PlayerControlled>(entity, "PlayerControlled");
+    if (!player) return;
+
+    player.health = player.maxHealth;
+
+    this.world.removeComponent(entity, "SwimmingState");
+    this.world.removeComponent(entity, "OxygenState");
+
+    const handle = this.physics.getHandleByEntity(entity);
+    if (handle) this.physics.setGravityEnabled(handle, true);
+
+    const spawn = this.mapManager.getSpawnPoint("player");
+    const spawnX = spawn?.x ?? 0;
+    const spawnY = 1;
+    const spawnZ = spawn?.z ?? 0;
+
+    if (handle) this.physics.setPosition(handle, { x: spawnX, y: spawnY, z: spawnZ });
+    if (handle) this.physics.setVelocity(handle, { x: 0, y: 0, z: 0 });
+
+    const transform = this.world.getComponent<Transform>(entity, "Transform");
+    if (transform) {
+      transform.x = spawnX;
+      transform.y = spawnY;
+      transform.z = spawnZ;
+    }
   }
 
   /**

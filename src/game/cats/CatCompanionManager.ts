@@ -16,6 +16,8 @@ import { createCatBehavior } from "../ecs/components/CatBehavior";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
 import { createCuriosityReveal } from "../ecs/components/CuriosityReveal";
+import { createCatScaleAnimation } from "../ecs/components/CatScaleAnimation";
+import type { CatScaleAnimation } from "../ecs/components/CatScaleAnimation";
 import { runtimeConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -80,9 +82,12 @@ export class CatCompanionManager {
    *
    * Validation order:
    *   1. Definition must exist in registry.
-   *   2. Sufficient yarn.
+   *   2. Sufficient yarn (non-mutating check).
    *   3. Position on valid (non-void, non-water) terrain.
-   *   4. Cat limit — if at cap, oldest cat is auto-dismissed before creating the new one.
+   *   4. Cat limit — if at cap, oldest cat is auto-dismissed BEFORE the placement probe
+   *      so the probe sees the post-eviction physics world.
+   *   5. Placement probe (surfaceY + occupancy loop).
+   *   6. Yarn deduction + entity creation.
    *
    * Returns the new entity on success, null on validation failure.
    */
@@ -102,32 +107,58 @@ export class CatCompanionManager {
       return null;
     }
 
-    // 3. Auto-dismiss oldest if at the active cap
+    // 3. Auto-dismiss oldest if at the active cap — must happen BEFORE computing
+    // surfaceY and probing occupancy so the oldest cat's PhysicsEngine static body
+    // has already been removed when we query getHighestSurfaceY / isPositionOccupied.
+    // Guard: only evict if the summon is otherwise viable (type ✓, position ✓, yarn ✓).
+    // Yarn is confirmed non-mutating above; actual deduction happens in step 5.
     const active = this.getActiveCompanions();
     if (active.length >= runtimeConfig.maxActiveCats) {
       const oldest = active[0]!;
       this.dismiss(oldest);
     }
 
-    // 4. Deduct yarn and build the entity
-    if (!this.gameState.deductYarn(def.yarnCost)) {
-      console.warn(`[CatCompanionManager] Failed to deduct yarn for ${catType}`);
-      return null;
-    }
-
+    // 4. Auto-raise: find a Y center that doesn't embed the cat inside a static body.
+    // getHighestSurfaceY finds the top of the tallest surface at this XZ position, so
+    // the default placement (surfaceY + halfHeight) is usually correct. The loop adds
+    // robustness for rare cases where the cat's bounding box still clips geometry
+    // (e.g. summoning near a wall edge where the XZ footprint straddles two surfaces).
     const terrainY = this.mapManager.getHeightAt(position.x, position.z);
     const physicsY = this.physics.getHighestSurfaceY(position.x, position.z);
     const surfaceY = Math.max(terrainY, physicsY);
     const halfHeight = getCatHalfHeight(def);
-    const centerY = surfaceY + halfHeight;
+    const halfExtents = getCatHalfExtents(def);
+
+    let centerY: number | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const tryY = surfaceY + halfHeight + attempt * 0.5;
+      if (!this.physics.isPositionOccupied(position.x, tryY, position.z, halfExtents)) {
+        centerY = tryY;
+        break;
+      }
+    }
+    if (centerY === null) {
+      console.warn(
+        `[CatCompanionManager] Cannot place ${catType} — position occupied after 3 raise attempts`,
+      );
+      this.eventBus.emit({ type: "cat:place:failed", catType, position });
+      return null;
+    }
+
+    // 5. Deduct yarn and build the entity (single deduction point)
+    if (!this.gameState.deductYarn(def.yarnCost)) {
+      console.warn(`[CatCompanionManager] Failed to deduct yarn for ${catType}`);
+      return null;
+    }
     const owner = this.getPlayerEntity() ?? 0;
 
     const entity = this.world.createEntity();
 
     // Place entity so its bottom face rests on terrain (center = surfaceY + halfHeight).
+    // Scale starts at 0; VisualEffectsSystem tweens it to 1 over 0.2s (summon pop-in).
     this.world.addComponent(
       entity,
-      createTransform(position.x, centerY, position.z),
+      createTransform(position.x, centerY, position.z, 0, 0, 0, 0),
     );
 
     this.world.addComponent(entity, createRenderable(def.meshConfig));
@@ -198,6 +229,9 @@ export class CatCompanionManager {
       this.world.addComponent(entity, createCuriosityReveal(revealRadius));
     }
 
+    // Scale-up pop-in: 0 → 1 over 0.2 s, no entity destruction on complete.
+    this.world.addComponent(entity, createCatScaleAnimation(0, 1, 0.2, false));
+
     this.companions.set(entity, catType);
 
     this.eventBus.emit({ type: "cat:summoned", entity, catType, position });
@@ -217,6 +251,11 @@ export class CatCompanionManager {
       return;
     }
 
+    // Guard: if a scale-down animation is already running (destroyOnComplete=true),
+    // a second dismiss() call would double-up cleanup. Skip safely.
+    const existingAnim = this.world.getComponent<CatScaleAnimation>(entity, "CatScaleAnimation");
+    if (existingAnim?.destroyOnComplete === true) return;
+
     const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
     const catType = this.companions.get(entity);
 
@@ -226,6 +265,7 @@ export class CatCompanionManager {
     }
 
     // Remove the PhysicsEngine body if this cat had one (terrain / launch cats).
+    // Done immediately so players fall safely before the visual disappears.
     const physHandle = this.physicsHandles.get(entity);
     if (physHandle) {
       this.physics.removeBody(physHandle);
@@ -240,7 +280,18 @@ export class CatCompanionManager {
     this.trailEntities.delete(entity);
 
     this.companions.delete(entity);
-    this.world.destroyEntity(entity);
+
+    // Remove CatBehavior so CatAISystem / ZoomiesSystem / PounceSystem skip this
+    // entity during the 0.2 s dismissal animation (prevents double-dismiss).
+    this.world.removeComponent(entity, "CatBehavior");
+
+    // Remove CuriosityReveal so CuriositySystem.flushDismissals() won't call
+    // dismiss() a second time if the cat was in its pendingDismiss set.
+    this.world.removeComponent(entity, "CuriosityReveal");
+
+    // Scale-down pop-out: 1 → 0 over 0.2 s.
+    // VisualEffectsSystem calls world.destroyEntity() when the tween completes.
+    this.world.addComponent(entity, createCatScaleAnimation(1, 0, 0.2, true));
 
     if (catType !== undefined) {
       this.eventBus.emit({ type: "cat:dismissed", entity, catType });
