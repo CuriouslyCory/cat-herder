@@ -61,3 +61,18 @@ export const debugOverrides = createTable("debug_override", (d) => ({
     .timestamp({ withTimezone: true })
     .$onUpdate(() => new Date()),
 }));
+
+// One row per WorkOS user — stores identity metadata and authorization flags.
+// Schema applied via `db:push` per project convention (no migrations dir).
+export const users = createTable("user", (d) => ({
+  userId: d.varchar({ length: 256 }).primaryKey(), // WorkOS user.id
+  email: d.varchar({ length: 256 }).notNull(),
+  isAdmin: d.boolean().notNull().default(false),
+  createdAt: d
+    .timestamp({ withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  updatedAt: d
+    .timestamp({ withTimezone: true })
+    .$onUpdate(() => new Date()),
+}));

@@ -55,6 +55,7 @@ export interface GameUser {
   id: string;
   firstName?: string | null;
   email?: string | null;
+  isAdmin: boolean;
 }
 
 export interface PlayerCharacterConfig {
