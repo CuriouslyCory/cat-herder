@@ -46,6 +46,12 @@ function makeMockAdapter(overrides: Partial<GameTrpcAdapter> = {}): {
     upsertSave,
     getSave,
     deleteSave,
+    // Map methods are not used by Persistence; stub them for interface compliance.
+    mapList: vi.fn().mockResolvedValue([]),
+    mapGet: vi.fn().mockResolvedValue(null),
+    mapSave: vi.fn().mockResolvedValue({ id: 1, name: "stub" }),
+    mapSetDefault: vi.fn().mockResolvedValue(undefined),
+    mapDelete: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   return { adapter, upsertSave, getSave, deleteSave };

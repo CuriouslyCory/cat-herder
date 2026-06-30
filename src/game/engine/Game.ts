@@ -66,9 +66,9 @@ export interface PlayerCharacterConfig {
 }
 
 /**
- * Minimal interface the engine uses to persist data.
- * GameCanvas constructs the concrete adapter by closing over api.game.* mutations,
- * so the engine never imports from ~/trpc/* directly.
+ * Minimal interface the engine uses to persist data and manage maps.
+ * GameCanvas constructs the concrete adapter by closing over api.game.* and api.map.*
+ * mutations/queries, so the engine never imports from ~/trpc/* directly.
  */
 export interface GameTrpcAdapter {
   upsertSave(input: {
@@ -77,6 +77,14 @@ export interface GameTrpcAdapter {
   }): Promise<void>;
   getSave(): Promise<{ version: string; saveData: Record<string, unknown> } | null>;
   deleteSave(): Promise<void>;
+
+  // Map operations (admin-only server-side; present even for non-admins
+  // so the type is uniform; non-admin calls will receive FORBIDDEN from server)
+  mapList(): Promise<Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>>;
+  mapGet(input: { id: number }): Promise<{ id: number; name: string; mapData: unknown; isDefault: boolean }>;
+  mapSave(input: { id?: number; name: string; mapData: MapData }): Promise<{ id: number; name: string }>;
+  mapSetDefault(input: { id: number }): Promise<void>;
+  mapDelete(input: { id: number }): Promise<void>;
 }
 
 export interface GameOpts {
@@ -348,6 +356,8 @@ export class Game {
         { pause: () => this.pause(), resume: () => this.resume() },
         this.sceneManager,
         this.mapManager,
+        opts.trpc,
+        opts.user,
       );
     }
   }
