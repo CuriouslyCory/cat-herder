@@ -103,7 +103,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Entity placement follows the same grid-snap + click pattern as terrain. Entities are stored separately from terrain in the MapEditor's internal state. SpawnPoint interface already exists in src/game/maps/MapData.ts. Resource node configs should match the values in Game.ts spawnTestMapResourceNodes()."
     },
     {
