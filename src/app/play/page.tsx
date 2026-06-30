@@ -1,5 +1,7 @@
 import { withAuth } from "@workos-inc/authkit-nextjs";
 
+import { db } from "~/server/db";
+import { upsertUser } from "~/server/game/upsertUser";
 import { GameLoader } from "./_components/GameLoader";
 
 /**
@@ -16,11 +18,17 @@ import { GameLoader } from "./_components/GameLoader";
 export default async function PlayPage() {
   const { user } = await withAuth({ ensureSignedIn: true });
 
+  // Upsert the user row (creates on first visit, no-op on conflict).
+  // Bootstrap flag is applied only if this is the first insert.
+  // isAdmin is fetched server-side here — no extra client round-trip.
+  const { isAdmin } = await upsertUser(db, user.id, user.email ?? "");
+
   // Pass only a safe subset — no tokens or sensitive fields to the client
   const safeUser = {
     id: user.id,
     firstName: user.firstName,
     email: user.email,
+    isAdmin,
   };
 
   return (

@@ -7,11 +7,13 @@
  * need to use are documented accordingly near the end.
  */
 import { initTRPC, TRPCError } from "@trpc/server";
+import { eq } from "drizzle-orm";
 import superjson from "superjson";
 import { z, ZodError } from "zod";
 import type { UserInfo } from "@workos-inc/authkit-nextjs";
 
 import { db } from "~/server/db";
+import { users } from "~/server/db/schema";
 
 /**
  * The WorkOS `User` type is not re-exported from `@workos-inc/authkit-nextjs`,
@@ -136,3 +138,22 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+/**
+ * Admin-only procedure.
+ *
+ * Extends protectedProcedure: throws UNAUTHORIZED if unauthenticated (inherited
+ * from protectedProcedure), throws FORBIDDEN if the authenticated user does not
+ * have isAdmin = true in the users table. Never mix these two error codes.
+ */
+export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const row = await ctx.db.query.users.findFirst({
+    where: eq(users.userId, ctx.user.id),
+  });
+
+  if (!row?.isAdmin) {
+    throw new TRPCError({ code: "FORBIDDEN" });
+  }
+
+  return next({ ctx });
+});
