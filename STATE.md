@@ -1,8 +1,8 @@
 # Orchestration State: Map Editor & Library (#12–#17)
 
-**Last updated**: 2026-06-29 (Wave 3 COMPLETE; Wave 4 next)  
-**Current wave**: 4 (Waves 1-3 fully merged)  
-**Merge count**: 5 items merged (#12, #13, #14, #16, #15)
+**Last updated**: 2026-06-30 (ALL WAVES COMPLETE — finalizing PR)  
+**Current wave**: DONE (all 4 waves fully merged)  
+**Merge count**: 6/6 items merged (#12, #13, #14, #16, #15, #17)
 
 ### Integration re-verify log
 | After merge | test | lint | typecheck | build |
@@ -12,6 +12,7 @@
 | #14 | ✅ 782 | ✅ | ✅ | ✅ |
 | #16 | ✅ 800 | ✅ | ✅ | ✅ |
 | #15 | ✅ 811 | ✅ | ✅ | ✅ |
+| #17 | ✅ 816 | ✅ | ✅ | ✅ |
 
 ### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
 - #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
@@ -65,10 +66,10 @@
 ## Wave 4: Sequential
 
 - **#17** `feat/17-editor-persistence` — Editor DB persistence UI
-  - Status: ⏳ Blocked (waiting for Wave 3 merge)
-  - Dependencies: #15, #16
-  - Branch: (pending)
-  - Merged: no
+  - Status: ✅ Merged (commit d2a48f4; adapter + DB panel; JSON path removed; admin-gated; 816 tests; editor absent from prod bundle)
+  - Dependencies: #15 ✅, #16 ✅
+  - Branch: `feat/17-editor-persistence`
+  - Merged: YES → feat/map-library
 
 ## Decisions (ADR tracking)
 
