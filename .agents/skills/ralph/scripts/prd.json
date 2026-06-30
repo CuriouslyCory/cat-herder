@@ -49,7 +49,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the exact same dev-gating pattern as DebugMenu (constructor returns early in production, null element refs). CameraController already has setMode('free') and panBy() for WASD panning in free mode. The MapEditor will need a reference to CameraController, InputManager, MapManager, and World."
     },
     {
@@ -84,7 +84,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Selection requires raycasting from mouse to identify which editor block was clicked. Height adjustment changes the visual box dimensions. Water zones store as rectangular areas in MapData with type=Water."
     },
     {
@@ -120,7 +120,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Move tool needs visual feedback during drag (object follows mouse at grid-snapped position). Keyboard shortcuts should be handled by MapEditor's own keydown listener that only fires when isActive(). InputManager's existing GameAction bindings for M (ToggleMap) must be suppressed while editor is active."
     },
     {
@@ -139,7 +139,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Zod is already a project dependency (used in tRPC layer). The Zod schema should mirror the MapData, TerrainCell, and SpawnPoint interfaces from src/game/maps/MapData.ts exactly. The Play button workflow: getMapData() -> MapManager.loadMap(data) -> disable() -> Game.resume()."
     },
     {
@@ -160,7 +160,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "NavigationOverlay needs read-only access to: MapManager (terrain grid), World (entity positions), and the player entity. It uses Canvas 2D context for all drawing. TerrainType colors match TERRAIN_COLORS in MapManager.ts. The overlay consumes input by stopping event propagation while active."
     },
     {
@@ -181,7 +181,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "The derived jumpImpulse is computed at module load: Math.sqrt(2 * Math.abs(gravity) * jumpApex). Test this derivation. runtimeConfig is a mutable copy for debug — tests should assert against the frozen CONFIG object. Browser verification: use dev-browser to navigate to /play and test movement feel."
     },
     {
@@ -200,7 +200,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Cat definitions are in src/game/cats/definitions/. Each exports a CatDefinition with type, name, yarnCost, duration, and type-specific parameters. CAT_REGISTRY in src/game/cats/definitions/index.ts maps CatType -> CatDefinition. Use entityFactories.ts helpers for spawning test cats."
     },
     {
@@ -219,7 +219,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Resource configs are defined inline in Game.ts spawnTestMapResourceNodes(). Consider extracting to config.ts if values need adjustment — but only if the current structure causes issues. GameState tracks inventory with maxInventoryCapacity."
     },
     {
@@ -235,7 +235,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "CollisionSystem is in src/game/systems/CollisionSystem.ts. PhysicsEngine handles ground detection via raycasting. CatCompanionManager.isValidPosition() checks terrain validity. The Loaf cat is the primary 'stand on' cat — use it for the dismiss-while-standing test. Existing integration test in src/game/__tests__/integration/loaf-platform.test.ts may need extension."
     },
     {
@@ -250,7 +250,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "OxygenSystem (src/game/systems/OxygenSystem.ts) already drains health when oxygen=0. Death respawn needs to hook into the health-reaches-0 condition. Existing swimming-oxygen integration test: src/game/__tests__/integration/swimming-oxygen.test.ts. GatheringSystem is in src/game/systems/GatheringSystem.ts — check isInventoryFull() before starting gather. SpawnPoint with role='player' defined in TestMap."
     },
     {
@@ -265,7 +265,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "InputManager.ts already handles rapid input by using Sets for held/pressed keys (inherently deduplicating). CatPlacementSystem guards against rapid clicks with cooldowns. Game.destroy() calls dispose() on all modules. The beforeunload beacon is set up by Persistence.setupBeforeUnload() — already tested in src/game/__tests__/api/beacon-save.test.ts."
     },
     {
@@ -281,7 +281,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "VisualEffectsSystem (src/game/systems/VisualEffectsSystem.ts) already runs per frame and has access to SceneManager. RenderSystem (src/game/systems/RenderSystem.ts) creates meshes from Renderable components. Shadows can be implemented as additional child meshes. Water animation can modify material opacity via SceneManager API. TestMap cellSize=2, size 30x30 grid."
     },
     {
@@ -297,7 +297,7 @@
         "pnpm test && pnpm typecheck passes."
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "EventBus already emits 'cat:summoned' and 'cat:dismissed' events (see src/game/types.ts GameEvent union). CuriositySystem (src/game/systems/CuriositySystem.ts) currently calls SceneManager.setMeshOpacity() directly — refactor to use a tween tracked by VisualEffectsSystem. GatheringSystem.getGatherState() returns current progress percentage for the HUD."
     },
     {
@@ -321,7 +321,7 @@
         "pnpm test && pnpm lint && pnpm typecheck && pnpm build all pass."
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "This is a verification-only story — no new features, only fixing issues discovered during the quality gate checks. If lint/typecheck/build fail, fix the issues. If production bundle contains debug code, verify the process.env.NODE_ENV gating is correct. Production build output is in .next/ directory (Next.js)."
     }
   ]

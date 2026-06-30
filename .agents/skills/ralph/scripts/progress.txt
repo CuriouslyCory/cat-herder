@@ -98,3 +98,25 @@ Started: 2026-05-08
   - Entity tool selection and terrain tool selection are mutually exclusive: selectEntityTool() clears _selectedTool (and vice versa) plus any editor tool mode, so the click handler routes to exactly one placement path.
   - Two PRD copies exist: .agents/skills/ralph/scripts/prd.json is the active one; the old root .agents/skills/ralph/prd.json (different US-301..US-324 set) is deleted in the working tree.
 ---
+
+## 2026-06-29 - Orchestrator verification sweep (US-302a → US-312)
+- DISCOVERY: All stories US-301 through US-312 were already implemented and committed on
+  feat/map-editor-and-polish-v2 (see git log: feat: US-302a ... feat: US-311b). The
+  scripts/prd.json passes flags had been reset to false during the v2 PRD copy and were
+  out of sync with the actual codebase. No re-implementation was needed — fanning out
+  agents to redo committed work would have risked regressions.
+- The now-deleted .agents/skills/ralph/prd.json (branchName phase4) listed US-313..US-324;
+  those are a renumbered DUPLICATE of the same scope (313=2D overlay=306, 315=movement
+  balance=307, etc.), not additional work.
+- VERIFICATION (full quality gate, the substance of US-312):
+  - pnpm test  -> 33 files, 694 tests passing
+  - pnpm typecheck -> 0 errors
+  - pnpm lint  -> 0 warnings
+  - pnpm build -> optimized production build succeeds (Next.js 16.2.4)
+  - Production tree-shaking confirmed: grep of .next/static for "DebugMenu", "MapEditor",
+    and "EDITOR MODE" all return 0 hits — dev-only code stripped from production bundle.
+- Synced scripts/prd.json: set passes=true for all 16 stories to match reality.
+- Remaining manual-only check (cannot run headless here): in-browser FPS/auth/save-load
+  round trip via dev-browser per US-312 acceptance criteria. Recommend a quick dev-browser
+  pass on /play before tagging the slice shippable.
+---
