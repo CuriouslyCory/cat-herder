@@ -1,14 +1,15 @@
 # Orchestration State: Map Editor & Library (#12–#17)
 
-**Last updated**: 2026-06-29 (Wave 1 COMPLETE; Wave 2 next)  
-**Current wave**: 2 (Wave 1 fully merged)  
-**Merge count**: 2 items merged (#12, #13)
+**Last updated**: 2026-06-29 (Wave 2 COMPLETE; Wave 3 next)  
+**Current wave**: 3 (Waves 1-2 fully merged)  
+**Merge count**: 3 items merged (#12, #13, #14)
 
 ### Integration re-verify log
 | After merge | test | lint | typecheck | build |
 | --- | --- | --- | --- | --- |
 | #12 | ✅ 742 | ✅ | ✅ | ✅ |
 | #13 | ✅ 750 | ✅ | ✅ | ✅ |
+| #14 | ✅ 782 | ✅ | ✅ | ✅ |
 
 ### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
 - #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
@@ -34,10 +35,10 @@
 ## Wave 2: Sequential
 
 - **#14** `feat/14-terrain-format` — Canonical `terrain[][]` format + map-driven spawning
-  - Status: ⏳ Blocked (waiting for Wave 1 merge)
-  - Dependencies: #12
-  - Branch: (pending)
-  - Merged: no
+  - Status: ✅ Merged (commit ecccf2e; +616/-267; 33 new tests; 15 cooldown ids cross-verified byte-identical; ADR 0002)
+  - Dependencies: #12 ✅
+  - Branch: `feat/14-terrain-format`
+  - Merged: YES → feat/map-library
 
 ## Wave 3: Parallel (conditional on shared-surface check)
 
@@ -68,7 +69,7 @@
 | Item | Decision | Status | Reference |
 |------|----------|--------|-----------|
 | #13  | Admin-role model (isAdmin, adminProcedure) | ✅ Recorded | docs/adr/0001-admin-role-model.md |
-| #14  | Canonical `terrain[][]` format spec | ⏳ TBD | plans/14.md |
+| #14  | Canonical `terrain[][]` format spec | ✅ Recorded | docs/adr/0002-canonical-terrain-format.md |
 
 ## Integration branch
 
