@@ -1,13 +1,17 @@
 # Orchestration State: Map Editor & Library (#12–#17)
 
-**Last updated**: 2026-06-29 (Wave 1: #12 merged)  
-**Current wave**: 1  
-**Merge count**: 1 item merged (#12)
+**Last updated**: 2026-06-29 (Wave 1 COMPLETE; Wave 2 next)  
+**Current wave**: 2 (Wave 1 fully merged)  
+**Merge count**: 2 items merged (#12, #13)
 
 ### Integration re-verify log
 | After merge | test | lint | typecheck | build |
 | --- | --- | --- | --- | --- |
 | #12 | ✅ 742 | ✅ | ✅ | ✅ |
+| #13 | ✅ 750 | ✅ | ✅ | ✅ |
+
+### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
+- #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
 
 **Baseline (main @ 5533da0)**: ✅ test 724 pass · lint clean · typecheck clean · build OK. Integration branch `feat/map-library` exists & pushed (tip 473fdff = STATE tracker).
 
@@ -21,9 +25,9 @@
   - Merged: YES → feat/map-library
   
 - **#13** `feat/13-admin-role` — Admin role foundation (`users.isAdmin` + `adminProcedure`)
-  - Status: 🟡 Planning (agent running)
-  - Branch: `feat/13-admin-role` (worktree `../wt-13` ready: real install + env)
-  - Merged: no
+  - Status: ✅ Merged (commit b6417c5; +370; 8 admin tests; gates green; users table pushed to DB)
+  - Branch: `feat/13-admin-role`
+  - Merged: YES → feat/map-library
 
 **Wave 1 shared-surface check**: Clean. Coordinate math (#12) vs auth/tRPC (#13) do not overlap.
 
@@ -63,7 +67,7 @@
 
 | Item | Decision | Status | Reference |
 |------|----------|--------|-----------|
-| #13  | Admin-role model (isAdmin, adminProcedure) | ⏳ TBD | plans/13.md |
+| #13  | Admin-role model (isAdmin, adminProcedure) | ✅ Recorded | docs/adr/0001-admin-role-model.md |
 | #14  | Canonical `terrain[][]` format spec | ⏳ TBD | plans/14.md |
 
 ## Integration branch
