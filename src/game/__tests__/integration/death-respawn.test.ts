@@ -24,6 +24,7 @@ const DT = 1 / 60;
 
 // Replicates the respawn logic from Game._onPlayerDeath — used in tests that
 // need the full death→respawn cycle without instantiating the full Game class.
+// Mirrors the FIXED implementation: velocity is zeroed after teleport.
 function installRespawnHandler(
   eventBus: EventBus,
   world: World,
@@ -39,6 +40,7 @@ function installRespawnHandler(
     const handle = physics.getHandleByEntity(entity);
     if (handle) physics.setGravityEnabled(handle, true);
     if (handle) physics.setPosition(handle, spawnPoint);
+    if (handle) physics.setVelocity(handle, { x: 0, y: 0, z: 0 });
     const transform = world.getComponent<Transform>(entity, "Transform");
     if (transform) {
       transform.x = spawnPoint.x;
@@ -154,6 +156,52 @@ describe("Integration: Death Respawn", () => {
 
     // Handler fires once; respawn removes OxygenState so OxygenSystem stops processing
     expect(deathHandler).toHaveBeenCalledOnce();
+  });
+
+  it("clears physics velocity to zero on respawn (regression: retained velocity caused slide/fall off spawn)", () => {
+    const spawnPoint = { x: 5, y: 1, z: 5 };
+    const playerEntity = spawnSwimmingPlayer(world);
+
+    // Register a physics body for the player so velocity can be tracked.
+    const playerHandle = physics.addBody(playerEntity, {
+      shape: "circle",
+      size: 0.4,
+      isStatic: false,
+      isTrigger: false,
+      collisionLayer: 1,
+      collisionMask: 1,
+    });
+
+    // Give the body a non-zero velocity to simulate dying while moving/falling.
+    physics.setVelocity(playerHandle, { x: 3, y: -8, z: 2 });
+
+    const swimming = world.getComponent<SwimmingState>(playerEntity, "SwimmingState")!;
+    const oxygen = world.getComponent<OxygenState>(playerEntity, "OxygenState")!;
+    const player = world.getComponent<PlayerControlled>(playerEntity, "PlayerControlled")!;
+
+    swimming.isDiving = true;
+    oxygen.oxygenPercent = 0;
+    player.health = 1;
+
+    installRespawnHandler(eventBus, world, physics, spawnPoint);
+
+    for (let i = 0; i < 120; i++) {
+      oxygenSystem.update(world, DT);
+      if (player.health === player.maxHealth) break;
+    }
+
+    // Respawn must have fired (health restored).
+    expect(player.health).toBe(player.maxHealth);
+
+    // The body's velocity must be zeroed after respawn.
+    const velocity = physics.getVelocity(playerHandle);
+    expect(velocity).toEqual({ x: 0, y: 0, z: 0 });
+
+    // Spawn position must also be correct.
+    const transform = world.getComponent<Transform>(playerEntity, "Transform");
+    expect(transform?.x).toBe(spawnPoint.x);
+    expect(transform?.y).toBe(spawnPoint.y);
+    expect(transform?.z).toBe(spawnPoint.z);
   });
 });
 

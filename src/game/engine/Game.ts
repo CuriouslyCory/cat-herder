@@ -884,6 +884,7 @@ export class Game {
     const spawnZ = spawn?.z ?? 0;
 
     if (handle) this.physics.setPosition(handle, { x: spawnX, y: spawnY, z: spawnZ });
+    if (handle) this.physics.setVelocity(handle, { x: 0, y: 0, z: 0 });
 
     const transform = this.world.getComponent<Transform>(entity, "Transform");
     if (transform) {

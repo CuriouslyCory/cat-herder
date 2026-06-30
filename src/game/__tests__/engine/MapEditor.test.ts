@@ -53,6 +53,7 @@ interface MockSceneMgr {
   screenToWorld: ReturnType<typeof vi.fn>;
   setMeshEmissive: ReturnType<typeof vi.fn>;
   setMeshColor: ReturnType<typeof vi.fn>;
+  setTerrainGrid: ReturnType<typeof vi.fn>;
   handles: symbol[];
 }
 
@@ -72,6 +73,7 @@ function makeMockSceneManager(
     screenToWorld: vi.fn(() => worldResult),
     setMeshEmissive: vi.fn(),
     setMeshColor: vi.fn(),
+    setTerrainGrid: vi.fn(),
   };
 }
 
@@ -2149,6 +2151,36 @@ describe("playMap() (US-305)", () => {
   it("is a no-op when mapManager is not provided", () => {
     // The default editor (no mapManager) — playMap should not throw
     expect(() => editor.playMap()).not.toThrow();
+  });
+
+  it("refreshes terrain grid with loaded map dimensions on playMap (regression: grid stayed at boot-time 30×30)", () => {
+    // Map with non-default dimensions to prove the grid isn't using the boot-time TestMap values.
+    const customMap: MapData = {
+      name: "custom-map",
+      size: { width: 50, depth: 40 },
+      terrain: [],
+      cellSize: 3,
+      spawnPoints: [],
+    };
+    const mockMapManager = { loadMap: vi.fn() };
+    const c2 = makeMockEl() as unknown as HTMLElement;
+    const sm = makeMockSceneManager();
+    const ed = new MapEditor(
+      c2,
+      makeMockCamera() as unknown as CameraController,
+      makeGameLifecycle(),
+      // biome-ignore lint/suspicious/noExplicitAny: test mock
+      sm as any,
+      mockMapManager,
+    );
+    ed.enable();
+    ed.loadMapData(customMap);
+    ed.playMap();
+
+    // setTerrainGrid must be called with the custom map's dimensions, not any stale defaults.
+    expect(sm.setTerrainGrid).toHaveBeenCalledOnce();
+    expect(sm.setTerrainGrid).toHaveBeenCalledWith(50, 40, 3);
+    ed.dispose();
   });
 });
 

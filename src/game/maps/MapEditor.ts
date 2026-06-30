@@ -48,6 +48,7 @@ interface SceneManagerLike {
   ): { x: number; y: number; z: number } | null;
   setMeshEmissive(handle: SceneHandle, color: string | number, intensity: number): void;
   setMeshColor(handle: SceneHandle, color: string | number): void;
+  setTerrainGrid(totalWidth: number, totalDepth: number, cellSize: number): void;
 }
 
 // Minimal subset of MapManager needed by the editor — avoids circular import.
@@ -515,7 +516,11 @@ export class MapEditor {
   /** Load the current editor map into the game and exit editor mode. */
   playMap(): void {
     if (!this.mapManager) return;
-    this.mapManager.loadMap(this.getMapData());
+    const data = this.getMapData();
+    this.mapManager.loadMap(data);
+    if (this.sceneManager) {
+      this.sceneManager.setTerrainGrid(data.size.width, data.size.depth, data.cellSize);
+    }
     this.disable();
   }
 
