@@ -98,10 +98,12 @@ export const maps = createTable(
   }),
   (t) => [
     // SINGLE-DEFAULT invariant: at most one row may have isDefault = true.
-    // A partial unique index on a constant expression achieves this:
-    // the index only covers rows WHERE is_default = true.
+    // A partial unique index achieves this: it only covers rows where the
+    // default flag is set. The column is created as quoted camelCase
+    // ("isDefault") per this project's drizzle convention, so the partial
+    // predicate must reference it quoted — not snake_case.
     uniqueIndex("map_single_default_idx")
       .on(t.isDefault)
-      .where(sql`is_default = true`),
+      .where(sql`"isDefault" = true`),
   ],
 );
