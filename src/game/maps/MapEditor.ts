@@ -222,6 +222,23 @@ const HEIGHT_MAX = 5;
 const HEIGHT_STEP = 0.5;
 const SELECTION_EMISSIVE_COLOR = "#ffffff";
 const SELECTION_EMISSIVE_INTENSITY = 0.4;
+
+/**
+ * True when a keyboard event originates from an editable element (text input,
+ * textarea, select, or contenteditable). Editor keyboard shortcuts are suspended
+ * for these so their letters/numbers can be typed into fields (e.g. map name).
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== "string") return false;
+  const tag = el.tagName.toUpperCase();
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    el.isContentEditable === true
+  );
+}
 const DEFAULT_YARN_AMOUNT = 3;
 
 // Default map dimensions (used when no map data is loaded)
@@ -1874,6 +1891,11 @@ export class MapEditor {
     ];
 
     this._keydownHandler = (e: KeyboardEvent) => {
+      // Suspend all editor key capture while an editable element is focused, so
+      // shortcut letters/numbers (M, D, 1-9, Delete, Ctrl+E) can be typed into
+      // fields like the map-name input instead of triggering editor tools.
+      if (isEditableTarget(e.target)) return;
+
       if (e.key.toLowerCase() === "e" && e.ctrlKey) {
         e.preventDefault();
         if (this._active) {

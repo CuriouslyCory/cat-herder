@@ -1247,6 +1247,34 @@ describe("deleteSelectedBlock()", () => {
     expect(editor.getSelectedBlock()).toBeNull();
   });
 
+  it("suspends shortcuts while an editable element (e.g. map-name input) is focused", () => {
+    const docMock = vi.mocked(document);
+    const keydownHandler = (
+      docMock.addEventListener as ReturnType<typeof vi.fn>
+    ).mock.calls.find((c: unknown[]) => c[0] === "keydown")?.[1] as
+      | ((e: KeyboardEvent) => void)
+      | undefined;
+
+    editor.loadMapData(makeMapData(6, 6, 2));
+    editor.enable();
+    editor.selectTool(TerrainType.Stone);
+    editor.placeBlock(0, 0);
+    const block = editor.getEditorBlocks()[0]!;
+    editor.selectBlock(block);
+
+    // Pressing Delete while typing in an <input> must NOT delete the block.
+    const preventDefault = vi.fn();
+    keydownHandler!({
+      key: "Delete",
+      ctrlKey: false,
+      preventDefault,
+      target: { tagName: "INPUT" },
+    } as unknown as KeyboardEvent);
+
+    expect(editor.getEditorBlocks()).toHaveLength(1); // untouched
+    expect(preventDefault).not.toHaveBeenCalled(); // event left for the input
+  });
+
   it("Delete key is no-op when editor is inactive", () => {
     const docMock = vi.mocked(document);
     const keydownHandler = (
