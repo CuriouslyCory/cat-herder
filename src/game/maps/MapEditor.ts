@@ -71,6 +71,7 @@ interface SceneManagerLike {
 interface MapManagerLike {
   loadMap(data: MapData): void;
   getMapData?(): MapData | null;
+  unloadMap?(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +233,11 @@ export class MapEditor {
   private _mapSize: { width: number; depth: number } = { ...DEFAULT_MAP_SIZE };
   private _cellSize: number = DEFAULT_CELL_SIZE;
 
+  // The game's active map, captured on enable() so the game terrain can be
+  // restored on disable(). While the editor is active it OWNS terrain rendering:
+  // the game's terrain meshes are unloaded so editor edits are visible.
+  private _gameMapBackup: MapData | null = null;
+
   // Terrain tool state
   private _selectedTool: TerrainType | null = null;
   // _cellHandles replaces _editorBlocks — keyed "${col},${row}"
@@ -330,15 +336,20 @@ export class MapEditor {
     if (!this._banner) return; // production guard (banner null in prod)
     if (this._active) return;
     this._active = true;
-    // Sync the editor to the running game's active map on first open so that
-    // placement and selection operate on the real grid (size + cellSize) and
-    // existing terrain is visible and selectable. Without this the editor stays
-    // at its default grid, so clicks on the real (larger) map fall outside
-    // terrain[][] bounds and nothing can be placed or selected. Only load when
-    // the editor has no map yet, so re-opening preserves in-session edits.
-    if (!this._mapData && this.mapManager?.getMapData) {
+    // Take over terrain rendering from the running game. Load the game's active
+    // map so placement/selection use the real grid (size + cellSize), render the
+    // FULL editable grid, then unload the game's own terrain meshes so the
+    // editor's cells are what's displayed and every edit (place, retype, raise)
+    // is immediately visible. Without this the editor drew on top of the game's
+    // terrain, so flat/height-0 edits were hidden and nothing appeared to change.
+    if (this.mapManager?.getMapData) {
       const active = this.mapManager.getMapData();
-      if (active) this.loadMapData(active);
+      if (active) {
+        this._gameMapBackup = active;
+        this.loadMapData(active); // deep-copies into _mapData, renders non-default cells
+        this._renderAllCells(); // fill in the remaining (default) cells for a full floor
+        this.mapManager.unloadMap?.(); // editor now owns terrain display
+      }
     }
     this.gameLifecycle.pause();
     this.cameraController.setMode("free");
@@ -362,6 +373,16 @@ export class MapEditor {
     this._removeGhost();
     this._cancelWaterDrag();
     this._cancelHiddenDrag();
+    // Hand terrain rendering back to the game. Restore the game's terrain from
+    // the captured backup (playMap() clears the backup first so an applied map
+    // is not reverted), then clear the editor's own meshes so they don't overlap
+    // the restored game terrain. _clearEditorState() also resets _mapData so the
+    // next enable() reloads a fresh copy of the (possibly updated) game map.
+    if (this._gameMapBackup && this.mapManager) {
+      this.mapManager.loadMap(this._gameMapBackup);
+    }
+    this._gameMapBackup = null;
+    this._clearEditorState();
   }
 
   isActive(): boolean {
@@ -631,7 +652,27 @@ export class MapEditor {
     if (this.sceneManager) {
       this.sceneManager.setTerrainGrid(data.size.width, data.size.depth, data.cellSize);
     }
+    // The edited map is now the game's terrain; clear the backup so disable()
+    // does not revert it back to the pre-edit map.
+    this._gameMapBackup = null;
     this.disable();
+  }
+
+  /**
+   * Ensure every cell in the current terrain grid has a scene mesh. loadMapData()
+   * renders only non-default cells (to keep JSON loads cheap); when the editor
+   * owns terrain display it must also render the default cells so the full floor
+   * is visible and selectable.
+   */
+  private _renderAllCells(): void {
+    const terrain = this._mapData?.terrain;
+    if (!terrain || !this.sceneManager) return;
+    for (let row = 0; row < terrain.length; row++) {
+      const cols = terrain[row]?.length ?? 0;
+      for (let col = 0; col < cols; col++) {
+        if (!this._cellHandles.has(`${col},${row}`)) this._setCellMesh(col, row);
+      }
+    }
   }
 
   // ── Public API — terrain tools ────────────────────────────────────────────

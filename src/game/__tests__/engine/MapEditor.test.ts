@@ -639,7 +639,11 @@ describe("enable() loads the active game map", () => {
   let sceneEditor: MapEditor;
   let sceneContainer: MockEl;
   let activeMap: MapData;
-  let mapManager: { loadMap: ReturnType<typeof vi.fn>; getMapData: () => MapData | null };
+  let mapManager: {
+    loadMap: ReturnType<typeof vi.fn>;
+    getMapData: () => MapData | null;
+    unloadMap: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     // The real game map is 60×60 world / cellSize 2 (a 30×30 cell grid), which
@@ -654,7 +658,7 @@ describe("enable() loads the active game map", () => {
     // = cell (25,25); worldToCell(20,20,2,30,30) = cell (17,17) → outside 15×15.
     sceneMgr = makeMockSceneManager({ x: 20, y: 0, z: 20 });
     sceneContainer = makeMockEl();
-    mapManager = { loadMap: vi.fn(), getMapData: () => activeMap };
+    mapManager = { loadMap: vi.fn(), getMapData: () => activeMap, unloadMap: vi.fn() };
     sceneEditor = new MapEditor(
       sceneContainer as unknown as HTMLElement,
       mockCamera as unknown as CameraController,
@@ -688,15 +692,26 @@ describe("enable() loads the active game map", () => {
     expect(sceneEditor.getMapData().terrain[25]![25]!.type).toBe(TerrainType.Dirt);
   });
 
-  it("does not reload on a second enable() (preserves in-session edits)", () => {
+  it("takes over terrain rendering: unloads game terrain on open, renders the full grid", () => {
     sceneEditor.enable();
-    sceneEditor.selectTool(TerrainType.Stone);
-    sceneEditor.placeBlock(20, 20);
+    // Game terrain is unloaded so the editor's cells are what is displayed.
+    expect(mapManager.unloadMap).toHaveBeenCalled();
+    // Every cell of the 30×30 grid is rendered (full floor), not just non-default.
+    const addMeshCalls = sceneMgr.addMesh.mock.calls.length;
+    expect(addMeshCalls).toBeGreaterThanOrEqual(30 * 30);
+  });
+
+  it("restores the game terrain on disable and reloads on the next open", () => {
+    sceneEditor.enable();
     sceneEditor.disable();
-    // Change what the game would return; re-enable must NOT discard the edit.
-    mapManager.getMapData = () => makeMapData(30, 30, 2);
+    // Game terrain restored from the captured backup.
+    expect(mapManager.loadMap).toHaveBeenCalledWith(activeMap);
+    // Next open reloads a fresh copy from the (possibly updated) game map.
+    const updated = makeMapData(30, 30, 2);
+    updated.terrain[2]![2]! = { type: TerrainType.Stone, height: 3, navigable: true };
+    mapManager.getMapData = () => updated;
     sceneEditor.enable();
-    expect(sceneEditor.getMapData().terrain[25]![25]!.type).toBe(TerrainType.Stone);
+    expect(sceneEditor.getMapData().terrain[2]![2]!.height).toBe(3);
   });
 
   it("enable() is a no-op-safe when no map manager is provided", () => {
