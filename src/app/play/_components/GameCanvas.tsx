@@ -9,11 +9,13 @@ import {
   type PlayerCharacterConfig,
 } from "~/game/engine/Game";
 import { api } from "~/trpc/react";
+import type { MapData } from "~/game/maps/MapData";
 
 import { CharacterCreator } from "./CharacterCreator";
 
 interface GameCanvasProps {
   user: GameUser;
+  initialMap?: MapData;
 }
 
 type StartState =
@@ -34,7 +36,7 @@ type StartState =
  *     - on error → show retry / start-new-game options (user consents to save loss).
  *  4. If the game is already running and a new character is set → call spawnPlayer().
  */
-export function GameCanvas({ user }: GameCanvasProps) {
+export function GameCanvas({ user, initialMap }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
   const [startState, setStartState] = useState<StartState>({ phase: "idle" });
@@ -58,15 +60,37 @@ export function GameCanvas({ user }: GameCanvasProps) {
     staleTime: Infinity,
   });
 
+  // Map operations — queries use refetch() pattern (same as getSave above);
+  // mapGet uses utils.fetch() since the input (id) varies per call.
+  // mutations use mutateAsync.
+  const trpcUtils = api.useUtils();
+  const { refetch: refetchMapList } = api.map.list.useQuery(undefined, {
+    enabled: false,
+    staleTime: Infinity,
+  });
+  const { mutateAsync: mapSaveMutateAsync } = api.map.save.useMutation();
+  const { mutateAsync: mapSetDefaultMutateAsync } = api.map.setDefault.useMutation();
+  const { mutateAsync: mapDeleteMutateAsync } = api.map.delete.useMutation();
+
   // Refs are initialized once; synced after every commit so the game loop always
   // calls the latest function without needing to recreate the stable adapter.
   const upsertSaveRef = useRef(upsertSaveMutateAsync);
   const deleteSaveRef = useRef(deleteSaveMutateAsync);
   const refetchSaveRef = useRef(refetchSave);
+  const refetchMapListRef = useRef(refetchMapList);
+  const trpcUtilsRef = useRef(trpcUtils);
+  const mapSaveRef = useRef(mapSaveMutateAsync);
+  const mapSetDefaultRef = useRef(mapSetDefaultMutateAsync);
+  const mapDeleteRef = useRef(mapDeleteMutateAsync);
   useEffect(() => {
     upsertSaveRef.current = upsertSaveMutateAsync;
     deleteSaveRef.current = deleteSaveMutateAsync;
     refetchSaveRef.current = refetchSave;
+    refetchMapListRef.current = refetchMapList;
+    trpcUtilsRef.current = trpcUtils;
+    mapSaveRef.current = mapSaveMutateAsync;
+    mapSetDefaultRef.current = mapSetDefaultMutateAsync;
+    mapDeleteRef.current = mapDeleteMutateAsync;
   });
 
   // Stable adapter — created once; always delegates to the latest functions
@@ -80,6 +104,22 @@ export function GameCanvas({ user }: GameCanvasProps) {
         return result.data as { version: string; saveData: Record<string, unknown> };
       },
       deleteSave: () => deleteSaveRef.current(),
+      mapList: async () => {
+        const result = await refetchMapListRef.current({ throwOnError: false });
+        if (result.error) throw result.error;
+        return (result.data ?? []) as Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>;
+      },
+      // mapGet varies by id so we use utils.fetch() (imperative tRPC query call)
+      mapGet: (input) =>
+        trpcUtilsRef.current.map.get.fetch(input) as Promise<{
+          id: number;
+          name: string;
+          mapData: unknown;
+          isDefault: boolean;
+        }>,
+      mapSave: (input) => mapSaveRef.current(input) as Promise<{ id: number; name: string }>,
+      mapSetDefault: (input) => mapSetDefaultRef.current(input).then(() => undefined),
+      mapDelete: (input) => mapDeleteRef.current(input).then(() => undefined),
     }),
     [], // stable for the lifetime of this component mount
   );
@@ -159,7 +199,7 @@ export function GameCanvas({ user }: GameCanvasProps) {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
 
-    const game = new Game(canvas, { user, character, trpc: trpcAdapter });
+    const game = new Game(canvas, { user, character, trpc: trpcAdapter, initialMap });
     gameRef.current = game;
 
     let cancelled = false;

@@ -1,89 +1,107 @@
-# Orchestration State: feat/map-library
+# Orchestration State: Map Editor & Library (#12–#17)
 
-Source of truth for this run. Update after every state change (plan saved, agent dispatched, gate passed, branch merged). If the run is interrupted, read this file first to resume.
+**Last updated**: 2026-06-30 (ALL WAVES COMPLETE — finalizing PR)  
+**Current wave**: DONE (all 4 waves fully merged)  
+**Merge count**: 6/6 items merged (#12, #13, #14, #16, #15, #17)
 
-- Integration branch: `feat/map-library`
-- Base branch / final PR target: `main`
-- PR model: `single`
-- Tracking context: GitHub Issues CuriouslyCory/cat-herder #12 to #17
-- Last updated: 2026-06-29 by orchestration builder
+### Integration re-verify log
+| After merge | test | lint | typecheck | build |
+| --- | --- | --- | --- | --- |
+| #12 | ✅ 742 | ✅ | ✅ | ✅ |
+| #13 | ✅ 750 | ✅ | ✅ | ✅ |
+| #14 | ✅ 782 | ✅ | ✅ | ✅ |
+| #16 | ✅ 800 | ✅ | ✅ | ✅ |
+| #15 | ✅ 811 | ✅ | ✅ | ✅ |
+| #17 | ✅ 816 | ✅ | ✅ | ✅ |
 
-## Status legend
+### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
+- #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
 
-- `not-started` no worktree yet
-- `planning` running the per-item planning step
-- `planned` plan file written, ready for agents
-- `in-progress` specialist agents executing
-- `review` review steps running
-- `fixing` applying review fixes
-- `verified` build, lint, tests, and acceptance criteria all green in the worktree
-- `merged` merged into integration and integration re-verified
-- `blocked` waiting on a dependency or a failed gate (see Notes)
+**Baseline (main @ 5533da0)**: ✅ test 724 pass · lint clean · typecheck clean · build OK. Integration branch `feat/map-library` exists & pushed (tip 473fdff = STATE tracker).
 
-## Wave 1 (parallel): branch from the integration tip (fresh from main)
+**Planning method note**: `/bulletproof-plan` is interactive (plan-mode approval) and unsuitable for this autonomous run; per-item planning is delegated to a dedicated planning agent that applies the same rigor (validate vs CLAUDE.md / docs / ADRs, explicit review + verification steps) and writes `plans/<item>.md`.
 
-| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| #12 | `feat/12-coord-helpers` | `../wt-12` | #12 | none | `plans/12.md` | not-started | no |
-| #13 | `feat/13-admin-role` | `../wt-13` | #13 | none | `plans/13.md` | not-started | no |
+## Wave 1: Parallel setup
 
-## Wave 2 (sequential): branch from the post-Wave-1 integration tip
+- **#12** `feat/12-coord-helpers` — Prefactor: shared cell↔world coordinate helpers
+  - Status: ✅ Merged (commit 4ba636f; +198/-13; 18 new coords tests; gates green)
+  - Branch: `feat/12-coord-helpers`
+  - Merged: YES → feat/map-library
+  
+- **#13** `feat/13-admin-role` — Admin role foundation (`users.isAdmin` + `adminProcedure`)
+  - Status: ✅ Merged (commit b6417c5; +370; 8 admin tests; gates green; users table pushed to DB)
+  - Branch: `feat/13-admin-role`
+  - Merged: YES → feat/map-library
 
-| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| #14 | `feat/14-terrain-format` | `../wt-14` | #14 | #12 | `plans/14.md` | not-started | no |
+**Wave 1 shared-surface check**: Clean. Coordinate math (#12) vs auth/tRPC (#13) do not overlap.
 
-## Wave 3 (parallel): branch from the post-Wave-2 integration tip
+## Wave 2: Sequential
 
-| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| #15 | `feat/15-map-editor` | `../wt-15` | #15 | #12, #14 | `plans/15.md` | not-started | no |
-| #16 | `feat/16-db-map-library` | `../wt-16` | #16 | #14, #13 | `plans/16.md` | not-started | no |
+- **#14** `feat/14-terrain-format` — Canonical `terrain[][]` format + map-driven spawning
+  - Status: ✅ Merged (commit ecccf2e; +616/-267; 33 new tests; 15 cooldown ids cross-verified byte-identical; ADR 0002)
+  - Dependencies: #12 ✅
+  - Branch: `feat/14-terrain-format`
+  - Merged: YES → feat/map-library
 
-## Wave 4 (sequential): branch from the post-Wave-3 integration tip
+## Wave 3: Parallel (conditional on shared-surface check)
 
-| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| #17 | `feat/17-editor-persistence` | `../wt-17` | #17 | #15, #16 | `plans/17.md` | not-started | no |
+- **#15** `feat/15-map-editor` — Cell-aware map editor (fixes alignment)
+  - Status: ✅ Merged (commit f6d0855; MapEditor.ts + tests only; 793→811 integration; editor absent from prod bundle)
+  - Dependencies: #12 ✅, #14 ✅
+  - Branch: `feat/15-map-editor`
+  - Merged: YES → feat/map-library
+  
+- **#16** `feat/16-db-map-library` — DB map library + default-map-at-boot
+  - Status: ✅ Merged (commit 4637049 + index fix; +790; 18 router tests; gates green)
+  - Dependencies: #14 ✅, #13 ✅
+  - Branch: `feat/16-db-map-library`
+  - Merged: YES → feat/map-library
+  - DB: `cat-herder_map` table pushed; partial unique index `map_single_default_idx` applied AFTER fixing predicate `is_default`→`"isDefault"` (orchestrator fix commit). Invariant verified live (2nd default → 23505). Table empty → getDefaultMap seeds TestMap on first boot.
 
-## Verification gates
+**Wave 3 shared-surface check**: ✅ RESOLVED → PARALLEL. File sets are disjoint:
+- #15: `src/game/maps/MapEditor.ts` + `src/game/__tests__/engine/MapEditor.test.ts` (and possibly other existing editor tests using getEditorBlocks). Does NOT touch Game.ts/MapManager/play/loaders/server.
+- #16: `schema.ts`, `root.ts`, `play/page.tsx`, `GameLoader.tsx`, `GameCanvas.tsx`, `Game.ts` (`_boot`+`GameOpts`), new `routers/map.ts` + `__tests__/api/map-router.test.ts`. Does NOT touch MapEditor.ts.
+- MapManager.ts untouched by both. New tests in different dirs (engine/ vs api/). No conflict expected at merge.
 
-Record pass/fail and date when each item clears its gate in-worktree, before merge. Gate = `pnpm test` + `pnpm lint` + `pnpm typecheck` + `pnpm build` all green, plus acceptance criteria.
+## Wave 4: Sequential
 
-| Item | Test | Lint | Typecheck | Build | Acceptance criteria |
-| --- | --- | --- | --- | --- | --- |
-| #12 | — | — | — | — | — |
-| #13 | — | — | — | — | — |
-| #14 | — | — | — | — | — |
-| #15 | — | — | — | — | — |
-| #16 | — | — | — | — | — |
-| #17 | — | — | — | — | — |
+- **#17** `feat/17-editor-persistence` — Editor DB persistence UI
+  - Status: ✅ Merged (commit d2a48f4; adapter + DB panel; JSON path removed; admin-gated; 816 tests; editor absent from prod bundle)
+  - Dependencies: #15 ✅, #16 ✅
+  - Branch: `feat/17-editor-persistence`
+  - Merged: YES → feat/map-library
 
-## Integration re-verification log
+## Decisions (ADR tracking)
 
-After each merge, re-run test, lint, typecheck, and build on the integration branch and log the result.
+| Item | Decision | Status | Reference |
+|------|----------|--------|-----------|
+| #13  | Admin-role model (isAdmin, adminProcedure) | ✅ Recorded | docs/adr/0001-admin-role-model.md |
+| #14  | Canonical `terrain[][]` format spec | ✅ Recorded | docs/adr/0002-canonical-terrain-format.md |
 
-| Date | After merging | Test | Lint | Typecheck | Build | Conflicts resolved | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+## Integration branch
 
-## Decisions / ADRs to confirm
+- Base: `main`
+- Integration: `feat/map-library`
+- Status: 🟡 Setting up
 
-| Decision | Item | Recorded | Confirmed at PR review |
-| --- | --- | --- | --- |
-| Admin-role model (`users.isAdmin` flag + `adminProcedure` guard) | #13 | no | no |
-| Canonical `terrain[][]` map format + map-driven spawning | #14 | no | no |
+## Notes
 
-## Finalization checklist
+- Worktrees created on-demand per item, branched from integration tip
+- Plans stored in `plans/<item>.md`
+- Merge model: local merge to integration, no PR until all items merged
+- Verification gates: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build` + acceptance criteria per item
 
-- [ ] All items show `merged`
-- [ ] Final full test, lint, typecheck, and build suite green on `feat/map-library`
-- [ ] PR opened into `main` (single-PR model)
-- [ ] PR body includes `Closes #12` through `Closes #17`
-- [ ] PR body summarizes every decision/ADR for sign-off
-- [ ] All worktrees removed; merged item branches deleted
-- [ ] Final PR left for human review (orchestrator does not self-merge)
+## Finalization (DONE)
 
-## Notes and blockers
+- [x] All 6 items show merged (#12, #13, #14, #16, #15, #17)
+- [x] Final full suite green on `feat/map-library` @ 141c3e7 — **816 tests**, lint, typecheck, build
+- [x] Single PR opened into `main`: **#19** (https://github.com/CuriouslyCory/cat-herder/pull/19), mergeable
+- [x] PR body includes `Closes #12`–`Closes #17`
+- [x] PR body summarizes ADR 0001 (admin role) + ADR 0002 (terrain format) for sign-off, and the db:push schema changes
+- [x] All worktrees removed; all 6 merged item branches deleted
+- [x] PR left for human review (orchestrator did NOT self-merge)
 
-- **Wave 3 shared surface (#15 + #16):** both consume #14's `terrain[][]` format and may touch shared map state / terrain initialization. Parallel execution is safe across separate worktrees, but if they edit the same map-loading / serialization module (e.g. a common `MapManager` or spawn logic), the conflict surfaces at merge. Mitigation: merge #16 first, re-verify integration, then either branch #15 from the new tip (if not yet started) or rebase the #15 worktree before its merge. Confirm shared-file overlap with the user before launching both in parallel.
-- **Branch naming:** integration branch `feat/map-library` is intentionally distinct from item #16's branch `feat/16-db-map-library` (renamed from `map-library` to avoid confusion).
+### Items needing reviewer sign-off
+- ADR 0001 admin-role model (boolean `users.isAdmin` + `adminProcedure`)
+- ADR 0002 canonical `terrain[][]` format (`[row][col]`; required resourceNodes/yarnPickups)
+- DB applied via `db:push` to dev Neon (`cat-herder_user`, `cat-herder_map` + partial unique index). Other envs must `db:push`.

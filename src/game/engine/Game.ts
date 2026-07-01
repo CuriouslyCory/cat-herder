@@ -41,6 +41,7 @@ import { createYarnPickup } from "../ecs/components/YarnPickup";
 import { CatType, ResourceType, GameAction } from "../types";
 import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
+import type { MapData } from "../maps/MapData";
 import type { Transform } from "../ecs/components/Transform";
 import type { OxygenState } from "../ecs/components/OxygenState";
 import type { PlayerControlled } from "../ecs/components/PlayerControlled";
@@ -55,6 +56,7 @@ export interface GameUser {
   id: string;
   firstName?: string | null;
   email?: string | null;
+  isAdmin: boolean;
 }
 
 export interface PlayerCharacterConfig {
@@ -64,9 +66,9 @@ export interface PlayerCharacterConfig {
 }
 
 /**
- * Minimal interface the engine uses to persist data.
- * GameCanvas constructs the concrete adapter by closing over api.game.* mutations,
- * so the engine never imports from ~/trpc/* directly.
+ * Minimal interface the engine uses to persist data and manage maps.
+ * GameCanvas constructs the concrete adapter by closing over api.game.* and api.map.*
+ * mutations/queries, so the engine never imports from ~/trpc/* directly.
  */
 export interface GameTrpcAdapter {
   upsertSave(input: {
@@ -75,12 +77,21 @@ export interface GameTrpcAdapter {
   }): Promise<void>;
   getSave(): Promise<{ version: string; saveData: Record<string, unknown> } | null>;
   deleteSave(): Promise<void>;
+
+  // Map operations (admin-only server-side; present even for non-admins
+  // so the type is uniform; non-admin calls will receive FORBIDDEN from server)
+  mapList(): Promise<Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>>;
+  mapGet(input: { id: number }): Promise<{ id: number; name: string; mapData: unknown; isDefault: boolean }>;
+  mapSave(input: { id?: number; name: string; mapData: MapData }): Promise<{ id: number; name: string }>;
+  mapSetDefault(input: { id: number }): Promise<void>;
+  mapDelete(input: { id: number }): Promise<void>;
 }
 
 export interface GameOpts {
   user: GameUser;
   trpc: GameTrpcAdapter;
   character?: PlayerCharacterConfig;
+  initialMap?: MapData;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +180,11 @@ export class Game {
   // ── Loop state ───────────────────────────────────────────────────────────────
   private rafId: number | null = null;
   private lastTime: number | null = null;
+  // Set by destroy(). start() is async (awaits the save load), so under React
+  // StrictMode's mount→destroy→mount cycle a torn-down instance could otherwise
+  // still finish booting — starting a dead render loop on a disposed renderer and
+  // clobbering the debug bridge / global listeners. Every boot/loop path checks this.
+  private _destroyed = false;
   private accumulator = 0;
 
   // ── Player entity ────────────────────────────────────────────────────────────
@@ -324,7 +340,7 @@ export class Game {
         // US-208: map reload callback (unload + reload without respawning nodes/player)
         () => {
           this.mapManager.unloadMap();
-          this.mapManager.loadMap(TestMap);
+          this.mapManager.loadMap(this.opts.initialMap ?? TestMap);
         },
         // US-208: sceneManager for wireframe toggle
         this.sceneManager,
@@ -342,9 +358,17 @@ export class Game {
       this.mapEditor = new MapEditor(
         canvas,
         this.cameraController,
-        { pause: () => this.pause(), resume: () => this.resume() },
+        {
+          pause: () => this.pause(),
+          resume: () => this.resume(),
+          // Flush ECS→scene sync once while paused so terrain entities the editor
+          // unloads/loads actually have their meshes removed/added immediately.
+          syncRender: () => this.renderSystem.update(this.world, 0),
+        },
         this.sceneManager,
         this.mapManager,
+        opts.trpc,
+        opts.user,
       );
     }
   }
@@ -359,6 +383,7 @@ export class Game {
    */
   async start(): Promise<void> {
     const saveData = await this.persistence.load();
+    if (this._destroyed) return; // destroyed mid-load (StrictMode) — do not boot
     this._boot(saveData);
   }
 
@@ -367,6 +392,7 @@ export class Game {
    * Use this when the player explicitly consents to discarding a failed save load.
    */
   startFresh(): void {
+    if (this._destroyed) return;
     this._boot(null);
   }
 
@@ -375,39 +401,44 @@ export class Game {
    * wire persistence, and begin the render loop.
    */
   private _boot(saveData: ExternalSaveData | null): void {
+    if (this._destroyed) return; // guard: never boot a torn-down instance
+    // Use the DB-supplied map if available; fall back to built-in TestMap so
+    // boot stays synchronous and works even when the DB is unreachable.
+    const activeMap: MapData = this.opts.initialMap ?? TestMap;
+
     // Restore game state BEFORE spawning entities so stat/position values are correct.
     if (saveData) {
       this.persistence.restoreFromSave(saveData);
     }
 
     // Load map (creates terrain entities in the ECS world)
-    this.mapManager.loadMap(TestMap);
+    this.mapManager.loadMap(activeMap);
 
     // Add terrain grid overlay matching the map's cell grid
     this.sceneManager.setTerrainGrid(
-      TestMap.size.width,
-      TestMap.size.depth,
-      TestMap.cellSize,
+      activeMap.size.width,
+      activeMap.size.depth,
+      activeMap.cellSize,
     );
 
-    // Populate resource nodes for the test map
-    this.spawnTestMapResourceNodes();
+    // Populate resource nodes from map data
+    this.spawnMapResourceNodes(activeMap);
 
-    // Apply saved cooldowns to resource nodes (must run after spawnTestMapResourceNodes
+    // Apply saved cooldowns to resource nodes (must run after spawnMapResourceNodes
     // so _nodeIdMap is populated).
     if (saveData?.world.resourceNodeCooldowns.length) {
       this._applyResourceNodeCooldowns(saveData.world.resourceNodeCooldowns);
     }
 
-    // Spawn yarn pickups (+3 each) scattered around the test map
-    this.spawnTestMapYarnPickups();
+    // Spawn yarn pickups from map data
+    this.spawnMapYarnPickups(activeMap);
 
     // Set camera map bounds for focus clamping
     this.cameraController.setMapBounds({
-      minX: -TestMap.size.width / 2,
-      maxX: TestMap.size.width / 2,
-      minZ: -TestMap.size.depth / 2,
-      maxZ: TestMap.size.depth / 2,
+      minX: -activeMap.size.width / 2,
+      maxX: activeMap.size.width / 2,
+      minZ: -activeMap.size.depth / 2,
+      maxZ: activeMap.size.depth / 2,
     });
 
     // Determine player spawn position: saved position (from restore) or map spawn.
@@ -432,6 +463,9 @@ export class Game {
         gameState: this.gameState,
         eventBus: this.eventBus,
         physicsEngine: this.physics,
+        mapEditor: this.mapEditor,
+        sceneManager: this.sceneManager,
+        mapManager: this.mapManager,
         getPlayerEntity: () => this.playerEntity,
         getActiveCats: () =>
           this.catCompanionManager.getActiveCompanions().map((e) => ({
@@ -470,6 +504,7 @@ export class Game {
   }
 
   resume(): void {
+    if (this._destroyed) return;
     if (this.rafId !== null) return; // already running
     this.rafId = requestAnimationFrame((t) => this.loop(t));
   }
@@ -479,6 +514,7 @@ export class Game {
    * Safe to call during React StrictMode double-mounts and HMR cycles.
    */
   destroy(): void {
+    this._destroyed = true;
     this.pause();
     if (this._saveErrorTimer) {
       clearTimeout(this._saveErrorTimer);
@@ -598,51 +634,26 @@ export class Game {
   // Private — map population
   // ---------------------------------------------------------------------------
 
-  /**
-   * Creates resource node entities for the TestMap.
-   *
-   * Cell-center formula:  x = -29 + col*2,  z = -29 + row*2
-   * (TestMap: 30×30 grid, cellSize=2, half-offset of map 30u)
-   *
-   * Node counts:
-   *   Grass  — 9  nodes, scattered on flat ground
-   *   Sticks — 4  nodes, NE "forest" area
-   *   Water  — 2  nodes, near the SW water zone
-   */
-  private spawnTestMapResourceNodes(): void {
+  // Per-type render colors for resource nodes (stable lookup, avoids inline literals)
+  private static readonly _RESOURCE_NODE_COLORS: Record<ResourceType, string> = {
+    [ResourceType.Grass]:  "#7bc67e",
+    [ResourceType.Sticks]: "#8b6355",
+    [ResourceType.Water]:  "#4fc3f7",
+  };
 
-    // Node height: base node center is at y=0.5 (half of 1u sphere diameter)
+  /**
+   * Spawns resource node entities from map data.
+   * gatherTime and yieldAmount come from RESOURCE_CONFIGS; respawnTime from the
+   * node itself (allows per-node tuning, currently matches RESOURCE_CONFIGS defaults).
+   * Cooldown id: node_${x}_${z} — byte-identical to the old hardcoded spawner.
+   */
+  private spawnMapResourceNodes(data: MapData): void {
     const NODE_Y = 0.5;
 
-    const nodes: Array<{
-      x: number;
-      z: number;
-      type: ResourceType;
-      color: string;
-    }> = [
-      // ── Grass nodes (9) — scattered across flat ground ────────────────────
-      { x: -29 + 15 * 2, z: -29 + 5 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (1, -19)
-      { x: -29 + 18 * 2, z: -29 + 8 * 2, type: ResourceType.Grass, color: "#7bc67e" },  // (7, -13)
-      { x: -29 + 5  * 2, z: -29 + 12 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-19, -5)
-      { x: -29 + 12 * 2, z: -29 + 15 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-5, 1)
-      { x: -29 + 15 * 2, z: -29 + 18 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 7)
-      { x: -29 + 20 * 2, z: -29 + 20 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (11, 11)
-      { x: -29 + 15 * 2, z: -29 + 22 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (1, 15)
-      { x: -29 + 10 * 2, z: -29 + 25 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (-9, 21)
-      { x: -29 + 24 * 2, z: -29 + 10 * 2, type: ResourceType.Grass, color: "#7bc67e" }, // (19, -9)
-
-      // ── Sticks nodes (4) — NE grass area before stone platform ───────────
-      { x: -29 + 21 * 2, z: -29 + 8 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (13, -13)
-      { x: -29 + 23 * 2, z: -29 + 10 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (17, -9)
-      { x: -29 + 20 * 2, z: -29 + 12 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (11, -5)
-      { x: -29 + 18 * 2, z: -29 + 9 * 2, type: ResourceType.Sticks, color: "#8b6355" }, // (7, -11)
-
-      // ── Water-source nodes (2) — near the SW water zone ──────────────────
-      { x: -29 + 5 * 2, z: -29 + 11 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-19, -7)
-      { x: -29 + 9 * 2, z: -29 + 10 * 2, type: ResourceType.Water, color: "#4fc3f7" }, // (-11, -9)
-    ];
-
-    for (const { x, z, type, color } of nodes) {
+    for (const node of data.resourceNodes) {
+      const { x, z, type, respawnTime } = node;
+      const color = Game._RESOURCE_NODE_COLORS[type as ResourceType] ?? "#888888";
+      const cfg = RESOURCE_CONFIGS[type as keyof typeof RESOURCE_CONFIGS];
       const entity = this.world.createEntity();
 
       this.world.addComponent(entity, createTransform(x, NODE_Y, z));
@@ -670,16 +681,9 @@ export class Game {
         }),
       );
 
-      const cfg =
-        type === ResourceType.Grass
-          ? RESOURCE_CONFIGS.Grass
-          : type === ResourceType.Sticks
-          ? RESOURCE_CONFIGS.Sticks
-          : RESOURCE_CONFIGS.Water;
-
       this.world.addComponent(
         entity,
-        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, cfg.respawnTime),
+        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, respawnTime),
       );
 
       // Track position-based nodeId so cooldowns can be restored on load.
@@ -688,25 +692,14 @@ export class Game {
   }
 
   /**
-   * Spawns 3 yarn pickup entities on the test map.
-   * Each pickup grants +3 yarn on player contact and is auto-destroyed.
-   *
-   * Positions chosen on flat, accessible ground away from resource nodes.
+   * Spawns yarn pickup entities from map data.
+   * Each pickup grants yarnAmount yarn on player contact and is auto-destroyed.
    */
-  private spawnTestMapYarnPickups(): void {
+  private spawnMapYarnPickups(data: MapData): void {
     const YARN_Y = 0.5; // center above floor (half of ~0.4u sphere)
-    const YARN_AMOUNT = 3;
 
-    const pickups: Array<{ x: number; z: number }> = [
-      // Near the map center, easy to find
-      { x: -29 + 14 * 2, z: -29 + 14 * 2 }, // (-1, -1) near spawn
-      // NE area near Sticks nodes
-      { x: -29 + 22 * 2, z: -29 + 14 * 2 }, // (15, -1)
-      // SW area near water zone
-      { x: -29 + 7 * 2, z: -29 + 18 * 2 }, // (-15, 7)
-    ];
-
-    for (const { x, z } of pickups) {
+    for (const pickup of data.yarnPickups) {
+      const { x, z, yarnAmount } = pickup;
       const entity = this.world.createEntity();
 
       this.world.addComponent(entity, createTransform(x, YARN_Y, z));
@@ -722,7 +715,7 @@ export class Game {
           outlineCategory: "pickup",
         }),
       );
-      this.world.addComponent(entity, createYarnPickup(YARN_AMOUNT));
+      this.world.addComponent(entity, createYarnPickup(yarnAmount));
     }
   }
 
@@ -775,6 +768,7 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   private loop(time: number): void {
+    if (this._destroyed) return; // stop any stray frame after teardown
     // Queue the next frame immediately so cancellation is always possible
     this.rafId = requestAnimationFrame((t) => this.loop(t));
 

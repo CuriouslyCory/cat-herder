@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, pgTableCreator } from "drizzle-orm/pg-core";
+import { index, pgTableCreator, uniqueIndex } from "drizzle-orm/pg-core";
 
 /**
  * This is an example of how to use the multi-project schema feature of Drizzle ORM. Use the same
@@ -61,3 +61,49 @@ export const debugOverrides = createTable("debug_override", (d) => ({
     .timestamp({ withTimezone: true })
     .$onUpdate(() => new Date()),
 }));
+
+// One row per WorkOS user — stores identity metadata and authorization flags.
+// Schema applied via `db:push` per project convention (no migrations dir).
+export const users = createTable("user", (d) => ({
+  userId: d.varchar({ length: 256 }).primaryKey(), // WorkOS user.id
+  email: d.varchar({ length: 256 }).notNull(),
+  isAdmin: d.boolean().notNull().default(false),
+  createdAt: d
+    .timestamp({ withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  updatedAt: d
+    .timestamp({ withTimezone: true })
+    .$onUpdate(() => new Date()),
+}));
+
+// Map library — stores named MapData blobs with a single-default invariant.
+// mapData is validated on write via mapDataSchema (Zod); stored as jsonb.
+// Schema applied via `db:push` per project convention (no migrations dir).
+export const maps = createTable(
+  "map",
+  (d) => ({
+    id: d.serial().primaryKey(),
+    name: d.varchar({ length: 256 }).notNull(),
+    mapData: d.jsonb().notNull(), // stores MapData; validated on write via mapDataSchema
+    isDefault: d.boolean().notNull().default(false),
+    ownerUserId: d.varchar({ length: 256 }), // nullable — null = system/seeded map
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: d
+      .timestamp({ withTimezone: true })
+      .$onUpdate(() => new Date()),
+  }),
+  (t) => [
+    // SINGLE-DEFAULT invariant: at most one row may have isDefault = true.
+    // A partial unique index achieves this: it only covers rows where the
+    // default flag is set. The column is created as quoted camelCase
+    // ("isDefault") per this project's drizzle convention, so the partial
+    // predicate must reference it quoted — not snake_case.
+    uniqueIndex("map_single_default_idx")
+      .on(t.isDefault)
+      .where(sql`"isDefault" = true`),
+  ],
+);

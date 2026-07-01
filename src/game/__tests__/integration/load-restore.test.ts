@@ -243,6 +243,17 @@ import { CURRENT_VERSION } from "~/game/state/SaveData";
 import type { SaveData as ExternalSaveData } from "~/game/state/SaveData";
 import type { GameTrpcAdapter } from "~/game/engine/Game";
 
+/** Minimal stub for the new map methods on GameTrpcAdapter — not exercised by these tests. */
+function makeMapMethodStubs(): Pick<GameTrpcAdapter, "mapList" | "mapGet" | "mapSave" | "mapSetDefault" | "mapDelete"> {
+  return {
+    mapList: vi.fn().mockResolvedValue([]),
+    mapGet: vi.fn().mockResolvedValue(null),
+    mapSave: vi.fn().mockResolvedValue({ id: 1, name: "stub" }),
+    mapSetDefault: vi.fn().mockResolvedValue(undefined),
+    mapDelete: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("Persistence.load() → restoreFromSave() pipeline", () => {
   function validSaveData(overrides?: Partial<ExternalSaveData["character"]>): ExternalSaveData {
     return {
@@ -274,6 +285,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
         saveData: validSaveData({ yarn: 42 }),
       }),
       deleteSave: vi.fn().mockResolvedValue(undefined),
+      ...makeMapMethodStubs(),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -295,6 +307,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
         saveData: validSaveData(),
       }),
       deleteSave: vi.fn().mockResolvedValue(undefined),
+      ...makeMapMethodStubs(),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -313,6 +326,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
       upsertSave: vi.fn().mockResolvedValue(undefined),
       getSave: vi.fn().mockResolvedValue(null),
       deleteSave: vi.fn().mockResolvedValue(undefined),
+      ...makeMapMethodStubs(),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
@@ -328,6 +342,7 @@ describe("Persistence.load() → restoreFromSave() pipeline", () => {
       upsertSave: vi.fn().mockResolvedValue(undefined),
       getSave: vi.fn().mockRejectedValue(new Error("Network error")),
       deleteSave: vi.fn().mockResolvedValue(undefined),
+      ...makeMapMethodStubs(),
     };
     const gs = new GameState(10);
     const eb = new EventBus();
