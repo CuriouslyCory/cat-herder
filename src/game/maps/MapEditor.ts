@@ -70,6 +70,7 @@ interface SceneManagerLike {
 // Minimal subset of MapManager needed by the editor — avoids circular import.
 interface MapManagerLike {
   loadMap(data: MapData): void;
+  getMapData?(): MapData | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +330,16 @@ export class MapEditor {
     if (!this._banner) return; // production guard (banner null in prod)
     if (this._active) return;
     this._active = true;
+    // Sync the editor to the running game's active map on first open so that
+    // placement and selection operate on the real grid (size + cellSize) and
+    // existing terrain is visible and selectable. Without this the editor stays
+    // at its default grid, so clicks on the real (larger) map fall outside
+    // terrain[][] bounds and nothing can be placed or selected. Only load when
+    // the editor has no map yet, so re-opening preserves in-session edits.
+    if (!this._mapData && this.mapManager?.getMapData) {
+      const active = this.mapManager.getMapData();
+      if (active) this.loadMapData(active);
+    }
     this.gameLifecycle.pause();
     this.cameraController.setMode("free");
     this._banner.style.display = "block";

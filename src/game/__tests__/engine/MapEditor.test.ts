@@ -631,6 +631,89 @@ describe("placeBlock() with SceneManager", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Regression: editor syncs to the active game map on enable() (#15 wiring gap)
+// ---------------------------------------------------------------------------
+
+describe("enable() loads the active game map", () => {
+  let sceneMgr: MockSceneMgr;
+  let sceneEditor: MapEditor;
+  let sceneContainer: MockEl;
+  let activeMap: MapData;
+  let mapManager: { loadMap: ReturnType<typeof vi.fn>; getMapData: () => MapData | null };
+
+  beforeEach(() => {
+    // The real game map is 60×60 world / cellSize 2 (a 30×30 cell grid), which
+    // is larger than the editor's default 30×30 world / 15×15 cell grid.
+    activeMap = makeMapData(30, 30, 2);
+    activeMap.name = "active-map";
+    // Mark a non-default cell so we can assert it comes through on load.
+    activeMap.terrain[5]![5]! = { type: TerrainType.Stone, height: 1, navigable: true };
+
+    // screenToWorld returns a point that is IN bounds for the 60×60 map but
+    // OUT of bounds for the editor's default 30×30 grid: worldToCell(20,20,2,60,60)
+    // = cell (25,25); worldToCell(20,20,2,30,30) = cell (17,17) → outside 15×15.
+    sceneMgr = makeMockSceneManager({ x: 20, y: 0, z: 20 });
+    sceneContainer = makeMockEl();
+    mapManager = { loadMap: vi.fn(), getMapData: () => activeMap };
+    sceneEditor = new MapEditor(
+      sceneContainer as unknown as HTMLElement,
+      mockCamera as unknown as CameraController,
+      lifecycle,
+      sceneMgr as any,
+      mapManager as any,
+    );
+  });
+
+  afterEach(() => {
+    sceneEditor.dispose();
+  });
+
+  it("syncs editor size/cellSize and terrain from the active map", () => {
+    sceneEditor.enable();
+    const data = sceneEditor.getMapData();
+    expect(data.size).toEqual({ width: 60, depth: 60 });
+    expect(data.cellSize).toBe(2);
+    // The non-default cell from the active map is present and editable.
+    expect(data.terrain[5]![5]!.type).toBe(TerrainType.Stone);
+    expect(data.terrain[5]![5]!.height).toBe(1);
+  });
+
+  it("allows placement at a cell outside the default grid but valid on the active map", () => {
+    sceneEditor.enable();
+    sceneEditor.selectTool(TerrainType.Dirt);
+    // (20,20) → cell (25,25) on the 60×60 map; this would be out of bounds on
+    // the editor's default 15×15 grid and silently no-op before the fix.
+    sceneEditor.placeBlock(20, 20);
+    expect(sceneMgr.addMesh).toHaveBeenCalled();
+    expect(sceneEditor.getMapData().terrain[25]![25]!.type).toBe(TerrainType.Dirt);
+  });
+
+  it("does not reload on a second enable() (preserves in-session edits)", () => {
+    sceneEditor.enable();
+    sceneEditor.selectTool(TerrainType.Stone);
+    sceneEditor.placeBlock(20, 20);
+    sceneEditor.disable();
+    // Change what the game would return; re-enable must NOT discard the edit.
+    mapManager.getMapData = () => makeMapData(30, 30, 2);
+    sceneEditor.enable();
+    expect(sceneEditor.getMapData().terrain[25]![25]!.type).toBe(TerrainType.Stone);
+  });
+
+  it("enable() is a no-op-safe when no map manager is provided", () => {
+    const bareContainer = makeMockEl();
+    const bareEditor = new MapEditor(
+      bareContainer as unknown as HTMLElement,
+      mockCamera as unknown as CameraController,
+      lifecycle,
+      sceneMgr as any,
+      null,
+    );
+    expect(() => bareEditor.enable()).not.toThrow();
+    bareEditor.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Ghost preview with SceneManager
 // ---------------------------------------------------------------------------
 
