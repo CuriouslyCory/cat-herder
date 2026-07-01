@@ -1,6 +1,185 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Cat-Herder — cozy-dusk design tokens (Tailwind v4, CSS-first @theme)
+
+   Evolved from the title-screen prototype toward a warmer "porch light at 8pm"
+   dusk. The four cat colors are lifted verbatim from the game source
+   (src/game/cats/definitions/*.ts) so the homepage and the playfield read as
+   one universe.
+--------------------------------------------------------------------------- */
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+  /* Fonts (variables set by next/font in layout.tsx) */
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+
+  /* Dusk — backgrounds & structure */
+  --color-dusk-900: #1a1426; /* page base — plum-night */
+  --color-dusk-800: #241a35; /* card / section surfaces */
+  --color-dusk-700: #3a2b52; /* hairlines, borders, inactive thread */
+
+  /* Ember — the yarn, the CTA, the wordmark glow */
+  --color-ember: #f2b04a;
+  --color-ember-deep: #d98a2b;
+
+  /* Accent + text */
+  --color-blush: #f4978e;
+  --color-mist: #fdf6ec; /* warm cream — never pure white */
+  --color-mist-dim: #cdbfd6;
+
+  /* Cat identity — verbatim from game definitions */
+  --color-loaf: #e07a30;
+  --color-zoomies: #ffe066;
+  --color-curiosity: #9b59b6;
+  --color-pounce: #e74c3c;
+
+  /* Motion */
+  --ease-cozy: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-quick: 200ms;
+  --duration-settle: 500ms;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-dusk-900);
+    color: var(--color-mist);
+    font-family: var(--font-sans);
+  }
+  /* Visible keyboard focus everywhere — ember ring, independent of hover. */
+  :focus-visible {
+    outline: 2px solid var(--color-ember);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Keyframes (vanilla CSS, no external deps — ported from the prototype)
+--------------------------------------------------------------------------- */
+@keyframes ch-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes ch-float-slow {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(2deg);
+  }
+}
+
+@keyframes ch-pulse-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 10px rgba(242, 176, 74, 0.45));
+  }
+  50% {
+    filter: drop-shadow(0 0 22px rgba(242, 176, 74, 0.75));
+  }
+}
+
+@keyframes ch-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes ch-sheen {
+  0% {
+    background-position: -160% center;
+  }
+  60%,
+  100% {
+    background-position: 260% center;
+  }
+}
+
+@keyframes ch-slide-up {
+  0% {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.ch-float {
+  animation: ch-float 3s ease-in-out infinite;
+}
+.ch-float-slow {
+  animation: ch-float-slow 5s ease-in-out infinite;
+}
+.ch-pulse-glow {
+  animation: ch-pulse-glow 3s ease-in-out infinite;
+}
+.ch-twinkle {
+  animation: ch-twinkle 2s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Wordmark — cream fill with a single slow highlight sheen pass (not a loop).
+   The text stays cream; a brighter band sweeps across once on load.
+--------------------------------------------------------------------------- */
+.ch-wordmark {
+  color: var(--color-mist);
+}
+.ch-wordmark-sheen {
+  background: linear-gradient(
+    100deg,
+    var(--color-mist) 0%,
+    var(--color-mist) 42%,
+    #ffffff 50%,
+    var(--color-mist) 58%,
+    var(--color-mist) 100%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: ch-sheen 2.6s var(--ease-cozy) 0.3s 1 both;
+}
+
+/* Entrance reveal — applied by the Reveal client wrapper once in view. */
+.ch-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+}
+.ch-reveal.is-visible {
+  animation: ch-slide-up var(--duration-settle) var(--ease-cozy) forwards;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion — everything resolves to a calm, complete static state.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ch-reveal {
+    opacity: 1;
+    transform: none;
+  }
 }
