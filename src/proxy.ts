@@ -22,5 +22,8 @@ const proxy = authkitMiddleware({
 export default proxy;
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Exclude Next internals and static public assets (the /images folder, favicon)
+  // so the auth middleware never redirects them — otherwise next/image can't
+  // fetch them and returns 400 "not a valid image".
+  matcher: ["/((?!_next/static|_next/image|images/|favicon.ico).*)"],
 };
