@@ -92,7 +92,7 @@ function makeMockCamera(): {
 }
 
 function makeGameLifecycle() {
-  return { pause: vi.fn(), resume: vi.fn() };
+  return { pause: vi.fn(), resume: vi.fn(), syncRender: vi.fn() };
 }
 
 function makeSampleMapData(): MapData {
@@ -704,6 +704,29 @@ describe("enable() loads the active game map", () => {
     // Every cell of the 30×30 grid is rendered (full floor), not just non-default.
     const addMeshCalls = sceneMgr.addMesh.mock.calls.length;
     expect(addMeshCalls).toBeGreaterThanOrEqual(30 * 30);
+  });
+
+  it("flushes the paused RenderSystem (syncRender) after unloading game terrain", () => {
+    sceneEditor.enable();
+    // syncRender must be called so the game's terrain meshes are actually removed
+    // (the RenderSystem is paused while editing) and don't compete with editor cells.
+    expect(lifecycle.syncRender).toHaveBeenCalled();
+  });
+
+  it("makes flat grass cells selectable (any in-bounds cell is editable)", () => {
+    sceneEditor.enable();
+    // Pull the editor's click handler off the container mock.
+    const calls = (sceneContainer.addEventListener as ReturnType<typeof vi.fn>).mock
+      .calls as Array<[string, (e: MouseEvent) => void]>;
+    const clickHandler = calls.find(([type]) => type === "click")?.[1];
+    expect(clickHandler).toBeTypeOf("function");
+    // No tool selected → clicking selects the cell under the cursor. screenToWorld
+    // returns {x:20,z:20} → cell (25,25), which is default grass (height 0).
+    clickHandler!({ clientX: 10, clientY: 10 } as unknown as MouseEvent);
+    const sel = sceneEditor.getSelectedBlock();
+    expect(sel).not.toBeNull();
+    expect(sel!.type).toBe(TerrainType.Grass);
+    expect(sel!.height).toBe(0);
   });
 
   it("restores the game terrain on disable and reloads on the next open", () => {

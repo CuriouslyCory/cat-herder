@@ -30,6 +30,14 @@ import { cellToWorld, worldToCell, cellMeshGeometry } from "./coords";
 interface GameLifecycle {
   pause(): void;
   resume(): void;
+  /**
+   * Run the game's render/ECS sync once, immediately. The editor calls this
+   * after unloading/loading the map so the game's terrain meshes are actually
+   * added/removed — otherwise, because the game loop (and its RenderSystem) is
+   * paused while the editor is open, destroyed terrain entities keep their
+   * meshes and visually compete with the editor's own cells.
+   */
+  syncRender?(): void;
 }
 
 // Minimal adapter for map DB operations — mirrors the map methods in GameTrpcAdapter
@@ -356,6 +364,9 @@ export class MapEditor {
         this.loadMapData(active); // deep-copies into _mapData, renders non-default cells
         this._renderAllCells(); // fill in the remaining (default) cells for a full floor
         this.mapManager.unloadMap?.(); // editor now owns terrain display
+        // Flush the paused RenderSystem so the game's terrain meshes are actually
+        // removed (not left competing with the editor's cells at height 0).
+        this.gameLifecycle.syncRender?.();
       }
     }
     this.gameLifecycle.pause();
@@ -420,6 +431,9 @@ export class MapEditor {
     // next enable() reloads a fresh copy of the (possibly updated) game map.
     if (this._gameMapBackup && this.mapManager) {
       this.mapManager.loadMap(this._gameMapBackup);
+      // Flush the sync so the restored terrain meshes exist immediately, before
+      // the game loop resumes and the editor's own cells are cleared below.
+      this.gameLifecycle.syncRender?.();
     }
     this._gameMapBackup = null;
     this._clearEditorState();
@@ -2163,7 +2177,9 @@ export class MapEditor {
         const { col, row } = this._snapToCell(worldPos.x, worldPos.z);
         const terrain = this._mapData?.terrain;
         const cell = terrain?.[row]?.[col];
-        if (cell && (cell.type !== TerrainType.Grass || cell.height !== 0)) {
+        // Any in-bounds cell is selectable/editable — including flat grass — so
+        // an author can click any tile to change its type or raise its height.
+        if (cell) {
           const { x, z } = this._cellCenter(col, row);
           const key = `${col},${row}`;
           const block: EditorBlock = {

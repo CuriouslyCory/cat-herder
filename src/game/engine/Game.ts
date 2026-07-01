@@ -358,7 +358,13 @@ export class Game {
       this.mapEditor = new MapEditor(
         canvas,
         this.cameraController,
-        { pause: () => this.pause(), resume: () => this.resume() },
+        {
+          pause: () => this.pause(),
+          resume: () => this.resume(),
+          // Flush ECS→scene sync once while paused so terrain entities the editor
+          // unloads/loads actually have their meshes removed/added immediately.
+          syncRender: () => this.renderSystem.update(this.world, 0),
+        },
         this.sceneManager,
         this.mapManager,
         opts.trpc,
