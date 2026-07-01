@@ -65,6 +65,7 @@ interface SceneManagerLike {
   setMeshEmissive(handle: SceneHandle, color: string | number, intensity: number): void;
   setMeshColor(handle: SceneHandle, color: string | number): void;
   setTerrainGrid(totalWidth: number, totalDepth: number, cellSize: number): void;
+  render(): void;
 }
 
 // Minimal subset of MapManager needed by the editor — avoids circular import.
@@ -238,6 +239,12 @@ export class MapEditor {
   // the game's terrain meshes are unloaded so editor edits are visible.
   private _gameMapBackup: MapData | null = null;
 
+  // While active, the editor drives its own render loop. enable() pauses the
+  // game loop (via gameLifecycle.pause), which also stops the game's rAF render
+  // pass — so without this the canvas would never repaint and edits (placement,
+  // height, selection highlight, camera movement) would be invisible.
+  private _editorRafId: number | null = null;
+
   // Terrain tool state
   private _selectedTool: TerrainType | null = null;
   // _cellHandles replaces _editorBlocks — keyed "${col},${row}"
@@ -355,11 +362,44 @@ export class MapEditor {
     this.cameraController.setMode("free");
     this._banner.style.display = "block";
     if (this._panel) this._panel.style.display = "flex";
+    this._startEditorRenderLoop();
+  }
+
+  /**
+   * Drive rendering while the editor is active. The game loop is paused on
+   * enable(), which also halts its render pass, so the editor must repaint the
+   * scene itself for edits and camera movement to be visible. No-ops where
+   * requestAnimationFrame is unavailable (e.g. the node test environment).
+   */
+  private _startEditorRenderLoop(): void {
+    if (typeof requestAnimationFrame === "undefined") return;
+    if (this._editorRafId !== null) return;
+    let last = typeof performance !== "undefined" ? performance.now() : 0;
+    const tick = (now: number): void => {
+      if (!this._active) {
+        this._editorRafId = null;
+        return;
+      }
+      const dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      this.cameraController.update(dt);
+      this.sceneManager?.render();
+      this._editorRafId = requestAnimationFrame(tick);
+    };
+    this._editorRafId = requestAnimationFrame(tick);
+  }
+
+  private _stopEditorRenderLoop(): void {
+    if (this._editorRafId !== null && typeof cancelAnimationFrame !== "undefined") {
+      cancelAnimationFrame(this._editorRafId);
+    }
+    this._editorRafId = null;
   }
 
   disable(): void {
     if (!this._active) return;
     this._active = false;
+    this._stopEditorRenderLoop();
     this.selectBlock(null);
     this._cancelMoveDrag();
     if (this._editorToolMode !== null) {
@@ -1091,6 +1131,7 @@ export class MapEditor {
   // ── dispose ────────────────────────────────────────────────────────────────
 
   dispose(): void {
+    this._stopEditorRenderLoop();
     if (this._keydownHandler) {
       document.removeEventListener("keydown", this._keydownHandler);
       this._keydownHandler = null;

@@ -55,6 +55,7 @@ interface MockSceneMgr {
   setMeshEmissive: ReturnType<typeof vi.fn>;
   setMeshColor: ReturnType<typeof vi.fn>;
   setTerrainGrid: ReturnType<typeof vi.fn>;
+  render: ReturnType<typeof vi.fn>;
   handles: symbol[];
 }
 
@@ -75,6 +76,7 @@ function makeMockSceneManager(
     setMeshEmissive: vi.fn(),
     setMeshColor: vi.fn(),
     setTerrainGrid: vi.fn(),
+    render: vi.fn(),
   };
 }
 
@@ -82,8 +84,11 @@ function makeMockSceneManager(
 // Test helpers
 // ---------------------------------------------------------------------------
 
-function makeMockCamera(): { setMode: ReturnType<typeof vi.fn> } {
-  return { setMode: vi.fn() };
+function makeMockCamera(): {
+  setMode: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+} {
+  return { setMode: vi.fn(), update: vi.fn() };
 }
 
 function makeGameLifecycle() {
@@ -712,6 +717,29 @@ describe("enable() loads the active game map", () => {
     mapManager.getMapData = () => updated;
     sceneEditor.enable();
     expect(sceneEditor.getMapData().terrain[2]![2]!.height).toBe(3);
+  });
+
+  it("renders while active so edits repaint even though the game loop is paused", () => {
+    const rafCbs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      rafCbs.push(cb);
+      return rafCbs.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+    sceneEditor.enable();
+    // The editor scheduled its own render tick (the game loop is paused on open).
+    expect(rafCbs.length).toBeGreaterThan(0);
+
+    const before = sceneMgr.render.mock.calls.length;
+    rafCbs[rafCbs.length - 1]!(16); // run one editor frame
+    expect(sceneMgr.render.mock.calls.length).toBeGreaterThan(before);
+
+    // After disable, a stale scheduled tick must not keep rendering.
+    sceneEditor.disable();
+    const afterDisable = sceneMgr.render.mock.calls.length;
+    rafCbs[rafCbs.length - 1]!(32);
+    expect(sceneMgr.render.mock.calls.length).toBe(afterDisable);
   });
 
   it("enable() is a no-op-safe when no map manager is provided", () => {
