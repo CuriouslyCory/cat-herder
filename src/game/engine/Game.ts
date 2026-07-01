@@ -180,6 +180,11 @@ export class Game {
   // ── Loop state ───────────────────────────────────────────────────────────────
   private rafId: number | null = null;
   private lastTime: number | null = null;
+  // Set by destroy(). start() is async (awaits the save load), so under React
+  // StrictMode's mount→destroy→mount cycle a torn-down instance could otherwise
+  // still finish booting — starting a dead render loop on a disposed renderer and
+  // clobbering the debug bridge / global listeners. Every boot/loop path checks this.
+  private _destroyed = false;
   private accumulator = 0;
 
   // ── Player entity ────────────────────────────────────────────────────────────
@@ -372,6 +377,7 @@ export class Game {
    */
   async start(): Promise<void> {
     const saveData = await this.persistence.load();
+    if (this._destroyed) return; // destroyed mid-load (StrictMode) — do not boot
     this._boot(saveData);
   }
 
@@ -380,6 +386,7 @@ export class Game {
    * Use this when the player explicitly consents to discarding a failed save load.
    */
   startFresh(): void {
+    if (this._destroyed) return;
     this._boot(null);
   }
 
@@ -388,6 +395,7 @@ export class Game {
    * wire persistence, and begin the render loop.
    */
   private _boot(saveData: ExternalSaveData | null): void {
+    if (this._destroyed) return; // guard: never boot a torn-down instance
     // Use the DB-supplied map if available; fall back to built-in TestMap so
     // boot stays synchronous and works even when the DB is unreachable.
     const activeMap: MapData = this.opts.initialMap ?? TestMap;
@@ -449,6 +457,9 @@ export class Game {
         gameState: this.gameState,
         eventBus: this.eventBus,
         physicsEngine: this.physics,
+        mapEditor: this.mapEditor,
+        sceneManager: this.sceneManager,
+        mapManager: this.mapManager,
         getPlayerEntity: () => this.playerEntity,
         getActiveCats: () =>
           this.catCompanionManager.getActiveCompanions().map((e) => ({
@@ -487,6 +498,7 @@ export class Game {
   }
 
   resume(): void {
+    if (this._destroyed) return;
     if (this.rafId !== null) return; // already running
     this.rafId = requestAnimationFrame((t) => this.loop(t));
   }
@@ -496,6 +508,7 @@ export class Game {
    * Safe to call during React StrictMode double-mounts and HMR cycles.
    */
   destroy(): void {
+    this._destroyed = true;
     this.pause();
     if (this._saveErrorTimer) {
       clearTimeout(this._saveErrorTimer);
@@ -749,6 +762,7 @@ export class Game {
   // ---------------------------------------------------------------------------
 
   private loop(time: number): void {
+    if (this._destroyed) return; // stop any stray frame after teardown
     // Queue the next frame immediately so cancellation is always possible
     this.rafId = requestAnimationFrame((t) => this.loop(t));
 
