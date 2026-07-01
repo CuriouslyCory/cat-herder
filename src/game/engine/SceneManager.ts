@@ -67,6 +67,12 @@ export class SceneManager {
   private postProcessing: PostProcessingManager | null = null;
   private visualConfig: VisualConfig | null = null;
   private _grid: THREE.GridHelper | null = null;
+  /**
+   * Fired after every resize with the new canvas dimensions. CameraController
+   * registers here to recompute its orthographic frustum for the new aspect
+   * ratio — without this, resizing the window stretches the isometric view.
+   */
+  private onResizeHook: ((w: number, h: number) => void) | null = null;
 
   /** Camera is settable so CameraController can swap it in. */
   camera: THREE.Camera;
@@ -79,7 +85,13 @@ export class SceneManager {
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Clamp DPR to 2: the post-processing composer allocates a dozen full-size
+    // render targets, so an unclamped 3x device ratio triples fragment work
+    // across all of them for no visible gain.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Explicit color-management intent for the direct-render fallback path.
+    // (The composer path ends in OutputPass, which handles this itself.)
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -120,6 +132,15 @@ export class SceneManager {
   /** Notify post-processing of a camera change. */
   syncPostProcessingCamera(): void {
     this.postProcessing?.setCamera(this.camera);
+  }
+
+  /**
+   * Register a callback invoked on every resize with the new canvas size.
+   * Used by CameraController to keep the orthographic frustum in sync with
+   * the aspect ratio. Passing null clears it.
+   */
+  setResizeHook(hook: ((w: number, h: number) => void) | null): void {
+    this.onResizeHook = hook;
   }
 
   // ---------------------------------------------------------------------------
@@ -280,10 +301,11 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
     if (this.camera instanceof THREE.PerspectiveCamera) {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
-    } else if (this.camera instanceof THREE.OrthographicCamera) {
-      // CameraController manages its own projection — just signal it
-      this.camera.updateProjectionMatrix();
     }
+    // Orthographic cameras are owned by CameraController, which recomputes the
+    // frustum from the new aspect ratio via the resize hook below. A bare
+    // updateProjectionMatrix() here would only re-bake the stale frustum.
+    this.onResizeHook?.(w, h);
 
     this.renderer.setSize(w, h, false); // false = don't set CSS size
     this.postProcessing?.resize(w, h);
@@ -366,6 +388,7 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
 
   dispose(): void {
     this.resizeObserver.disconnect();
+    this.onResizeHook = null;
     this.postProcessing?.dispose();
     this.postProcessing = null;
 

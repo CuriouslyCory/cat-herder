@@ -167,6 +167,12 @@ export class PostProcessingManager {
 
   dispose(): void {
     this.outlinedObjects.clear();
+    // EffectComposer.dispose() only frees its own two render targets + copy
+    // pass; it does NOT cascade to added passes. Each of these owns several
+    // render targets and materials that would otherwise leak on teardown.
+    this.terrainEdgePass.dispose();
+    this.outlinePass.dispose();
+    this.bloomPass.dispose();
     this.composer.dispose();
   }
 }

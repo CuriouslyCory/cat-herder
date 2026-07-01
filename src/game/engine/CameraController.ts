@@ -77,6 +77,10 @@ export class CameraController {
     // Install camera into SceneManager (replaces the default PerspectiveCamera).
     this.sceneManager.camera = this.camera;
 
+    // Recompute the frustum on every canvas resize so the isometric view keeps
+    // the correct aspect ratio instead of stretching.
+    this.sceneManager.setResizeHook(() => this.updateFrustum());
+
     // Scroll-wheel zoom — adjust orthographic frustum.
     this.onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -129,6 +133,7 @@ export class CameraController {
 
   dispose(): void {
     this.canvas.removeEventListener("wheel", this.onWheel);
+    this.sceneManager.setResizeHook(null);
   }
 
   // ---------------------------------------------------------------------------
