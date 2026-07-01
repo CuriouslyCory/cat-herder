@@ -9,10 +9,12 @@
    one universe.
 --------------------------------------------------------------------------- */
 @theme {
-  /* Fonts (variables set by next/font in layout.tsx) */
+  /* Fonts — the theme tokens point at the distinct next/font variables
+     (`--font-body`, `--font-baloo`) set on <html> in layout.tsx. They must
+     not reuse the token names, or the value becomes self-referential. */
   --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-baloo), ui-sans-serif, system-ui, sans-serif;
 
   /* Dusk — backgrounds & structure */
   --color-dusk-900: #1a1426; /* page base — plum-night */

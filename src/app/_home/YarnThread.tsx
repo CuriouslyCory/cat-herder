@@ -100,11 +100,11 @@ export function YarnThread() {
     // Fonts change text metrics → section heights → anchor positions.
     document.fonts?.ready.then(schedule).catch(() => undefined);
 
-    window.addEventListener("resize", schedule);
+    // A ResizeObserver on <body> already covers viewport resizes (body width
+    // tracks the viewport), so a separate window "resize" listener is redundant.
     const ro = new ResizeObserver(schedule);
     ro.observe(document.body);
     return () => {
-      window.removeEventListener("resize", schedule);
       ro.disconnect();
       clearTimeout(timer);
     };

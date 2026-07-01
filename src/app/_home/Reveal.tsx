@@ -36,9 +36,14 @@ export function Reveal({ children, delay = 0, className = "", as = "div" }: Reve
   }, []);
 
   const Tag = as;
+  // A callback ref accepts the widest element type, so it is assignable across
+  // every intrinsic tag `as` can be — no `as never` escape hatch needed.
+  const setRef = (el: HTMLElement | null) => {
+    ref.current = el;
+  };
   return (
     <Tag
-      ref={ref as never}
+      ref={setRef}
       className={`ch-reveal ${visible ? "is-visible" : ""} ${className}`}
       style={delay ? { animationDelay: `${delay}ms` } : undefined}
     >

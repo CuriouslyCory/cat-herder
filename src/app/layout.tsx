@@ -14,10 +14,12 @@ export const metadata: Metadata = {
 };
 
 // Display face: cozy rounded, chunkier than Fredoka; true 800 for the wordmark.
+// Its own variable is distinct from the `--font-display` theme token so the
+// token can point at it without becoming self-referential (see globals.css).
 const baloo = Baloo_2({
   subsets: ["latin"],
   weight: ["600", "700", "800"],
-  variable: "--font-display",
+  variable: "--font-baloo",
 });
 
 // Body face: warm, legible, pairs naturally with Baloo 2.

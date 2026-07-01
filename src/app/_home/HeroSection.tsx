@@ -83,7 +83,7 @@ export function HeroSection() {
               alt="A cat wreathed in a warm glow, batting at a strand of yarn"
               width={440}
               height={440}
-              priority
+              fetchPriority="high"
               className="h-auto w-[min(72vw,440px)] select-none drop-shadow-[0_18px_40px_rgba(0,0,0,0.45)]"
             />
           </div>
