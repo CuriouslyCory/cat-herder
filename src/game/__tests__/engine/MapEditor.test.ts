@@ -1104,14 +1104,22 @@ describe("updateSelectedBlockHeight()", () => {
     expect(block.height).toBe(2.5); // compat block updated too
   });
 
-  it("clamps height to minimum (0.5)", () => {
+  it("allows flattening a raised cell back to 0 (and clamps negatives to 0)", () => {
     editor.loadMapData(makeMapData(6, 6, 2));
     editor.selectTool(TerrainType.Stone);
     editor.placeBlock(0, 0);
     const block = editor.getEditorBlocks()[0]!;
     editor.selectBlock(block);
+    editor.updateSelectedBlockHeight(3);
+    expect(block.height).toBe(3);
+    // Returning to 0 must be allowed (previously clamped up to 0.5).
     editor.updateSelectedBlockHeight(0);
-    expect(block.height).toBe(0.5);
+    const { col, row } = worldToCell(block.x, block.z, 2, 12, 12);
+    expect(editor.getMapData().terrain[row]![col]!.height).toBe(0);
+    expect(block.height).toBe(0);
+    // Negative input clamps to 0.
+    editor.updateSelectedBlockHeight(-3);
+    expect(block.height).toBe(0);
   });
 
   it("clamps height to maximum (5)", () => {

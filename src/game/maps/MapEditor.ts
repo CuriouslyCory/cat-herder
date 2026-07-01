@@ -856,12 +856,13 @@ export class MapEditor {
   }
 
   /**
-   * Update the height of the currently selected block.
-   * Clamped to [HEIGHT_MIN, HEIGHT_MAX]. The mesh is recreated.
+   * Update the height of the currently selected cell.
+   * Clamped to [0, HEIGHT_MAX] — 0 is a valid (flat) terrain height, so an author
+   * can always flatten a raised cell back to ground level. The mesh is recreated.
    */
   updateSelectedBlockHeight(height: number): void {
     if (!this._selectedBlock || !this._selectedCell) return;
-    const clamped = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, height));
+    const clamped = Math.max(0, Math.min(HEIGHT_MAX, height));
     const { col, row } = this._selectedCell;
     const terrain = this._mapData?.terrain;
     if (!terrain?.[row]?.[col]) return;
@@ -1577,7 +1578,7 @@ export class MapEditor {
 
     const heightInput = document.createElement("input");
     heightInput.type = "number";
-    heightInput.min = String(HEIGHT_MIN);
+    heightInput.min = "0"; // 0 = flat; an author can always return a cell to ground
     heightInput.max = String(HEIGHT_MAX);
     heightInput.step = String(HEIGHT_STEP);
     heightInput.style.cssText =
