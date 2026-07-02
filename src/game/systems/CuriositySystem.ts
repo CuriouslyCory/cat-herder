@@ -1,6 +1,6 @@
 import type { World } from "../ecs/World";
 import type { Entity } from "../ecs/Entity";
-import type { CatCompanionManager } from "../cats/CatCompanionManager";
+import type { CatStateView } from "../cats/CatLifecycle";
 import type { EventBus } from "../engine/EventBus";
 import type { SceneManager } from "../engine/SceneManager";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
@@ -15,30 +15,39 @@ import { CatType } from "../types";
 const FADE_SPEED = 2.0; // 1/seconds → full fade in 0.5s
 
 /**
- * CuriositySystem — drives Curiosity Cat behavior each fixed physics tick.
+ * CuriositySystem — a pure effect: drives Curiosity Cat's terrain reveal/fade
+ * each fixed physics tick.
  *
  * Responsibilities:
  *  1. On the first Active tick (detected by revealedEntities.length === 0):
  *     scan for HiddenTerrain entities within the reveal radius, mark them
  *     for reveal (targetOpacity = 1), enable their colliders, increment
  *     revealCount, and emit `hidden:terrain:revealed`.
- *  2. Detect Expired state (set by CatAISystem) and mark revealed terrain
- *     for fade-out (targetOpacity = 0). Dismiss is deferred until the
- *     fade-out animation completes.
+ *  2. On Expired: mark revealed terrain for fade-out (targetOpacity = 0) and
+ *     place a despawn HOLD via the CatStateView seam so CatCompanionManager
+ *     (the single lifecycle owner) waits to despawn the cat until the fade
+ *     finishes — see docs/adr/0004-cat-lifecycle-single-owner.md.
  *  3. Animate currentOpacity toward targetOpacity each tick (~0.5s ease).
+ *  4. Once a held cat's terrain has finished fading, release the hold —
+ *     CatCompanionManager.flushExpirations() then begins its despawn.
  *
- * State management (Idle→Active, timer, Expired marking) is handled centrally
- * by CatAISystem which runs before this system each fixed tick.
+ * This system never calls dismiss()/destroyEntity() and never detects expiry
+ * by reading CatBehavior.state directly — it reads lifecycle state through
+ * the CatStateView seam.
  *
  * SceneManager is injected so the system can update mesh opacity without
  * crossing the Three.js isolation boundary elsewhere.
+ *
+ * Frame position: after CatCompanionManager.update() in the fixed-step loop
+ * (before CatCompanionManager.flushExpirations()).
  */
 export class CuriositySystem {
-  private readonly pendingDismiss = new Set<Entity>();
+  /** Cats whose revealed terrain is currently fading out (despawn held). */
+  private readonly fadingCats = new Set<Entity>();
 
   constructor(
     private readonly sceneManager: SceneManager,
-    private readonly catCompanionManager: CatCompanionManager,
+    private readonly catState: CatStateView,
     private readonly eventBus: EventBus,
   ) {}
 
@@ -49,7 +58,7 @@ export class CuriositySystem {
         ? catDef.behavior.params.revealRadius
         : 5;
 
-    // Snapshot before any mutations (dismiss() invalidates the query cache).
+    // Snapshot before any mutations (beginDespawn() invalidates the query cache).
     const curiosityCats = world.query("CatBehavior", "Transform", "CuriosityReveal");
 
     for (const catEntity of curiosityCats) {
@@ -61,20 +70,21 @@ export class CuriositySystem {
 
       if (behavior.catType !== CatType.CuriosityCat) continue;
 
-      if (behavior.state === "Expired" && !this.pendingDismiss.has(catEntity)) {
+      if (this.catState.getCatState(catEntity) === "Expired" && !this.fadingCats.has(catEntity)) {
         this.beginHideRevealedTerrain(world, reveal);
-        this.pendingDismiss.add(catEntity);
+        this.catState.holdDespawn(catEntity);
+        this.fadingCats.add(catEntity);
         continue;
       }
 
-      if (behavior.state === "Active" && reveal.revealedEntities.length === 0) {
+      if (this.catState.isActive(catEntity) && reveal.revealedEntities.length === 0) {
         const radius = reveal.revealRadius > 0 ? reveal.revealRadius : defaultRadius;
         this.revealNearbyTerrain(world, catEntity, transform, reveal, radius);
       }
     }
 
     this.animateOpacity(world, dt);
-    this.flushDismissals(world);
+    this.flushFades(world);
   }
 
   // ---------------------------------------------------------------------------
@@ -177,19 +187,24 @@ export class CuriositySystem {
   }
 
   /**
-   * Dismisses expired cats whose revealed terrain has finished fading out
-   * (all currentOpacity === 0 or entities dead).
+   * Releases the despawn hold for expired cats whose revealed terrain has
+   * finished fading out (all currentOpacity === 0 or entities dead).
+   *
+   * Does NOT call dismiss()/beginDespawn() itself — releasing the hold here
+   * lets CatCompanionManager.flushExpirations() (which runs later this same
+   * tick) begin the despawn, preserving exact-tick timing parity with the
+   * legacy pipeline (see the frame-position doc comment on the class).
    */
-  private flushDismissals(world: World): void {
-    for (const catEntity of this.pendingDismiss) {
+  private flushFades(world: World): void {
+    for (const catEntity of this.fadingCats) {
       if (!world.isAlive(catEntity)) {
-        this.pendingDismiss.delete(catEntity);
+        this.fadingCats.delete(catEntity);
         continue;
       }
 
       const reveal = world.getComponent<CuriosityReveal>(catEntity, "CuriosityReveal");
       if (!reveal) {
-        this.pendingDismiss.delete(catEntity);
+        this.fadingCats.delete(catEntity);
         continue;
       }
 
@@ -202,8 +217,8 @@ export class CuriositySystem {
 
       if (!stillFading) {
         reveal.revealedEntities = [];
-        this.catCompanionManager.dismiss(catEntity);
-        this.pendingDismiss.delete(catEntity);
+        this.catState.releaseDespawn(catEntity);
+        this.fadingCats.delete(catEntity);
       }
     }
   }

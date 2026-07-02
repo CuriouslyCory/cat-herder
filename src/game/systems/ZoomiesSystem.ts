@@ -1,7 +1,6 @@
 import type { World } from "../ecs/World";
-import type { CatCompanionManager } from "../cats/CatCompanionManager";
+import type { CatStateView } from "../cats/CatLifecycle";
 import type { ZoomiesTrail } from "../ecs/components/ZoomiesTrail";
-import type { CatBehavior } from "../ecs/components/CatBehavior";
 import type { Transform } from "../ecs/components/Transform";
 import type { SpeedBoost } from "../ecs/components/SpeedBoost";
 import { createSpeedBoost } from "../ecs/components/SpeedBoost";
@@ -9,27 +8,26 @@ import { CAT_REGISTRY } from "../cats/definitions";
 import { CatType } from "../types";
 
 /**
- * ZoomiesSystem — drives Zoomies cat behavior each fixed physics tick.
+ * ZoomiesSystem — a pure effect: drives the Zoomies speed-trail each fixed tick.
  *
  * Responsibilities:
- *  1. Detect Expired state (set by CatAISystem) and auto-dismiss the cat
- *     (yarn is consumed — not returned — because state is already Expired).
- *  2. Check per-frame whether the player overlaps any active Zoomies trail.
- *  3. Add SpeedBoost to the player on trail entry; remove on exit.
+ *  1. Check per-frame whether the player overlaps any active Zoomies trail.
+ *  2. Add SpeedBoost to the player on trail entry; remove on exit.
  *
- * State management (Idle→Active, timer, Expired marking) is handled centrally
- * by CatAISystem which runs before this system each fixed tick.
+ * This system no longer detects expiry or calls dismiss() — CatCompanionManager
+ * (the single lifecycle owner, see docs/adr/0004-cat-lifecycle-single-owner.md)
+ * owns all state transitions and despawn timing. ZoomiesSystem only reads
+ * lifecycle state through the CatStateView seam to gate the SpeedBoost effect.
  *
  * The trail overlap check is a manual oriented-AABB test (not a PhysicsEngine
  * trigger) so the trail's exact 6u × 1.5u rectangle can be checked without
  * requiring a non-uniform physics body.
  *
- * Frame position: after CatAISystem and OxygenSystem in the fixed-step loop.
+ * Frame position: after CatCompanionManager.update() and OxygenSystem in the
+ * fixed-step loop (before CatCompanionManager.flushExpirations()).
  */
 export class ZoomiesSystem {
-  constructor(
-    private readonly catCompanionManager: CatCompanionManager,
-  ) {}
+  constructor(private readonly catState: CatStateView) {}
 
   update(world: World, _dt: number): void {
     // ── Find the player entity ───────────────────────────────────────────────
@@ -63,27 +61,19 @@ export class ZoomiesSystem {
         "Transform",
       )!;
 
-      // If the owning cat is no longer alive (dismissed elsewhere), clean up
-      // the orphaned trail entity and skip.
+      // If the owning cat is no longer alive, clean up the orphaned trail
+      // entity and skip. This is a harmless safety net — CatCompanionManager's
+      // beginDespawn() already destroys the trail entity itself, so this path
+      // should rarely fire, but it guards against any other way the cat
+      // entity could disappear out from under its trail.
       if (!world.isAlive(trail.catEntity)) {
         world.destroyEntity(trailEntity);
         continue;
       }
 
-      const behavior = world.getComponent<CatBehavior>(
-        trail.catEntity,
-        "CatBehavior",
-      );
-
-      if (behavior?.state === "Expired") {
-        // CatAISystem already marked Expired — dismiss() will skip yarn refund
-        // because state !== "Active". dismiss() also destroys the trail entity.
-        this.catCompanionManager.dismiss(trail.catEntity);
-        continue;
-      }
-
-      // Only process Active cats for the trail overlap check.
-      if (behavior?.state !== "Active") continue;
+      // Only process Active cats for the trail overlap check. Expiry and
+      // despawn are entirely CatCompanionManager's concern now.
+      if (!this.catState.isActive(trail.catEntity)) continue;
 
       // ── Oriented AABB overlap check ────────────────────────────────────────
       if (this.isPlayerInTrail(playerTransform, trailTransform, trail)) {

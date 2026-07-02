@@ -7,7 +7,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { World } from "~/game/ecs/World";
 import { VisualEffectsSystem } from "~/game/systems/VisualEffectsSystem";
 import { CuriositySystem } from "~/game/systems/CuriositySystem";
-import { CatAISystem } from "~/game/systems/CatAISystem";
 import { EventBus } from "~/game/engine/EventBus";
 import { GameState } from "~/game/engine/GameState";
 import { PhysicsEngine } from "~/game/engine/PhysicsEngine";
@@ -57,10 +56,10 @@ describe("VisualEffectsSystem — cat scale animations", () => {
     system = new VisualEffectsSystem(scene as never);
   });
 
-  function spawnAnimatingEntity(fromScale: number, toScale: number, destroyOnComplete = false) {
+  function spawnAnimatingEntity(fromScale: number, toScale: number) {
     const entity = world.createEntity();
     world.addComponent(entity, createTransform(0, 0, 0, 0, fromScale, fromScale, fromScale));
-    world.addComponent(entity, createCatScaleAnimation(fromScale, toScale, 0.2, destroyOnComplete));
+    world.addComponent(entity, createCatScaleAnimation(fromScale, toScale, 0.2));
     return entity;
   }
 
@@ -87,8 +86,8 @@ describe("VisualEffectsSystem — cat scale animations", () => {
     expect(tf.scaleZ).toBeCloseTo(1);
   });
 
-  it("scale-up: CatScaleAnimation component removed when complete (destroyOnComplete=false)", () => {
-    const entity = spawnAnimatingEntity(0, 1, false);
+  it("scale-up: CatScaleAnimation component removed when complete", () => {
+    const entity = spawnAnimatingEntity(0, 1);
 
     system.update(world, 0.25); // past duration
 
@@ -106,16 +105,17 @@ describe("VisualEffectsSystem — cat scale animations", () => {
     expect(tf.scaleX).toBeLessThan(1);
   });
 
-  it("scale-down: entity destroyed when destroyOnComplete=true and animation finishes", () => {
-    const entity = spawnAnimatingEntity(1, 0, true);
+  it("scale-down: CatScaleAnimation removed when complete, but VisualEffectsSystem never destroys (destruction is CatCompanionManager's job)", () => {
+    const entity = spawnAnimatingEntity(1, 0);
 
     system.update(world, 0.25); // past 0.2 s duration
 
-    expect(world.isAlive(entity)).toBe(false);
+    expect(world.isAlive(entity)).toBe(true);
+    expect(world.getComponent<CatScaleAnimation>(entity, "CatScaleAnimation")).toBeNull();
   });
 
   it("scale-down: entity remains alive during the 0.2 s animation", () => {
-    const entity = spawnAnimatingEntity(1, 0, true);
+    const entity = spawnAnimatingEntity(1, 0);
 
     system.update(world, 0.1); // halfway through
 
@@ -183,14 +183,13 @@ describe("CatCompanionManager — summon scale animation", () => {
     expect(tf.scaleZ).toBeCloseTo(0);
   });
 
-  it("summoned cat has CatScaleAnimation (fromScale=0, toScale=1, destroyOnComplete=false)", () => {
+  it("summoned cat has CatScaleAnimation (fromScale=0, toScale=1)", () => {
     const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 });
 
     const anim = world.getComponent<CatScaleAnimation>(entity!, "CatScaleAnimation")!;
     expect(anim).not.toBeNull();
     expect(anim.fromScale).toBeCloseTo(0);
     expect(anim.toScale).toBeCloseTo(1);
-    expect(anim.destroyOnComplete).toBe(false);
     expect(anim.duration).toBeCloseTo(0.2);
   });
 
@@ -242,7 +241,7 @@ describe("CatCompanionManager — dismiss scale animation", () => {
     expect(world.isAlive(entity)).toBe(true);
   });
 
-  it("dismissed cat has CatScaleAnimation (fromScale=1, toScale=0, destroyOnComplete=true)", () => {
+  it("dismissed cat has CatScaleAnimation (fromScale=1, toScale=0)", () => {
     const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
     manager.dismiss(entity);
 
@@ -250,7 +249,6 @@ describe("CatCompanionManager — dismiss scale animation", () => {
     expect(anim).not.toBeNull();
     expect(anim.fromScale).toBeCloseTo(1);
     expect(anim.toScale).toBeCloseTo(0);
-    expect(anim.destroyOnComplete).toBe(true);
   });
 
   it("dismissed cat is removed from active companions immediately", () => {
@@ -271,27 +269,30 @@ describe("CatCompanionManager — dismiss scale animation", () => {
     );
   });
 
-  it("VisualEffectsSystem destroys dismissed cat entity after 0.2 s", () => {
+  it("CatCompanionManager destroys dismissed cat entity after its 0.2 s despawn timer elapses", () => {
+    // VisualEffectsSystem only tweens the scale-down visual; it never destroys
+    // a cat. CatCompanionManager owns the despawn timer and destruction (see
+    // docs/adr/0004-cat-lifecycle-single-owner.md).
     const scene = createMockScene();
     const vfx = new VisualEffectsSystem(scene as never);
     const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
     manager.dismiss(entity);
 
-    vfx.update(world, 0.21);
+    vfx.update(world, 0.21); // tween completes — component removed, entity NOT destroyed
+    expect(world.isAlive(entity)).toBe(true);
 
+    manager.update(0.21); // owner's despawn timer elapses — entity destroyed
     expect(world.isAlive(entity)).toBe(false);
   });
 
   it("double dismiss() is idempotent — no crash or double-destroy", () => {
-    const scene = createMockScene();
-    const vfx = new VisualEffectsSystem(scene as never);
     const entity = manager.summon(CatType.Loaf, { x: 3, y: 0, z: 3 })!;
     manager.dismiss(entity);
     manager.dismiss(entity); // second call must be a no-op
 
     expect(world.isAlive(entity)).toBe(true); // still animating, not re-destroyed
-    vfx.update(world, 0.21);
-    expect(world.isAlive(entity)).toBe(false); // destroyed once by animation
+    manager.update(0.21);
+    expect(world.isAlive(entity)).toBe(false); // destroyed once by the owner
   });
 
   it("dismissed cat has CatBehavior removed (other systems won't process zombie)", () => {
@@ -364,7 +365,6 @@ describe("CuriositySystem — hidden terrain fade-in over 0.5 s", () => {
   let gameState: GameState;
   let physics: PhysicsEngine;
   let manager: CatCompanionManager;
-  let catAI: CatAISystem;
   let curiosity: CuriositySystem;
   let mockScene: ReturnType<typeof createMockSceneManager>;
 
@@ -393,7 +393,6 @@ describe("CuriositySystem — hidden terrain fade-in over 0.5 s", () => {
       () => null,
       physics,
     );
-    catAI = new CatAISystem();
     curiosity = new CuriositySystem(mockScene as never, manager, eventBus);
   });
 
@@ -407,8 +406,8 @@ describe("CuriositySystem — hidden terrain fade-in over 0.5 s", () => {
     const { entity } = spawnTerrainWithHandle(2, 2);
     spawnCuriosityRevealCat(world, 2, 2, 5);
 
-    // First tick: CatAI moves to Active, CuriositySystem reveals
-    catAI.update(world, DT);
+    // First tick: CatCompanionManager moves to Active, CuriositySystem reveals
+    manager.update(DT);
     curiosity.update(world, DT);
 
     const ht = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
@@ -421,7 +420,7 @@ describe("CuriositySystem — hidden terrain fade-in over 0.5 s", () => {
     spawnCuriosityRevealCat(world, 2, 2, 5);
 
     // Activate cat
-    catAI.update(world, DT);
+    manager.update(DT);
     curiosity.update(world, DT);
 
     // Simulate 0.5 s worth of frames (FADE_SPEED=2.0 → full fade in 0.5 s)
@@ -438,7 +437,7 @@ describe("CuriositySystem — hidden terrain fade-in over 0.5 s", () => {
     const { handle } = spawnTerrainWithHandle(2, 2);
     spawnCuriosityRevealCat(world, 2, 2, 5);
 
-    catAI.update(world, DT);
+    manager.update(DT);
     curiosity.update(world, DT);
 
     // After one tick of activation, CuriositySystem should have called

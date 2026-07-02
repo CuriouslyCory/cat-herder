@@ -39,8 +39,16 @@ export class VisualEffectsSystem implements System {
     this._updateShadows(world);
   }
 
+  /**
+   * Tweens Transform.scale{X,Y,Z} for cat pop-in/pop-out and removes the
+   * CatScaleAnimation component once the tween completes.
+   *
+   * This system never destroys entities — CatCompanionManager is the sole
+   * destruction authority for cats (see docs/adr/0004-cat-lifecycle-single-owner.md).
+   * It owns its own despawn timer and calls world.destroyEntity() itself once
+   * that timer elapses, independent of this tween.
+   */
   private _updateScaleAnimations(world: World, dt: number): void {
-    const entitiesToDestroy: Entity[] = [];
     const entities = world.query("CatScaleAnimation", "Transform");
 
     for (const entity of entities) {
@@ -56,17 +64,8 @@ export class VisualEffectsSystem implements System {
       transform.scaleZ = scale;
 
       if (t >= 1) {
-        if (anim.destroyOnComplete) {
-          entitiesToDestroy.push(entity);
-        } else {
-          world.removeComponent(entity, "CatScaleAnimation");
-        }
+        world.removeComponent(entity, "CatScaleAnimation");
       }
-    }
-
-    // Destroy after iteration to avoid mutating the query snapshot mid-loop.
-    for (const entity of entitiesToDestroy) {
-      world.destroyEntity(entity);
     }
   }
 

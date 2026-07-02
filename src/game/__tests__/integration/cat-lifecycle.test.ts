@@ -3,8 +3,6 @@ import { World } from "~/game/ecs/World";
 import { EventBus } from "~/game/engine/EventBus";
 import { GameState } from "~/game/engine/GameState";
 import { PhysicsEngine } from "~/game/engine/PhysicsEngine";
-import { CatAISystem } from "~/game/systems/CatAISystem";
-import { ZoomiesSystem } from "~/game/systems/ZoomiesSystem";
 import { CatCompanionManager } from "~/game/cats/CatCompanionManager";
 import { spawnPlayer } from "../helpers/entityFactories";
 import { createMockMapManager } from "../helpers/mockMapManager";
@@ -12,16 +10,26 @@ import { CatType } from "~/game/types";
 import type { CatBehavior } from "~/game/ecs/components/CatBehavior";
 import type { Entity } from "~/game/ecs/Entity";
 
-describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)", () => {
+describe("Integration: Cat Lifecycle (Summon → Active → Expired → Despawn)", () => {
   let world: World;
   let eventBus: EventBus;
   let gameState: GameState;
   let physics: PhysicsEngine;
   let catManager: CatCompanionManager;
-  let catAI: CatAISystem;
-  let zoomiesSystem: ZoomiesSystem;
   let playerEntity: Entity;
   const DT = 1 / 60;
+
+  /**
+   * Drives one full fixed-step tick through the owner alone (no per-cat
+   * effect systems wired — this test proves the lifecycle end-to-end using
+   * only CatCompanionManager). Mirrors the exact two-call sequence Game.ts
+   * wires per tick: update() first, flushExpirations() last (see
+   * docs/adr/0004-cat-lifecycle-single-owner.md).
+   */
+  function tick(dt: number): void {
+    catManager.update(dt);
+    catManager.flushExpirations();
+  }
 
   beforeEach(() => {
     world = new World();
@@ -39,11 +47,9 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
       () => playerEntity,
       physics,
     );
-    catAI = new CatAISystem();
-    zoomiesSystem = new ZoomiesSystem(catManager);
   });
 
-  it("Zoomies full lifecycle: summon → deduct yarn → 8s active → expired → auto-dismiss → yarn consumed", () => {
+  it("Zoomies full lifecycle: summon → deduct yarn → 8s active → expired → auto-despawn → yarn consumed", () => {
     const initialYarn = gameState.yarn;
     const entity = catManager.summon(CatType.Zoomies, { x: 10, y: 0, z: 10 })!;
     expect(entity).not.toBeNull();
@@ -52,33 +58,37 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
     expect(yarnCost).toBeGreaterThan(0);
 
     // First tick: Idle → Active
-    catAI.update(world, DT);
+    tick(DT);
     const behavior = world.getComponent<CatBehavior>(entity, "CatBehavior")!;
     expect(behavior.state).toBe("Active");
 
     // 480 ticks still Active (just under 8s)
     for (let i = 0; i < 480; i++) {
-      catAI.update(world, DT);
+      tick(DT);
     }
     expect(behavior.state).toBe("Active");
 
-    // One more tick pushes past 8s
-    catAI.update(world, DT);
-    expect(behavior.state).toBe("Expired");
+    const yarnBeforeExpiry = gameState.yarn;
 
-    const yarnBeforeDismiss = gameState.yarn;
-    zoomiesSystem.update(world, DT);
+    // One more tick pushes past 8s: expires AND despawns in this same tick
+    // (no hold — Zoomies has none), preserving legacy same-tick timing.
+    tick(DT);
 
-    // Entity stays alive for the 0.2 s scale-down animation; removed from companions.
     expect(catManager.getActiveCompanions()).not.toContain(entity);
-    expect(gameState.yarn).toBe(yarnBeforeDismiss);
+    expect(world.getComponent(entity, "CatBehavior")).toBeNull();
+    expect(gameState.yarn).toBe(yarnBeforeExpiry);
+
+    // Entity stays alive for the 0.2 s scale-down animation; owner destroys it.
+    expect(world.isAlive(entity)).toBe(true);
+    for (let i = 0; i < 13; i++) tick(DT); // >= 0.2s at 1/60 dt
+    expect(world.isAlive(entity)).toBe(false);
   });
 
   it("manual dismiss of active Zoomies refunds yarn", () => {
     const entity = catManager.summon(CatType.Zoomies, { x: 10, y: 0, z: 10 })!;
     const yarnAfterSummon = gameState.yarn;
 
-    catAI.update(world, DT);
+    tick(DT);
 
     catManager.dismiss(entity);
     expect(gameState.yarn).toBeGreaterThan(yarnAfterSummon);
@@ -88,7 +98,7 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
     const entity = catManager.summon(CatType.Loaf, { x: 5, y: 0, z: 5 })!;
 
     for (let i = 0; i < 3600; i++) {
-      catAI.update(world, DT);
+      tick(DT);
     }
 
     const behavior = world.getComponent<CatBehavior>(entity, "CatBehavior")!;
@@ -100,5 +110,4 @@ describe("Integration: Cat Lifecycle (Summon → Active → Expired → Dismiss)
     expect(world.isAlive(entity)).toBe(true);
     expect(catManager.getActiveCompanions()).not.toContain(entity);
   });
-
 });

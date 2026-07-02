@@ -1,27 +1,42 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { World } from "~/game/ecs/World";
 import { EventBus } from "~/game/engine/EventBus";
+import { GameState } from "~/game/engine/GameState";
 import { PhysicsEngine } from "~/game/engine/PhysicsEngine";
 import { PounceSystem } from "~/game/systems/PounceSystem";
-import { CatAISystem } from "~/game/systems/CatAISystem";
+import { CatCompanionManager } from "~/game/cats/CatCompanionManager";
 import { spawnPlayer, spawnCat } from "../helpers/entityFactories";
+import { createMockMapManager } from "../helpers/mockMapManager";
 import { CatType } from "~/game/types";
 import type { CatBehavior } from "~/game/ecs/components/CatBehavior";
 
 describe("PounceSystem", () => {
   let world: World;
   let eventBus: EventBus;
+  let gameState: GameState;
   let physics: PhysicsEngine;
+  let catManager: CatCompanionManager;
   let pounceSystem: PounceSystem;
-  let catAI: CatAISystem;
   const DT = 1 / 60;
 
   beforeEach(() => {
     world = new World();
     eventBus = new EventBus();
+    gameState = new GameState(50);
     physics = new PhysicsEngine(eventBus);
-    pounceSystem = new PounceSystem(physics);
-    catAI = new CatAISystem();
+    const mockMap = createMockMapManager();
+
+    catManager = new CatCompanionManager(
+      world,
+      eventBus,
+      mockMap as any,
+      gameState,
+      () => null,
+      physics,
+    );
+    // PounceSystem depends only on the CatStateView seam — the concrete
+    // manager satisfies it (see src/game/cats/CatLifecycle.ts).
+    pounceSystem = new PounceSystem(physics, catManager);
   });
 
   function setupPlayerWithPhysics(x = 0, y = 0.5, z = 0) {
@@ -42,7 +57,7 @@ describe("PounceSystem", () => {
     const { handle } = setupPlayerWithPhysics(5, 0.5, 5);
     const catEntity = spawnCat(world, CatType.Pounce, 5, 0.25, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     const behavior = world.getComponent<CatBehavior>(catEntity, "CatBehavior")!;
     expect(behavior.state).toBe("Active");
 
@@ -60,7 +75,7 @@ describe("PounceSystem", () => {
     const { handle } = setupPlayerWithPhysics(5, 0.5, 5);
     spawnCat(world, CatType.Pounce, 5, 0.25, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
 
     physics.setPosition(handle, { x: 5, y: 0.4, z: 5 });
     physics.step(DT);
@@ -83,7 +98,7 @@ describe("PounceSystem", () => {
     spawnCat(world, CatType.Pounce, 5, 0.25, 5);
     const playerTransform = world.getComponent(entity, "Transform") as any;
 
-    catAI.update(world, DT);
+    catManager.update(DT);
 
     // Initial launch
     physics.setPosition(handle, { x: 5, y: 0.4, z: 5 });
