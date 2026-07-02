@@ -2580,7 +2580,7 @@ describe("DB persistence — refreshMapList() (US-17)", () => {
     await ed.refreshMapList();
     // After refresh, isDeleteDisabled should reflect the list
     // We have 2 entries; if currentMapId=2 (non-default), delete should NOT be disabled
-    (ed as any)._currentMapId = 2;
+    (ed as any)._persistence.markLoaded(2, "name");
     expect(ed.isDeleteDisabled()).toBe(false);
     ed.dispose();
   });
@@ -2605,7 +2605,7 @@ describe("DB persistence — isDeleteDisabled() guard (US-17)", () => {
       makeAdminUser(),
     );
     await ed.refreshMapList();
-    (ed as any)._currentMapId = 1; // the default map
+    (ed as any)._persistence.markLoaded(1, "name"); // the default map
     expect(ed.isDeleteDisabled()).toBe(true);
     ed.dispose();
   });
@@ -2627,7 +2627,7 @@ describe("DB persistence — isDeleteDisabled() guard (US-17)", () => {
       makeAdminUser(),
     );
     await ed.refreshMapList();
-    (ed as any)._currentMapId = 1;
+    (ed as any)._persistence.markLoaded(1, "name");
     expect(ed.isDeleteDisabled()).toBe(true);
     ed.dispose();
   });
@@ -2650,7 +2650,7 @@ describe("DB persistence — isDeleteDisabled() guard (US-17)", () => {
       makeAdminUser(),
     );
     await ed.refreshMapList();
-    (ed as any)._currentMapId = 2; // non-default
+    (ed as any)._persistence.markLoaded(2, "name"); // non-default
     expect(ed.isDeleteDisabled()).toBe(false);
     ed.dispose();
   });
@@ -2687,7 +2687,7 @@ describe("DB persistence — setCurrentMapAsDefault() (US-17)", () => {
       adapter as any,
       makeAdminUser(),
     );
-    (ed as any)._currentMapId = 5;
+    (ed as any)._persistence.markLoaded(5, "name");
     await ed.setCurrentMapAsDefault();
     expect(adapter.mapSetDefault).toHaveBeenCalledWith({ id: 5 });
     ed.dispose();
@@ -2716,7 +2716,7 @@ describe("DB persistence — deleteCurrentMap() (US-17)", () => {
       makeAdminUser(),
     );
     await ed.refreshMapList();
-    (ed as any)._currentMapId = 2;
+    (ed as any)._persistence.markLoaded(2, "name");
     await ed.deleteCurrentMap();
     expect(adapter.mapDelete).toHaveBeenCalledWith({ id: 2 });
     vi.unstubAllGlobals();
