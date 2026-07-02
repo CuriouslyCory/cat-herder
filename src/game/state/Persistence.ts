@@ -1,76 +1,26 @@
 import { saveDataSchema, CURRENT_VERSION } from "./SaveData";
 import type { SaveData as ExternalSaveData } from "./SaveData";
 import { migrateIfNeeded } from "./migrations";
+import {
+  encode,
+  decode,
+  NON_POSITION_DIRTY_PATHS,
+  POSITION_DIRTY_PATH,
+} from "./SaveCodec";
 import type { GameState } from "../engine/GameState";
-import type { SaveData as InternalSaveData } from "../engine/GameState";
 import type { EventBus } from "../engine/EventBus";
 import type { GameTrpcAdapter } from "../engine/Game";
 
 // ---------------------------------------------------------------------------
 // Format converters — bridge between GameState's internal { player, world }
 // shape and the versioned { character, world, session } external schema.
+// The shape itself (which fields exist, how they map, key order) is owned by
+// SaveCodec.SAVE_FIELDS; these are thin re-exports kept for call-site and
+// test-import stability.
 // ---------------------------------------------------------------------------
 
-export function toExternalSaveData(data: InternalSaveData): ExternalSaveData {
-  return {
-    character: {
-      appearance: data.player.appearance,
-      stats: data.player.stats,
-      inventory: data.player.inventory,
-      position: data.player.position,
-      yarn: data.player.yarn,
-      oxygen: data.player.oxygen,
-      abilities: data.player.abilities,
-    },
-    world: {
-      currentMapId: data.world.currentMapId,
-      activeCats: data.world.activeCats,
-      resourceNodeCooldowns: data.world.resourceNodes,
-      hiddenTerrain: data.world.hiddenTerrain,
-    },
-    session: { totalPlaytimeMs: 0 },
-  };
-}
-
-export function fromExternalSaveData(data: ExternalSaveData): InternalSaveData {
-  return {
-    player: {
-      appearance: data.character.appearance,
-      stats: data.character.stats,
-      inventory: data.character.inventory,
-      position: data.character.position,
-      yarn: data.character.yarn,
-      oxygen: data.character.oxygen,
-      abilities: data.character.abilities,
-    },
-    world: {
-      currentMapId: data.world.currentMapId,
-      activeCats: data.world.activeCats,
-      hiddenTerrain: data.world.hiddenTerrain,
-      resourceNodes: data.world.resourceNodeCooldowns,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Paths that contribute to non-position dirty tracking.
-// Position changes are throttled separately; all others mark dirty immediately.
-// ---------------------------------------------------------------------------
-
-const NON_POSITION_PATHS = [
-  "player.yarn",
-  "player.stats.health",
-  "player.stats.level",
-  "player.stats.maxHealth",
-  "player.inventory",
-  "player.abilities",
-  "player.appearance",
-  "player.oxygen",
-  "world.currentMapId",
-  "world.activeCats",
-  "world.hiddenTerrain",
-  "world.resourceNodes",
-] as const;
+export const toExternalSaveData = encode;
+export const fromExternalSaveData = decode;
 
 const POSITION_DIRTY_THROTTLE_MS = 5000;
 
@@ -94,7 +44,7 @@ export class Persistence {
     private readonly trpcAdapter: GameTrpcAdapter,
     private readonly eventBus: EventBus,
   ) {
-    for (const path of NON_POSITION_PATHS) {
+    for (const path of NON_POSITION_DIRTY_PATHS) {
       this._unsubs.push(
         this.gameState.onChange(path, () => {
           this._hasNonPositionDirty = true;
@@ -103,7 +53,7 @@ export class Persistence {
     }
 
     this._unsubs.push(
-      this.gameState.onChange("player.position", () => {
+      this.gameState.onChange(POSITION_DIRTY_PATH, () => {
         this._lastPositionDirtyAt = Date.now();
         this._positionHasChangedSinceLastSave = true;
       }),

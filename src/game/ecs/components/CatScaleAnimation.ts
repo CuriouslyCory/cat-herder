@@ -4,13 +4,15 @@ import type { Component } from "../Component";
  * CatScaleAnimation — drives a uniform scale tween on a cat (or any) entity.
  *
  * Created by CatCompanionManager:
- *   - summon(): fromScale=0, toScale=1, destroyOnComplete=false  (pop-in)
- *   - dismiss(): fromScale=1, toScale=0, destroyOnComplete=true   (pop-out)
+ *   - summon():       fromScale=0, toScale=1  (pop-in)
+ *   - beginDespawn(): fromScale=1, toScale=0  (pop-out)
  *
- * Processed by VisualEffectsSystem._updateScaleAnimations() each render frame.
- * When destroyOnComplete is true, VisualEffectsSystem calls world.destroyEntity()
- * after the tween finishes so CatCompanionManager.dismiss() can skip the
- * immediate destroy and let the animation play first.
+ * Processed by VisualEffectsSystem._updateScaleAnimations() each render frame,
+ * which only tweens Transform.scale{X,Y,Z} and removes this component when
+ * the tween completes. Entity destruction is NOT driven by this component —
+ * CatCompanionManager is the sole destruction authority (see
+ * docs/adr/0004-cat-lifecycle-single-owner.md): it registers its own despawn
+ * timer in beginDespawn() and destroys the entity when that timer elapses.
  */
 export interface CatScaleAnimation extends Component {
   readonly type: "CatScaleAnimation";
@@ -18,14 +20,12 @@ export interface CatScaleAnimation extends Component {
   toScale: number;
   elapsed: number;
   readonly duration: number;
-  readonly destroyOnComplete: boolean;
 }
 
 export function createCatScaleAnimation(
   fromScale: number,
   toScale: number,
   duration: number,
-  destroyOnComplete: boolean,
 ): CatScaleAnimation {
   return {
     type: "CatScaleAnimation",
@@ -33,6 +33,5 @@ export function createCatScaleAnimation(
     toScale,
     elapsed: 0,
     duration,
-    destroyOnComplete,
   };
 }

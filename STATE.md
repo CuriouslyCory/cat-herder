@@ -1,107 +1,93 @@
-# Orchestration State: Map Editor & Library (#12–#17)
+# Orchestration State: feat/architecture-deepening
 
-**Last updated**: 2026-06-30 (ALL WAVES COMPLETE — finalizing PR)  
-**Current wave**: DONE (all 4 waves fully merged)  
-**Merge count**: 6/6 items merged (#12, #13, #14, #16, #15, #17)
+Source of truth for this run. Update after every state change (plan saved, agent dispatched, gate passed, branch merged). If the run is interrupted, read this file first to resume.
 
-### Integration re-verify log
-| After merge | test | lint | typecheck | build |
-| --- | --- | --- | --- | --- |
-| #12 | ✅ 742 | ✅ | ✅ | ✅ |
-| #13 | ✅ 750 | ✅ | ✅ | ✅ |
-| #14 | ✅ 782 | ✅ | ✅ | ✅ |
-| #16 | ✅ 800 | ✅ | ✅ | ✅ |
-| #15 | ✅ 811 | ✅ | ✅ | ✅ |
-| #17 | ✅ 816 | ✅ | ✅ | ✅ |
+- Integration branch: `feat/architecture-deepening`
+- Base branch / final PR target: `main`
+- PR model: `single`
+- Tracking context: GitHub Issues CuriouslyCory/cat-herder #25, #26, #27, #28, #29 (architecture deepening, from the 2026-07-02 architecture review)
+- Last updated: 2026-07-02 (Wave 1 execution: agents dispatched, worktrees ready) by orchestration-builder
 
-### DB schema applied to dev Neon (db:push, project convention — no migrations dir)
-- #13: `cat-herder_user` (userId PK, email, isAdmin, createdAt, updatedAt) — additive CREATE TABLE, verified present. Admin bootstrap (cory@curiouslycory.com) happens on first play-page load via upsertUser.
+## Status legend
 
-**Baseline (main @ 5533da0)**: ✅ test 724 pass · lint clean · typecheck clean · build OK. Integration branch `feat/map-library` exists & pushed (tip 473fdff = STATE tracker).
+- `not-started` no worktree yet
+- `planning` running the per-item planning step
+- `planned` plan file written, ready for agents
+- `in-progress` specialist agents executing
+- `review` review steps running
+- `fixing` applying review fixes
+- `verified` build, lint, typecheck, tests, and acceptance criteria all green in the worktree
+- `merged` merged into integration and integration re-verified
+- `blocked` waiting on a dependency or a failed gate (see Notes)
 
-**Planning method note**: `/bulletproof-plan` is interactive (plan-mode approval) and unsuitable for this autonomous run; per-item planning is delegated to a dedicated planning agent that applies the same rigor (validate vs CLAUDE.md / docs / ADRs, explicit review + verification steps) and writes `plans/<item>.md`.
+## Wave 1 (parallel): branch from the initial `feat/architecture-deepening` tip
 
-## Wave 1: Parallel setup
+| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | merged | yes |
+| #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | merged | yes |
+| #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | merged | yes |
 
-- **#12** `feat/12-coord-helpers` — Prefactor: shared cell↔world coordinate helpers
-  - Status: ✅ Merged (commit 4ba636f; +198/-13; 18 new coords tests; gates green)
-  - Branch: `feat/12-coord-helpers`
-  - Merged: YES → feat/map-library
-  
-- **#13** `feat/13-admin-role` — Admin role foundation (`users.isAdmin` + `adminProcedure`)
-  - Status: ✅ Merged (commit b6417c5; +370; 8 admin tests; gates green; users table pushed to DB)
-  - Branch: `feat/13-admin-role`
-  - Merged: YES → feat/map-library
+Wave 1 shared-surface flag: #25 and #28 may both touch the load-restore integration test (both assert save-restore behavior). Keep edits additive; reconcile at merge.
 
-**Wave 1 shared-surface check**: Clean. Coordinate math (#12) vs auth/tRPC (#13) do not overlap.
+## Wave 2 (parallel): branch from the post-Wave-1 integration tip
 
-## Wave 2: Sequential
+| Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #26 | `feat/26-cat-lifecycle` | `../wt-26` | #26 | #25 | `plans/26.md` | merged | yes |
+| #29 | `feat/29-map-mutation-core` | `../wt-29` | #29 | #27 | `plans/29.md` | merged | yes |
 
-- **#14** `feat/14-terrain-format` — Canonical `terrain[][]` format + map-driven spawning
-  - Status: ✅ Merged (commit ecccf2e; +616/-267; 33 new tests; 15 cooldown ids cross-verified byte-identical; ADR 0002)
-  - Dependencies: #12 ✅
-  - Branch: `feat/14-terrain-format`
-  - Merged: YES → feat/map-library
+Wave 2 shared-surface check: clean. Cat systems (#26) and maps (#29) do not overlap.
 
-## Wave 3: Parallel (conditional on shared-surface check)
+## Verification gates
 
-- **#15** `feat/15-map-editor` — Cell-aware map editor (fixes alignment)
-  - Status: ✅ Merged (commit f6d0855; MapEditor.ts + tests only; 793→811 integration; editor absent from prod bundle)
-  - Dependencies: #12 ✅, #14 ✅
-  - Branch: `feat/15-map-editor`
-  - Merged: YES → feat/map-library
-  
-- **#16** `feat/16-db-map-library` — DB map library + default-map-at-boot
-  - Status: ✅ Merged (commit 4637049 + index fix; +790; 18 router tests; gates green)
-  - Dependencies: #14 ✅, #13 ✅
-  - Branch: `feat/16-db-map-library`
-  - Merged: YES → feat/map-library
-  - DB: `cat-herder_map` table pushed; partial unique index `map_single_default_idx` applied AFTER fixing predicate `is_default`→`"isDefault"` (orchestrator fix commit). Invariant verified live (2nd default → 23505). Table empty → getDefaultMap seeds TestMap on first boot.
+Record pass/fail and date when each item clears its gate in-worktree, before merge.
 
-**Wave 3 shared-surface check**: ✅ RESOLVED → PARALLEL. File sets are disjoint:
-- #15: `src/game/maps/MapEditor.ts` + `src/game/__tests__/engine/MapEditor.test.ts` (and possibly other existing editor tests using getEditorBlocks). Does NOT touch Game.ts/MapManager/play/loaders/server.
-- #16: `schema.ts`, `root.ts`, `play/page.tsx`, `GameLoader.tsx`, `GameCanvas.tsx`, `Game.ts` (`_boot`+`GameOpts`), new `routers/map.ts` + `__tests__/api/map-router.test.ts`. Does NOT touch MapEditor.ts.
-- MapManager.ts untouched by both. New tests in different dirs (engine/ vs api/). No conflict expected at merge.
+| Item | Build | Lint | Typecheck | Tests | Acceptance criteria | Item-specific check |
+| --- | --- | --- | --- | --- | --- | --- |
+| #25 | | | | | | MovementSystem runs over a prefab-built player (would catch Velocity drift); `node_${x}_${z}` ids preserved; no parallel recipes left in test helpers |
+| #26 | | | | | | Lifecycle unit test passes without wiring 4 systems; Curiosity fade-before-despawn integration test green; save restore of active cats unchanged |
+| #27 | | | | | | Controller unit tests run with only a fake tRPC adapter, no jsdom; delete guards (default map, last map) behave as before |
+| #28 | | | | | | Round-trip decode(encode(state)) test; existing save fixtures load unchanged; position vs non-position dirty throttling identical |
+| #29 | | | | | | Core module has no DOM/Three.js imports; core tests run without jsdom; MapData round-trip validates against schema; jsdom test surface shrinks |
 
-## Wave 4: Sequential
+## Integration re-verification log
 
-- **#17** `feat/17-editor-persistence` — Editor DB persistence UI
-  - Status: ✅ Merged (commit d2a48f4; adapter + DB panel; JSON path removed; admin-gated; 816 tests; editor absent from prod bundle)
-  - Dependencies: #15 ✅, #16 ✅
-  - Branch: `feat/17-editor-persistence`
-  - Merged: YES → feat/map-library
+After each merge, re-run build, lint, typecheck, and tests on the integration branch and log the result.
 
-## Decisions (ADR tracking)
+| Date | After merging | Build | Lint | Typecheck | Tests | Conflicts resolved | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-07-02 | #28 | pass | pass | pass | 898 pass | none | ADR-0003; byte-compat proven |
+| 2026-07-02 | #27 | pass | pass | pass | 921 pass | none | controller testable without jsdom |
+| 2026-07-02 | #25 | pass | pass | pass | 931 pass | none | node id centralized; MovementSystem drift test added |
+| 2026-07-02 | #29 | pass | pass | pass | 942 pass | none | DOM-free core; row=Z/col=X orientation-lock test; moveCell edge case preserved |
+| 2026-07-02 | #26 | pass | pass | pass | 947 pass | none (load-restore edits additive) | exact-tick despawn preserved (held+holdless); ADR-0004; CatAISystem folded into lifecycle owner |
 
-| Item | Decision | Status | Reference |
-|------|----------|--------|-----------|
-| #13  | Admin-role model (isAdmin, adminProcedure) | ✅ Recorded | docs/adr/0001-admin-role-model.md |
-| #14  | Canonical `terrain[][]` format spec | ✅ Recorded | docs/adr/0002-canonical-terrain-format.md |
+## Decisions / ADRs to confirm
 
-## Integration branch
+| Decision | Item | Recorded | Confirmed at PR review |
+| --- | --- | --- | --- |
+| ADR-0002 compliance: prefab spawning stays MapData-driven; `node_${x}_${z}` cooldown-id convention preserved for save compat | #25 | yes — `resourceNodeId()` in `src/game/ecs/prefabs.ts` is sole owner of template; grep-confirmed; commit 9347791 | no |
+| Behavior preservation: per-cat systems become effects; no gameplay change to zoomies/curiosity/pounce; active-cat save restore (including yarn accounting) unchanged | #26 | yes — exact-tick despawn test (held+holdless), ADR-0004 two-phase driver; break-it-to-verify confirmed hold-guard; commit ca35791 | no |
+| Behavior preservation: editor save/load/list/set-default/delete flows unchanged after extraction | #27 | yes — exact message strings + delete guards preserved in `MapPersistenceController`; commit f74e92f | no |
+| External save-data shape stays byte-compatible; existing saves load without migration | #28 | yes — ADR-0003 + `SaveCodec.test.ts` byte-compat (JSON.stringify key-order) assertions; commit 470d711 | no |
+| ADR-0002 compliance: core operates on canonical `terrain[][]` (row=Z, col=X); serialized output validates against MapData schema | #29 | yes — `MapMutationCore` has zero DOM/Three.js imports; orientation-lock + mapDataSchema round-trip tests; commit a843a1f | no |
 
-- Base: `main`
-- Integration: `feat/map-library`
-- Status: 🟡 Setting up
+## Finalization checklist
 
-## Notes
+- [x] All items show `merged`
+- [x] Final full build, lint, typecheck, and test suite green on `feat/architecture-deepening` (947 tests, build clean)
+- [x] PR opened into `main` per the single-PR model — PR #30
+- [x] PR body includes `Closes #25` `Closes #26` `Closes #27` `Closes #28` `Closes #29`
+- [x] PR body summarizes every decision/ADR for sign-off
+- [x] All worktrees removed; merged item branches deleted
+- [x] Final PR left for human review (orchestrator does not self-merge)
 
-- Worktrees created on-demand per item, branched from integration tip
-- Plans stored in `plans/<item>.md`
-- Merge model: local merge to integration, no PR until all items merged
-- Verification gates: `pnpm test`, `pnpm lint`, `pnpm typecheck`, `pnpm build` + acceptance criteria per item
+**Run complete.** PR #30: https://github.com/CuriouslyCory/cat-herder/pull/30 — awaiting human review. New ADRs: 0003 (save-codec), 0004 (cat lifecycle).
 
-## Finalization (DONE)
+## Notes and blockers
 
-- [x] All 6 items show merged (#12, #13, #14, #16, #15, #17)
-- [x] Final full suite green on `feat/map-library` @ 141c3e7 — **816 tests**, lint, typecheck, build
-- [x] Single PR opened into `main`: **#19** (https://github.com/CuriouslyCory/cat-herder/pull/19), mergeable
-- [x] PR body includes `Closes #12`–`Closes #17`
-- [x] PR body summarizes ADR 0001 (admin role) + ADR 0002 (terrain format) for sign-off, and the db:push schema changes
-- [x] All worktrees removed; all 6 merged item branches deleted
-- [x] PR left for human review (orchestrator did NOT self-merge)
+Use this space for anything that affected the run: a failed gate and how it was resolved, a conflict during integration, a decision rationale, or a reason an item is `blocked`.
 
-### Items needing reviewer sign-off
-- ADR 0001 admin-role model (boolean `users.isAdmin` + `adminProcedure`)
-- ADR 0002 canonical `terrain[][]` format (`[row][col]`; required resourceNodes/yarnPickups)
-- DB applied via `db:push` to dev Neon (`cat-herder_user`, `cat-herder_map` + partial unique index). Other envs must `db:push`.
+- Previous run's files (Map Editor & Library, #12 to #17, all merged via PR #19) were replaced by this run; history is in git. Old plan files remain at `plans/12.md` to `plans/17.md`.
+- Planning method carried over from the previous run: `/bulletproof-plan` is interactive (plan-mode approval) and unsuitable for autonomous orchestration; use a dedicated planning agent with equivalent rigor per item.

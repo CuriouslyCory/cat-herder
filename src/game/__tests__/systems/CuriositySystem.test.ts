@@ -4,12 +4,10 @@ import { EventBus } from "~/game/engine/EventBus";
 import { GameState } from "~/game/engine/GameState";
 import { PhysicsEngine } from "~/game/engine/PhysicsEngine";
 import { CuriositySystem } from "~/game/systems/CuriositySystem";
-import { CatAISystem } from "~/game/systems/CatAISystem";
 import { CatCompanionManager } from "~/game/cats/CatCompanionManager";
 import { spawnPlayer, spawnHiddenTerrain, spawnCuriosityRevealCat } from "../helpers/entityFactories";
 import { createMockSceneManager } from "../helpers/mockSceneManager";
 import { createMockMapManager } from "../helpers/mockMapManager";
-import { CatType } from "~/game/types";
 import type { HiddenTerrain } from "~/game/ecs/components/HiddenTerrain";
 import type { CatBehavior } from "~/game/ecs/components/CatBehavior";
 import type { Renderable } from "~/game/ecs/components/Renderable";
@@ -35,7 +33,6 @@ describe("CuriositySystem", () => {
   let physics: PhysicsEngine;
   let catManager: CatCompanionManager;
   let curiositySystem: CuriositySystem;
-  let catAI: CatAISystem;
   let mockScene: ReturnType<typeof createMockSceneManager>;
   const DT = 1 / 60;
 
@@ -56,8 +53,9 @@ describe("CuriositySystem", () => {
       () => playerEntity,
       physics,
     );
+    // CuriositySystem depends only on the CatStateView seam — the concrete
+    // manager satisfies it (see src/game/cats/CatLifecycle.ts).
     curiositySystem = new CuriositySystem(mockScene as any, catManager, eventBus);
-    catAI = new CatAISystem();
 
     playerEntity = spawnPlayer(world);
   });
@@ -66,7 +64,7 @@ describe("CuriositySystem", () => {
     const terrain = spawnHiddenTerrain(world, 3, 3);
     spawnCuriosityRevealCat(world, 3, 3, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     curiositySystem.update(world, DT);
 
     const ht = world.getComponent<HiddenTerrain>(terrain, "HiddenTerrain")!;
@@ -78,7 +76,7 @@ describe("CuriositySystem", () => {
     const terrain = spawnHiddenTerrain(world, 50, 50);
     spawnCuriosityRevealCat(world, 3, 3, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     curiositySystem.update(world, DT);
 
     const ht = world.getComponent<HiddenTerrain>(terrain, "HiddenTerrain")!;
@@ -92,7 +90,7 @@ describe("CuriositySystem", () => {
     spawnHiddenTerrain(world, 3, 3);
     spawnCuriosityRevealCat(world, 3, 3, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     curiositySystem.update(world, DT);
 
     expect(handler).toHaveBeenCalledWith(
@@ -100,29 +98,35 @@ describe("CuriositySystem", () => {
     );
   });
 
-  it("hides terrain and dismisses cat on expiry after fade-out", () => {
+  it("hides terrain and despawns cat on expiry after fade-out", () => {
     const terrain = spawnHiddenTerrain(world, 3, 3);
     const catEntity = spawnCuriosityRevealCat(world, 3, 3, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     curiositySystem.update(world, DT);
 
     const ht = world.getComponent<HiddenTerrain>(terrain, "HiddenTerrain")!;
     expect(ht.isRevealed).toBe(true);
 
     for (let i = 0; i < 1201; i++) {
-      catAI.update(world, DT);
+      catManager.update(DT);
     }
 
     const behavior = world.getComponent<CatBehavior>(catEntity, "CatBehavior")!;
     expect(behavior.state).toBe("Expired");
 
+    // Same tick: effect runs (places-then-immediately-releases the hold,
+    // since the terrain's opacity never finished rising before expiry —
+    // see the equivalent legacy quirk this test preserves), then the owner's
+    // flushExpirations() finalizes the despawn — mirroring Game.ts's real
+    // per-tick ordering (update → effects → flushExpirations).
     curiositySystem.update(world, DT);
+    catManager.flushExpirations();
 
     expect(ht.isRevealed).toBe(false);
     expect(ht.revealCount).toBe(0);
-    // dismiss() was called: CatBehavior removed, scale-down animation queued.
-    // Entity stays alive until VisualEffectsSystem completes the 0.2 s tween.
+    // beginDespawn() was called: CatBehavior removed, scale-down animation queued.
+    // Entity stays alive until CatCompanionManager completes the 0.2 s despawn timer.
     expect(world.getComponent(catEntity, "CatBehavior")).toBeNull();
   });
 
@@ -131,7 +135,7 @@ describe("CuriositySystem", () => {
     spawnCuriosityRevealCat(world, 3, 3, 5);
     spawnCuriosityRevealCat(world, 4, 4, 5);
 
-    catAI.update(world, DT);
+    catManager.update(DT);
     curiositySystem.update(world, DT);
 
     const ht = world.getComponent<HiddenTerrain>(terrain, "HiddenTerrain")!;
@@ -144,7 +148,7 @@ describe("CuriositySystem", () => {
       const { entity } = spawnHiddenTerrainWithHandle(world, mockScene, 3, 3);
       spawnCuriosityRevealCat(world, 3, 3, 5);
 
-      catAI.update(world, DT);
+      catManager.update(DT);
       curiositySystem.update(world, DT);
 
       const ht = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
@@ -158,7 +162,7 @@ describe("CuriositySystem", () => {
       const { entity, handle } = spawnHiddenTerrainWithHandle(world, mockScene, 3, 3);
       spawnCuriosityRevealCat(world, 3, 3, 5);
 
-      catAI.update(world, DT);
+      catManager.update(DT);
       curiositySystem.update(world, DT);
 
       const ht = world.getComponent<HiddenTerrain>(entity, "HiddenTerrain")!;
@@ -174,12 +178,12 @@ describe("CuriositySystem", () => {
       expect(mockScene.getOpacity(handle)).toBe(1);
     });
 
-    it("defers dismiss until fade-out completes", () => {
+    it("defers despawn until fade-out completes", () => {
       const { entity } = spawnHiddenTerrainWithHandle(world, mockScene, 3, 3);
       const catEntity = spawnCuriosityRevealCat(world, 3, 3, 5);
 
       // Activate and fully fade in
-      catAI.update(world, DT);
+      catManager.update(DT);
       curiositySystem.update(world, DT);
       for (let i = 0; i < 30; i++) {
         curiositySystem.update(world, DT);
@@ -190,26 +194,34 @@ describe("CuriositySystem", () => {
 
       // Expire the cat (1201 ticks to safely clear the 20s boundary)
       for (let i = 0; i < 1201; i++) {
-        catAI.update(world, DT);
+        catManager.update(DT);
       }
       expect(
         world.getComponent<CatBehavior>(catEntity, "CatBehavior")!.state,
       ).toBe("Expired");
 
-      // First update after expiry: begins fade-out but doesn't dismiss yet
+      // First tick after expiry: CuriositySystem begins fade-out and places a
+      // despawn hold. flushExpirations() (same tick, real ordering) must NOT
+      // despawn while the hold is active — this proves the hold actually
+      // blocks the owner.
       curiositySystem.update(world, DT);
+      catManager.flushExpirations();
       expect(ht.targetOpacity).toBe(0);
       expect(ht.currentOpacity).toBeLessThan(1);
       expect(world.isAlive(catEntity)).toBe(true);
+      expect(world.getComponent(catEntity, "CatBehavior")).not.toBeNull();
 
-      // Tick until fade-out completes
+      // Tick until fade-out completes; flushExpirations() runs each tick to
+      // mirror the real per-tick sequence.
       for (let i = 0; i < 30; i++) {
         curiositySystem.update(world, DT);
+        catManager.flushExpirations();
       }
 
       expect(ht.currentOpacity).toBe(0);
-      // dismiss() was called once fade-out finished — CatBehavior removed,
-      // entity kept alive for VisualEffectsSystem's 0.2 s scale-down tween.
+      // The hold was released once the fade completed — flushExpirations()
+      // then began the despawn: CatBehavior removed, entity kept alive for
+      // CatCompanionManager's own 0.2 s despawn timer.
       expect(world.getComponent(catEntity, "CatBehavior")).toBeNull();
     });
 
@@ -217,7 +229,7 @@ describe("CuriositySystem", () => {
       const { entity, handle } = spawnHiddenTerrainWithHandle(world, mockScene, 3, 3);
       spawnCuriosityRevealCat(world, 3, 3, 5);
 
-      catAI.update(world, DT);
+      catManager.update(DT);
 
       // Track opacity values set on scene across 5 ticks
       const opacities: number[] = [];
@@ -239,7 +251,7 @@ describe("CuriositySystem", () => {
       const { entity, handle } = spawnHiddenTerrainWithHandle(world, mockScene, 3, 3);
       spawnCuriosityRevealCat(world, 3, 3, 5);
 
-      catAI.update(world, DT);
+      catManager.update(DT);
 
       // Fully fade in
       for (let i = 0; i < 40; i++) {

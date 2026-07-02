@@ -14,7 +14,6 @@ import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CuriositySystem } from "../systems/CuriositySystem";
 import { PounceSystem } from "../systems/PounceSystem";
-import { CatAISystem } from "../systems/CatAISystem";
 import { GatheringSystem } from "../systems/GatheringSystem";
 import { YarnPickupSystem } from "../systems/YarnPickupSystem";
 import { VisualEffectsSystem } from "../systems/VisualEffectsSystem";
@@ -27,18 +26,16 @@ import { DebugMenu } from "../ui/DebugMenu";
 import { NavigationOverlay } from "../ui/NavigationOverlay";
 import { MapEditor } from "../maps/MapEditor";
 import { TestMap } from "../maps/TestMap";
-import { CONFIG, runtimeConfig, RESOURCE_CONFIGS } from "../config";
+import { CONFIG, runtimeConfig } from "../config";
 import { Persistence } from "../state/Persistence";
 import type { SaveData as ExternalSaveData } from "../state/SaveData";
-import { createTransform } from "../ecs/components/Transform";
-import { createVelocity } from "../ecs/components/Velocity";
-import { createPlayerControlled } from "../ecs/components/PlayerControlled";
-import { createRenderable } from "../ecs/components/Renderable";
-import { createCollider } from "../ecs/components/Collider";
-import { createResourceNode } from "../ecs/components/ResourceNode";
+import {
+  spawnPlayerEntity,
+  spawnResourceNodeEntity,
+  spawnYarnPickupEntity,
+} from "../ecs/prefabs";
 import type { ResourceNode } from "../ecs/components/ResourceNode";
-import { createYarnPickup } from "../ecs/components/YarnPickup";
-import { CatType, ResourceType, GameAction } from "../types";
+import { CatType, GameAction } from "../types";
 import type { Vec3 } from "../types";
 import type { Entity } from "../ecs/Entity";
 import type { MapData } from "../maps/MapData";
@@ -150,7 +147,6 @@ export class Game {
   private readonly waterSystem: WaterSystem;
   private readonly oxygenSystem: OxygenSystem;
   private readonly catPlacementSystem: CatPlacementSystem;
-  private readonly catAISystem: CatAISystem;
   private readonly zoomiesSystem: ZoomiesSystem;
   private readonly curiositySystem: CuriositySystem;
   private readonly pounceSystem: PounceSystem;
@@ -246,21 +242,22 @@ export class Game {
       this.physics,
     );
 
-    // 11. CatAISystem — generic state machine for all cat companions (runs first)
-    this.catAISystem = new CatAISystem();
-
-    // 11a. ZoomiesSystem — Expired detection, auto-dismiss, and speed-boost overlap
+    // 11a. ZoomiesSystem — pure effect: speed-boost trail overlap. Reads
+    // lifecycle state via the CatStateView seam CatCompanionManager implements;
+    // CatCompanionManager itself (11 above) is the single lifecycle owner —
+    // its update()/flushExpirations() calls replace the old CatAISystem
+    // (see docs/adr/0004-cat-lifecycle-single-owner.md).
     this.zoomiesSystem = new ZoomiesSystem(this.catCompanionManager);
 
-    // 11b. CuriositySystem — hidden terrain reveal timer and auto-dismiss
+    // 11b. CuriositySystem — pure effect: hidden terrain reveal + fade-before-despawn
     this.curiositySystem = new CuriositySystem(
       this.sceneManager,
       this.catCompanionManager,
       this.eventBus,
     );
 
-    // 11c. PounceSystem — upward launch trigger for Pounce cats
-    this.pounceSystem = new PounceSystem(this.physics);
+    // 11c. PounceSystem — pure effect: upward launch trigger for Pounce cats
+    this.pounceSystem = new PounceSystem(this.physics, this.catCompanionManager);
 
     // 11d. GatheringSystem — E-key resource gathering from ResourceNode entities
     this.gatheringSystem = new GatheringSystem(
@@ -480,10 +477,11 @@ export class Game {
             this.collisionSystem.update(this.world, FIXED_DT);
             this.waterSystem.update(this.world, FIXED_DT);
             this.oxygenSystem.update(this.world, FIXED_DT);
-            this.catAISystem.update(this.world, FIXED_DT);
+            this.catCompanionManager.update(FIXED_DT);
             this.zoomiesSystem.update(this.world, FIXED_DT);
             this.curiositySystem.update(this.world, FIXED_DT);
             this.pounceSystem.update(this.world, FIXED_DT);
+            this.catCompanionManager.flushExpirations();
             this.gatheringSystem.update(this.world, FIXED_DT);
             this.yarnPickupSystem.update(this.world, FIXED_DT);
           }
@@ -580,49 +578,17 @@ export class Game {
       spawnZ = spawn?.z ?? 0;
     }
 
-    const s = config?.sizeScale ?? 1;
-    const shape = config?.shape ?? "box";
-    const color = config?.colorHex ?? "#ff6b35";
-
-    // Create ECS entity with all required components
-    const entity = this.world.createEntity();
-
-    this.world.addComponent(entity, createTransform(spawnX, spawnY, spawnZ));
-    this.world.addComponent(entity, createVelocity());
-    this.world.addComponent(entity, createPlayerControlled());
-    this.world.addComponent(
-      entity,
-      createRenderable({
-        geometry: shape,
-        size: 0.5 * s,
-        color,
-        castShadow: true,
-        emissive: color,
-        emissiveIntensity: 0.15,
-        rimLight: runtimeConfig.visual.rimLighting
-          ? { color: 0xffffff, power: 2.0, intensity: 0.5 }
-          : undefined,
-        outlineCategory: "player",
-      }),
-    );
-    this.world.addComponent(
-      entity,
-      createCollider("circle", runtimeConfig.collisionRadius, {
-        collisionLayer: 1,
-        collisionMask: 1,
-      }),
-    );
-
-    // Register physics body at the same position
-    const handle = this.physics.addBody(entity, {
-      shape: "circle",
-      size: runtimeConfig.collisionRadius,
-      isStatic: false,
-      isTrigger: false,
-      collisionLayer: 1,
-      collisionMask: 1,
+    const entity = spawnPlayerEntity(this.world, {
+      position: { x: spawnX, y: spawnY, z: spawnZ },
+      appearance: {
+        shape: config?.shape ?? "box",
+        sizeScale: config?.sizeScale ?? 1,
+        colorHex: config?.colorHex ?? "#ff6b35",
+      },
+      collisionRadius: runtimeConfig.collisionRadius,
+      physics: this.physics,
+      rimLight: runtimeConfig.visual.rimLighting,
     });
-    this.physics.setPosition(handle, { x: spawnX, y: spawnY, z: spawnZ });
 
     this.playerEntity = entity;
 
@@ -634,88 +600,30 @@ export class Game {
   // Private — map population
   // ---------------------------------------------------------------------------
 
-  // Per-type render colors for resource nodes (stable lookup, avoids inline literals)
-  private static readonly _RESOURCE_NODE_COLORS: Record<ResourceType, string> = {
-    [ResourceType.Grass]:  "#7bc67e",
-    [ResourceType.Sticks]: "#8b6355",
-    [ResourceType.Water]:  "#4fc3f7",
-  };
-
   /**
-   * Spawns resource node entities from map data.
+   * Spawns resource node entities from map data via the shared prefab.
    * gatherTime and yieldAmount come from RESOURCE_CONFIGS; respawnTime from the
    * node itself (allows per-node tuning, currently matches RESOURCE_CONFIGS defaults).
    * Cooldown id: node_${x}_${z} — byte-identical to the old hardcoded spawner.
    */
   private spawnMapResourceNodes(data: MapData): void {
-    const NODE_Y = 0.5;
-
     for (const node of data.resourceNodes) {
-      const { x, z, type, respawnTime } = node;
-      const color = Game._RESOURCE_NODE_COLORS[type as ResourceType] ?? "#888888";
-      const cfg = RESOURCE_CONFIGS[type as keyof typeof RESOURCE_CONFIGS];
-      const entity = this.world.createEntity();
-
-      this.world.addComponent(entity, createTransform(x, NODE_Y, z));
-      this.world.addComponent(
-        entity,
-        createRenderable({
-          geometry: type === ResourceType.Sticks ? "cylinder" : "sphere",
-          size: 0.4,
-          color,
-          castShadow: true,
-          emissive: color,
-          emissiveIntensity: 0.2,
-          outlineCategory: "resource",
-        }),
-      );
-      // Trigger collider — same layer as player so CollisionSystem can detect
-      // proximity (not used for trigger events here; GatheringSystem uses distance)
-      this.world.addComponent(
-        entity,
-        createCollider("circle", 0.5, {
-          isStatic: true,
-          isTrigger: true,
-          collisionLayer: 1,
-          collisionMask: 0, // no collision response needed — just a marker
-        }),
-      );
-
-      this.world.addComponent(
-        entity,
-        createResourceNode(type, cfg.gatherTime, cfg.yieldAmount, respawnTime),
-      );
-
+      const { entity, nodeId } = spawnResourceNodeEntity(this.world, {
+        node,
+        physics: this.physics,
+      });
       // Track position-based nodeId so cooldowns can be restored on load.
-      this._nodeIdMap.set(`node_${x}_${z}`, entity);
+      this._nodeIdMap.set(nodeId, entity);
     }
   }
 
   /**
-   * Spawns yarn pickup entities from map data.
+   * Spawns yarn pickup entities from map data via the shared prefab.
    * Each pickup grants yarnAmount yarn on player contact and is auto-destroyed.
    */
   private spawnMapYarnPickups(data: MapData): void {
-    const YARN_Y = 0.5; // center above floor (half of ~0.4u sphere)
-
     for (const pickup of data.yarnPickups) {
-      const { x, z, yarnAmount } = pickup;
-      const entity = this.world.createEntity();
-
-      this.world.addComponent(entity, createTransform(x, YARN_Y, z));
-      this.world.addComponent(
-        entity,
-        createRenderable({
-          geometry: "sphere",
-          size: 0.3,
-          color: "#ffd700",
-          castShadow: true,
-          emissive: "#ffd700",
-          emissiveIntensity: 0.5,
-          outlineCategory: "pickup",
-        }),
-      );
-      this.world.addComponent(entity, createYarnPickup(yarnAmount));
+      spawnYarnPickupEntity(this.world, { pickup, physics: this.physics });
     }
   }
 
@@ -796,14 +704,24 @@ export class Game {
       this.waterSystem.update(this.world, scaledDt);
       // OxygenSystem runs after WaterSystem so OxygenState is already present
       this.oxygenSystem.update(this.world, scaledDt);
-      // CatAISystem drives generic state machine for all cats (Idle→Active→Expired)
-      this.catAISystem.update(this.world, scaledDt);
-      // ZoomiesSystem detects Expired and handles trail overlap + SpeedBoost
+      // CatCompanionManager (single lifecycle owner) drives Idle→Active→Expired
+      // and the despawn-timer countdown/destruction. Runs FIRST among cat-related
+      // systems, at the position CatAISystem used to occupy.
+      this.catCompanionManager.update(scaledDt);
+      // ZoomiesSystem: pure effect — trail overlap + SpeedBoost
       this.zoomiesSystem.update(this.world, scaledDt);
-      // CuriositySystem reveals terrain on first Active tick and dismisses on Expired
+      // CuriositySystem: pure effect — reveals terrain on first Active tick,
+      // holds despawn while revealed terrain fades out on Expired
       this.curiositySystem.update(this.world, scaledDt);
-      // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
+      // PounceSystem: pure effect — player-on-pounce-cat upward launch impulse
       this.pounceSystem.update(this.world, scaledDt);
+      // CatCompanionManager.flushExpirations() begins despawn for any Expired
+      // cat with no active hold. MUST run after the per-cat effect systems
+      // above (same tick) so Curiosity's holdDespawn() call — placed just now,
+      // this same tick — is already in effect before we decide. This preserves
+      // exact-tick despawn-start parity with the legacy four-system pipeline
+      // for both held and holdless cats (see ADR-0004).
+      this.catCompanionManager.flushExpirations();
       // GatheringSystem handles E-key resource gathering, cooldowns, and progress
       this.gatheringSystem.update(this.world, scaledDt);
       // YarnPickupSystem auto-collects yarn pickups on player proximity

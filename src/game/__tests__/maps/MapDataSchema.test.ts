@@ -174,4 +174,133 @@ describe("MapDataSchema required fields", () => {
     const result = mapDataSchema.safeParse({ name: "incomplete" });
     expect(result.success).toBe(false);
   });
+
+  it("rejects invalid TerrainType", () => {
+    const data = makeValidMap();
+    // biome-ignore lint/suspicious/noExplicitAny: test intentional bad type
+    (data.terrain[0]![0] as any).type = "InvalidType";
+    const result = mapDataSchema.safeParse(data);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid spawnPoint role", () => {
+    const data = { ...makeValidMap(), spawnPoints: [{ x: 0, z: 0, role: "badRole" }] };
+    const result = mapDataSchema.safeParse(data);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Positive-dimension constraints (migrated from MapEditor.test.ts "Finding 5
+// regression" — schema-only assertions, no editor/DOM involved; #29).
+// ---------------------------------------------------------------------------
+
+describe("MapDataSchema positive dimension constraints", () => {
+  it("rejects width of 0", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: 0, depth: 10 },
+      terrain: [],
+      cellSize: 1,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects negative width", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: -5, depth: 10 },
+      terrain: [],
+      cellSize: 1,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects depth of 0", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: 10, depth: 0 },
+      terrain: [],
+      cellSize: 1,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects negative depth", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: 10, depth: -3 },
+      terrain: [],
+      cellSize: 1,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects cellSize of 0", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: 10, depth: 10 },
+      terrain: [],
+      cellSize: 0,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects negative cellSize", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad",
+      size: { width: 10, depth: 10 },
+      terrain: [],
+      cellSize: -1,
+      spawnPoints: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts valid map with correct terrain dimensions", () => {
+    const result = mapDataSchema.safeParse({
+      name: "good",
+      size: { width: 4, depth: 2 },
+      terrain: [
+        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
+        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
+      ],
+      cellSize: 1,
+      spawnPoints: [],
+      resourceNodes: [],
+      yarnPickups: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts valid resourceNodes and yarnPickups arrays", () => {
+    const result = mapDataSchema.safeParse({
+      name: "with-entities",
+      size: { width: 1, depth: 1 },
+      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
+      cellSize: 1,
+      spawnPoints: [],
+      resourceNodes: [{ x: 5, z: 5, type: ResourceType.Grass, respawnTime: 30 }],
+      yarnPickups: [{ x: 7, z: 7, yarnAmount: 5 }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid ResourceType in resourceNodes array", () => {
+    const result = mapDataSchema.safeParse({
+      name: "bad-resource",
+      size: { width: 1, depth: 1 },
+      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
+      cellSize: 1,
+      spawnPoints: [],
+      resourceNodes: [{ x: 1, z: 2, type: "BadResource", respawnTime: 30 }],
+      yarnPickups: [],
+    });
+    expect(result.success).toBe(false);
+  });
 });
