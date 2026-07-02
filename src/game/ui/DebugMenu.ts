@@ -1,15 +1,12 @@
 import type { GameState } from "../engine/GameState";
 import type { EventBus } from "../engine/EventBus";
 import type { GameConfig } from "../config";
-import { CONFIG } from "../config";
+import { CONFIG, RESOURCE_CONFIGS } from "../config";
 import type { World } from "../ecs/World";
 import type { CatCompanionManager } from "../cats/CatCompanionManager";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import type { ResourceNode } from "../ecs/components/ResourceNode";
-import { createTransform } from "../ecs/components/Transform";
-import { createRenderable } from "../ecs/components/Renderable";
-import { createCollider } from "../ecs/components/Collider";
-import { createResourceNode } from "../ecs/components/ResourceNode";
+import { spawnResourceNodeEntity } from "../ecs/prefabs";
 import { CatType, ResourceType } from "../types";
 import type { Vec3 } from "../types";
 
@@ -334,49 +331,14 @@ export class DebugMenu {
    * RenderSystem will register the mesh on the next frame.
    */
   applySpawnResourceNode(resourceType: ResourceType, x: number, z: number): void {
-    const GATHER_TIME: Record<ResourceType, number> = {
-      [ResourceType.Grass]: 1.5,
-      [ResourceType.Sticks]: 1.5,
-      [ResourceType.Water]: 2.0,
-    };
-    const RESPAWN_TIME: Record<ResourceType, number> = {
-      [ResourceType.Grass]: 30,
-      [ResourceType.Sticks]: 45,
-      [ResourceType.Water]: 60,
-    };
-    const COLORS: Record<ResourceType, string> = {
-      [ResourceType.Grass]: "#7bc67e",
-      [ResourceType.Sticks]: "#8b6355",
-      [ResourceType.Water]: "#4fc3f7",
-    };
+    // respawnTime is sourced from RESOURCE_CONFIGS (same values the debug
+    // menu's old local RESPAWN_TIME map hardcoded: 30/45/60).
+    const respawnTime =
+      RESOURCE_CONFIGS[resourceType as keyof typeof RESOURCE_CONFIGS].respawnTime;
 
-    const entity = this.world.createEntity();
-    this.world.addComponent(entity, createTransform(x, 0.5, z));
-    this.world.addComponent(
-      entity,
-      createRenderable({
-        geometry: resourceType === ResourceType.Sticks ? "cylinder" : "sphere",
-        size: 0.4,
-        color: COLORS[resourceType],
-        castShadow: true,
-        emissive: COLORS[resourceType],
-        emissiveIntensity: 0.2,
-        outlineCategory: "resource",
-      }),
-    );
-    this.world.addComponent(
-      entity,
-      createCollider("circle", 0.5, {
-        isStatic: true,
-        isTrigger: true,
-        collisionLayer: 1,
-        collisionMask: 0,
-      }),
-    );
-    this.world.addComponent(
-      entity,
-      createResourceNode(resourceType, GATHER_TIME[resourceType]!, 1, RESPAWN_TIME[resourceType]!),
-    );
+    spawnResourceNodeEntity(this.world, {
+      node: { x, z, type: resourceType, respawnTime },
+    });
 
     this.eventBus.emit({
       type: "debug:value-changed",
