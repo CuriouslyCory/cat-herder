@@ -6,7 +6,7 @@ Source of truth for this run. Update after every state change (plan saved, agent
 - Base branch / final PR target: `main`
 - PR model: `single`
 - Tracking context: GitHub Issues CuriouslyCory/cat-herder #25, #26, #27, #28, #29 (architecture deepening, from the 2026-07-02 architecture review)
-- Last updated: 2026-07-02 (run not started) by orchestration-builder
+- Last updated: 2026-07-02 (Wave 1 execution: agents dispatched, worktrees ready) by orchestration-builder
 
 ## Status legend
 
@@ -24,9 +24,9 @@ Source of truth for this run. Update after every state change (plan saved, agent
 
 | Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | not-started | no |
-| #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | not-started | no |
-| #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | not-started | no |
+| #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | in-progress | no |
+| #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | in-progress | no |
+| #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | in-progress | no |
 
 Wave 1 shared-surface flag: #25 and #28 may both touch the load-restore integration test (both assert save-restore behavior). Keep edits additive; reconcile at merge.
 
