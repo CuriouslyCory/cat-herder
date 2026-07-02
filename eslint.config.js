@@ -17,7 +17,7 @@ const config = [
             {
               name: "three",
               message:
-                "Import 'three' only from src/game/engine/ rendering modules (SceneManager, CameraController, PostProcessingManager, TerrainEdgePass)",
+                "Import 'three' only from src/game/engine/ rendering modules (SceneManager, CameraController, PostProcessingManager, OutlineEffectPass)",
             },
           ],
         },
@@ -27,7 +27,7 @@ const config = [
       "src/game/engine/SceneManager.ts",
       "src/game/engine/CameraController.ts",
       "src/game/engine/PostProcessingManager.ts",
-      "src/game/engine/TerrainEdgePass.ts",
+      "src/game/engine/OutlineEffectPass.ts",
     ],
   },
 ];

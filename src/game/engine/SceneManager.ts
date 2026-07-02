@@ -2,6 +2,12 @@ import * as THREE from "three";
 import type { Vec3 } from "../types";
 import { PostProcessingManager } from "./PostProcessingManager";
 import type { VisualConfig } from "../config";
+import {
+  buildGradientRamp,
+  darkenForOutline,
+  jitterPositions,
+} from "./toonStyle";
+import { generateSurfaceTexture } from "./proceduralTexture";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -37,6 +43,13 @@ export interface MeshConfig {
   rimLight?: RimLightConfig;
   /** Category for selective post-processing outlines. Default: "none". */
   outlineCategory?: OutlineCategory;
+  /**
+   * Cosmetic hand-drawn vertex jitter amplitude in world units. When omitted,
+   * the global `handDrawnJitter` visual config applies; set to 0 to opt out
+   * (e.g. terrain/walls, which must stay grid-aligned). Purely visual — never
+   * affects ECS colliders.
+   */
+  jitter?: number;
 }
 
 /**
@@ -55,6 +68,12 @@ export interface RaycastHit {
 // ---------------------------------------------------------------------------
 
 /**
+ * Unit direction the sunlight travels FROM (i.e. the light sits along this
+ * vector, shining down toward the play area at the origin).
+ */
+const SUN_DIRECTION = new THREE.Vector3(-0.5, 1, -0.3).normalize();
+
+/**
  * Isolates Three.js behind a single module boundary.
  * Only SceneManager and CameraController may import from "three".
  */
@@ -67,6 +86,18 @@ export class SceneManager {
   private postProcessing: PostProcessingManager | null = null;
   private visualConfig: VisualConfig | null = null;
   private _grid: THREE.GridHelper | null = null;
+  /** Shared cel-shading ramp for every MeshToonMaterial. Built once, reused. */
+  private readonly toonGradient: THREE.DataTexture;
+  /**
+   * Raw RGBA bytes for the procedural surface pattern. Shared across every
+   * mesh's per-material DataTexture (each needs its own `repeat`, but they all
+   * reference this single pixel buffer — no per-mesh pixel duplication).
+   */
+  private readonly surfaceTexels: { data: Uint8Array; size: number };
+  /** Monotonic per-mesh seed so each jittered mesh gets a distinct lumpiness. */
+  private jitterSeed = 0;
+  /** Warm directional "sun" — its shadow frustum is sized to the loaded map. */
+  private readonly sun: THREE.DirectionalLight;
   /**
    * Fired after every resize with the new canvas dimensions. CameraController
    * registers here to recompute its orthographic frustum for the new aspect
@@ -82,6 +113,11 @@ export class SceneManager {
     visualConfig?: VisualConfig,
   ) {
     this.visualConfig = visualConfig ?? null;
+
+    // Cel-shading gradient ramp shared by every toon material.
+    this.toonGradient = buildToonGradient(visualConfig?.toonBands ?? 3);
+    // Procedural surface pattern (shared pixel buffer; per-mesh texture wraps it).
+    this.surfaceTexels = generateSurfaceTexture(64);
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -102,15 +138,24 @@ export class SceneManager {
     // Default camera (CameraController will replace this)
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
 
-    // Lights
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    // Lights — soft ambient fill + a warm directional "sun".
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
     this.scene.add(ambient);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-    sun.position.set(5, 10, 5);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    this.scene.add(sun);
+    // Sun: a warm directional light angled to reveal form on entity/terrain
+    // sides and cast readable diagonal shadows. Its shadow camera is a tiny ±5
+    // box by default (covers almost none of the map), so sizeSunShadow() — called
+    // from setTerrainGrid on map load — widens the frustum to the whole area.
+    this.sun = new THREE.DirectionalLight(0xfff2e0, 1.15);
+    this.sun.position.copy(SUN_DIRECTION).multiplyScalar(93);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.03;
+    this.sun.shadow.camera.near = 1;
+    this.sun.shadow.camera.far = 400;
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target); // defaults to origin; kept in the graph
 
     // Post-processing (deferred until camera is set via initPostProcessing)
     // Resize handling
@@ -149,12 +194,41 @@ export class SceneManager {
 
   addMesh(config: MeshConfig): SceneHandle {
     const geometry = buildGeometry(config);
+
+    // Cosmetic hand-drawn jitter (render-only; colliders are unaffected).
+    const jitterAmp = config.jitter ?? this.visualConfig?.handDrawnJitter ?? 0;
+    if (jitterAmp > 0) {
+      const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
+      jitterPositions(posAttr.array as Float32Array, jitterAmp, this.jitterSeed++);
+      posAttr.needsUpdate = true;
+      geometry.computeVertexNormals();
+    }
+
     const opacity = config.opacity ?? 1;
-    const material = new THREE.MeshStandardMaterial({
+    const material = new THREE.MeshToonMaterial({
       color: config.color ?? 0xffffff,
+      gradientMap: this.toonGradient,
       transparent: opacity < 1,
       opacity,
     });
+
+    // Procedural grain/hatch surface texture, tiled in ~world-uniform density so
+    // large terrain and small entities read at a consistent scale. Reveals the
+    // seams between adjacent flat-colored surfaces (transition legibility).
+    if (this.visualConfig?.proceduralTexture !== false) {
+      material.map = this.buildSurfaceTexture(config);
+    }
+
+    // Per-object dark "ink" outline (drawn by OutlineEffect). Color = darkened
+    // fill hue; hidden (opacity < 1) meshes suppress the outline so invisible
+    // terrain doesn't leave a floating hull.
+    const fillHex = new THREE.Color(config.color ?? 0xffffff).getHex();
+    material.userData.outlineParameters = {
+      thickness: this.visualConfig?.outlineThickness ?? 0.004,
+      color: new THREE.Color(darkenForOutline(fillHex)).toArray(),
+      alpha: 1,
+      visible: opacity >= 1,
+    };
 
     if (config.emissive !== undefined) {
       material.emissive = new THREE.Color(config.emissive as string);
@@ -194,28 +268,62 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
     const handle: SceneHandle = Symbol("SceneHandle");
     this.meshes.set(handle, mesh);
 
-    const category = config.outlineCategory;
-    if (category && category !== "none" && this.postProcessing) {
-      this.postProcessing.addToOutline(mesh, category);
-    }
-
     return handle;
   }
 
-  /** Update the color of an existing mesh's material. */
+  /**
+   * Build a per-mesh surface-pattern texture. All meshes share the same pixel
+   * buffer (`surfaceTexels`) but get their own DataTexture so `repeat` can be set
+   * per-axis from the mesh's actual world dimensions. That fixes one tile = a
+   * fixed number of world units in BOTH axes, so texel density and hatch
+   * orientation stay identical across tiles of any size or aspect ratio.
+   */
+  private buildSurfaceTexture(config: MeshConfig): THREE.DataTexture {
+    const { data, size } = this.surfaceTexels;
+    const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace; // color-modulation map
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+
+    const scale = this.visualConfig?.textureScale ?? 2;
+    const [rx, rz] = surfaceRepeat(config, scale);
+    tex.repeat.set(rx, rz);
+
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /** Update the color of an existing mesh's material (and its ink outline). */
   setMeshColor(handle: SceneHandle, color: string | number): void {
     const mesh = this.meshes.get(handle);
     if (!mesh) return;
-    (mesh.material as THREE.MeshStandardMaterial).color.set(color as string);
+    const mat = mesh.material as THREE.MeshToonMaterial;
+    mat.color.set(color as string);
+    const params = mat.userData.outlineParameters as
+      | { color: number[] }
+      | undefined;
+    if (params) {
+      const inkHex = darkenForOutline(new THREE.Color(color as string).getHex());
+      params.color = new THREE.Color(inkHex).toArray();
+    }
   }
 
   /** Update the opacity of an existing mesh's material. */
   setMeshOpacity(handle: SceneHandle, opacity: number): void {
     const mesh = this.meshes.get(handle);
     if (!mesh) return;
-    const mat = mesh.material as THREE.MeshStandardMaterial;
+    const mat = mesh.material as THREE.MeshToonMaterial;
     mat.transparent = opacity < 1;
     mat.opacity = opacity;
+    // Keep the ink outline in step with visibility so opacity-0 (hidden)
+    // terrain never draws a floating outline hull.
+    const params = mat.userData.outlineParameters as
+      | { visible: boolean }
+      | undefined;
+    if (params) params.visible = opacity >= 1;
   }
 
   /** Update the emissive color and intensity of an existing mesh. */
@@ -226,7 +334,7 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
   ): void {
     const mesh = this.meshes.get(handle);
     if (!mesh) return;
-    const mat = mesh.material as THREE.MeshStandardMaterial;
+    const mat = mesh.material as THREE.MeshToonMaterial;
     mat.emissive.set(color as string);
     mat.emissiveIntensity = intensity;
   }
@@ -250,14 +358,18 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
     const mesh = this.meshes.get(handle);
     if (!mesh) return;
 
-    this.postProcessing?.removeFromOutline(mesh);
-
     this.scene.remove(mesh);
     mesh.geometry.dispose();
+    // Material.dispose() does not free textures — release the per-mesh surface
+    // map explicitly. (The shared toon gradient is disposed once in dispose().)
+    const disposeMat = (m: THREE.Material) => {
+      (m as THREE.MeshToonMaterial).map?.dispose();
+      m.dispose();
+    };
     if (Array.isArray(mesh.material)) {
-      mesh.material.forEach((m) => m.dispose());
+      mesh.material.forEach(disposeMat);
     } else {
-      mesh.material.dispose();
+      disposeMat(mesh.material);
     }
     this.meshes.delete(handle);
   }
@@ -265,7 +377,7 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
   /** Toggle wireframe rendering on all registered meshes. Used by the debug menu. */
   toggleWireframes(enabled: boolean): void {
     for (const mesh of this.meshes.values()) {
-      (mesh.material as THREE.MeshStandardMaterial).wireframe = enabled;
+      (mesh.material as THREE.MeshToonMaterial).wireframe = enabled;
     }
   }
 
@@ -360,12 +472,41 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
    * without z-fighting. Replaces any existing grid.
    */
   setTerrainGrid(totalWidth: number, totalDepth: number, cellSize: number): void {
+    // Map dimensions are known here — also size the sun's shadow to cover it.
+    this.sizeSunShadow(totalWidth, totalDepth);
+
     this.removeTerrainGrid();
     const divisions = Math.max(1, Math.round(totalWidth / cellSize));
     const size = Math.max(totalWidth, totalDepth);
     this._grid = new THREE.GridHelper(size, divisions, 0x333344, 0x333344);
     this._grid.position.y = 0.01;
     this.scene.add(this._grid);
+  }
+
+  /**
+   * Size the sun's orthographic shadow frustum — and push the light back far
+   * enough — to cover a map of the given dimensions centered on the origin, so
+   * shadows blanket the whole play area instead of a small default region. The
+   * map is bounded and static, so a frustum centered at the origin covers it
+   * wherever the camera roams (no per-frame light following needed).
+   */
+  private sizeSunShadow(width: number, depth: number): void {
+    const maxDim = Math.max(width, depth);
+    const radius = maxDim * 0.8 + 8; // + margin for oblique projection & walls
+    const dist = maxDim * 1.5 + 40;
+
+    this.sun.position.copy(SUN_DIRECTION).multiplyScalar(dist);
+    this.sun.target.position.set(0, 0, 0);
+    this.sun.target.updateMatrixWorld();
+
+    const cam = this.sun.shadow.camera;
+    cam.left = -radius;
+    cam.right = radius;
+    cam.top = radius;
+    cam.bottom = -radius;
+    cam.near = 1;
+    cam.far = dist * 2;
+    cam.updateProjectionMatrix();
   }
 
   /** Remove the terrain grid from the scene and release GPU resources. */
@@ -398,6 +539,7 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
       this.removeMesh(handle);
     }
 
+    this.toonGradient.dispose();
     this.renderer.dispose();
   }
 }
@@ -405,6 +547,53 @@ gl_FragColor.rgb += rimColor * pow(rimDot, rimPower) * rimIntensity;`,
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Wrap a raw cel ramp (from toonStyle.buildGradientRamp) into a 1×N red-channel
+ * DataTexture with NearestFilter — the hard-stepped gradient MeshToonMaterial
+ * samples for flat cel banding.
+ */
+function buildToonGradient(bands: number): THREE.DataTexture {
+  const { data, width } = buildGradientRamp(bands);
+  const tex = new THREE.DataTexture(data, width, 1, THREE.RedFormat);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Per-axis surface-texture repeat, derived (un-rounded) from a mesh's world
+ * dimensions so one tile spans exactly `scale` world units in each axis. This
+ * keeps texel density and hatch orientation constant across meshes of any size
+ * or aspect ratio — the top face is what dominates the isometric view, so we
+ * map the two horizontal extents to the texture's U and V.
+ */
+function surfaceRepeat(config: MeshConfig, scale: number): [number, number] {
+  const size = config.size ?? 1;
+  const [d0 = size, d1 = size, d2 = size] = config.dims ?? [];
+  let wx: number;
+  let wz: number;
+  switch (config.geometry) {
+    case "box":
+      wx = d0; // width
+      wz = d2; // depth
+      break;
+    case "plane":
+      wx = d0;
+      wz = d1;
+      break;
+    case "sphere":
+      wx = wz = size * 2; // diameter
+      break;
+    case "cylinder":
+      wx = wz = Math.max(d0, d1) * 2; // diameter
+      break;
+  }
+  const rep = (w: number) => Math.max(0.25, w / scale);
+  return [rep(wx), rep(wz)];
+}
 
 function buildGeometry(config: MeshConfig): THREE.BufferGeometry {
   const size = config.size ?? 1;
