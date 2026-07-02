@@ -25,8 +25,8 @@ Source of truth for this run. Update after every state change (plan saved, agent
 | Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | in-progress | no |
-| #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | in-progress | no |
-| #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | in-progress | no |
+| #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | merged | yes |
+| #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | merged | yes |
 
 Wave 1 shared-surface flag: #25 and #28 may both touch the load-restore integration test (both assert save-restore behavior). Keep edits additive; reconcile at merge.
 
@@ -57,6 +57,8 @@ After each merge, re-run build, lint, typecheck, and tests on the integration br
 
 | Date | After merging | Build | Lint | Typecheck | Tests | Conflicts resolved | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-07-02 | #28 | pass | pass | pass | 898 pass | none | ADR-0003; byte-compat proven |
+| 2026-07-02 | #27 | pass | pass | pass | 921 pass | none | controller testable without jsdom |
 
 ## Decisions / ADRs to confirm
 
