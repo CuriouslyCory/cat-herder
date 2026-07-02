@@ -35,7 +35,7 @@ Wave 1 shared-surface flag: #25 and #28 may both touch the load-restore integrat
 | Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | #26 | `feat/26-cat-lifecycle` | `../wt-26` | #26 | #25 | `plans/26.md` | not-started | no |
-| #29 | `feat/29-map-mutation-core` | `../wt-29` | #29 | #27 | `plans/29.md` | not-started | no |
+| #29 | `feat/29-map-mutation-core` | `../wt-29` | #29 | #27 | `plans/29.md` | merged | yes |
 
 Wave 2 shared-surface check: clean. Cat systems (#26) and maps (#29) do not overlap.
 
@@ -60,6 +60,7 @@ After each merge, re-run build, lint, typecheck, and tests on the integration br
 | 2026-07-02 | #28 | pass | pass | pass | 898 pass | none | ADR-0003; byte-compat proven |
 | 2026-07-02 | #27 | pass | pass | pass | 921 pass | none | controller testable without jsdom |
 | 2026-07-02 | #25 | pass | pass | pass | 931 pass | none | node id centralized; MovementSystem drift test added |
+| 2026-07-02 | #29 | pass | pass | pass | 942 pass | none | DOM-free core; row=Z/col=X orientation-lock test; moveCell edge case preserved |
 
 ## Decisions / ADRs to confirm
 
@@ -69,7 +70,7 @@ After each merge, re-run build, lint, typecheck, and tests on the integration br
 | Behavior preservation: per-cat systems become effects; no gameplay change to zoomies/curiosity/pounce; active-cat save restore (including yarn accounting) unchanged | #26 | no | no |
 | Behavior preservation: editor save/load/list/set-default/delete flows unchanged after extraction | #27 | yes — exact message strings + delete guards preserved in `MapPersistenceController`; commit f74e92f | no |
 | External save-data shape stays byte-compatible; existing saves load without migration | #28 | yes — ADR-0003 + `SaveCodec.test.ts` byte-compat (JSON.stringify key-order) assertions; commit 470d711 | no |
-| ADR-0002 compliance: core operates on canonical `terrain[][]` (row=Z, col=X); serialized output validates against MapData schema | #29 | no | no |
+| ADR-0002 compliance: core operates on canonical `terrain[][]` (row=Z, col=X); serialized output validates against MapData schema | #29 | yes — `MapMutationCore` has zero DOM/Three.js imports; orientation-lock + mapDataSchema round-trip tests; commit a843a1f | no |
 
 ## Finalization checklist
 
