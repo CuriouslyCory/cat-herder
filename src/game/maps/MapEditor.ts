@@ -1,9 +1,4 @@
-import type {
-  MapData,
-  MapDataResourceNode,
-  MapDataYarnPickup,
-  TerrainCell,
-} from "./MapData";
+import type { MapData } from "./MapData";
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
 import { TerrainType, ResourceType } from "../types";
@@ -14,6 +9,16 @@ import {
   type MapListEntry,
   type MapTrpcAdapter,
 } from "./MapPersistenceController";
+import {
+  MapMutationCore,
+  HEIGHT_MAX,
+  DEFAULT_MAP_SIZE,
+  DEFAULT_CELL_SIZE,
+  type CorePlayerSpawn,
+  type CoreCatSpawn,
+  type CoreResourceNode,
+  type CoreYarnPickup,
+} from "./MapMutationCore";
 
 export type { MapTrpcAdapter } from "./MapPersistenceController";
 
@@ -118,12 +123,21 @@ export type EntityTool =
 export type EditorToolMode = "move" | "delete";
 
 // Internal discriminated union for the object currently being moved.
+//
+// For point entities, `obj` is the LIVE core record (identity-stable
+// reference returned by MapMutationCore's add*/setPlayerSpawn and exposed via
+// its readonly array/getter accessors) — not a copy. Mutating `obj.x`/`obj.z`
+// during a drag therefore mutates the actual stored core data directly (the
+// core has no dedicated "move entity" method; this mirrors the pre-extraction
+// editor's in-place field mutation on its own live arrays). The corresponding
+// SceneHandle is looked up separately via `_entityHandles` (see below), since
+// the core stores no handles at all.
 type MovingObject =
   | { kind: "block"; obj: EditorBlock }
-  | { kind: "playerSpawn"; obj: EditorPlayerSpawn }
-  | { kind: "catSpawn"; obj: EditorCatSpawn }
-  | { kind: "resourceNode"; obj: EditorResourceNode }
-  | { kind: "yarnPickup"; obj: EditorYarnPickup };
+  | { kind: "playerSpawn"; obj: CorePlayerSpawn }
+  | { kind: "catSpawn"; obj: CoreCatSpawn }
+  | { kind: "resourceNode"; obj: CoreResourceNode }
+  | { kind: "yarnPickup"; obj: CoreYarnPickup };
 
 export interface EditorPlayerSpawn {
   x: number;
@@ -215,7 +229,8 @@ const ENTITY_TOOL_LABELS: Record<EntityTool, string> = {
 };
 
 const HEIGHT_MIN = 0.5;
-const HEIGHT_MAX = 5;
+// HEIGHT_MAX is owned by MapMutationCore (the clamp is enforced there); kept
+// as a re-export-free import here purely for the panel's <input max> attrs.
 const HEIGHT_STEP = 0.5;
 const SELECTION_EMISSIVE_COLOR = "#ffffff";
 const SELECTION_EMISSIVE_INTENSITY = 0.4;
@@ -238,9 +253,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 const DEFAULT_YARN_AMOUNT = 3;
 
-// Default map dimensions (used when no map data is loaded)
-const DEFAULT_MAP_SIZE = { width: 30, depth: 30 };
-const DEFAULT_CELL_SIZE = 2;
+// Default map dimensions (used when no map data is loaded) — owned by
+// MapMutationCore; imported above.
 
 // ---------------------------------------------------------------------------
 // MapEditor class
@@ -248,11 +262,18 @@ const DEFAULT_CELL_SIZE = 2;
 
 export class MapEditor {
   private _active = false;
-  private _mapData: MapData | null = null;
+  // The canonical map document (terrain[][] + entity data) and every
+  // mutation on it live in the DOM/Three.js-free MapMutationCore (#29).
+  // MapEditor keeps only Three.js SceneHandle bookkeeping (_cellHandles /
+  // _entityHandles below) and drives the core through a cell-indexed
+  // interface, reflecting returned change-sets into meshes.
+  private readonly _core = new MapMutationCore();
   private _banner: HTMLElement | null = null;
   private _panel: HTMLElement | null = null;
 
-  // Map dimension tracking (set from _mapData on loadMapData)
+  // Map dimension mirrors, synced from the core on load/ensure. Kept
+  // separately (rather than reading this._core.size/cellSize everywhere) to
+  // avoid touching the many world-math call sites below — see plans/29.md.
   private _mapSize: { width: number; depth: number } = { ...DEFAULT_MAP_SIZE };
   private _cellSize: number = DEFAULT_CELL_SIZE;
 
@@ -305,11 +326,10 @@ export class MapEditor {
   private _selectedYarnAmount: number = DEFAULT_YARN_AMOUNT;
   private _entityConfigSection: HTMLElement | null = null;
 
-  // Entity collections
-  private _playerSpawn: EditorPlayerSpawn | null = null;
-  private _catSpawns: EditorCatSpawn[] = [];
-  private _resourceNodes: EditorResourceNode[] = [];
-  private _yarnPickups: EditorYarnPickup[] = [];
+  // Entity data (player spawn, cat spawns, resource nodes, yarn pickups)
+  // lives in _core; this map holds only the paired SceneHandle, keyed by the
+  // live core record's identity (see MovingObject doc comment above).
+  private readonly _entityHandles = new Map<object, SceneHandle | null>();
 
   // Hidden terrain drag state (mirrors water zone drag) — in cell coords
   private _hiddenDragStart: { col: number; row: number } | null = null;
@@ -374,7 +394,7 @@ export class MapEditor {
       const active = this.mapManager.getMapData();
       if (active) {
         this._gameMapBackup = active;
-        this.loadMapData(active); // deep-copies into _mapData, renders non-default cells
+        this.loadMapData(active); // loads into the core, renders non-default cells
         this._renderAllCells(); // fill in the remaining (default) cells for a full floor
         this.mapManager.unloadMap?.(); // editor now owns terrain display
         // Flush the paused RenderSystem so the game's terrain meshes are actually
@@ -440,8 +460,8 @@ export class MapEditor {
     // Hand terrain rendering back to the game. Restore the game's terrain from
     // the captured backup (playMap() clears the backup first so an applied map
     // is not reverted), then clear the editor's own meshes so they don't overlap
-    // the restored game terrain. _clearEditorState() also resets _mapData so the
-    // next enable() reloads a fresh copy of the (possibly updated) game map.
+    // the restored game terrain. _clearEditorState() also clears the core so
+    // the next enable() reloads a fresh copy of the (possibly updated) game map.
     if (this._gameMapBackup && this.mapManager) {
       this.mapManager.loadMap(this._gameMapBackup);
       // Flush the sync so the restored terrain meshes exist immediately, before
@@ -457,96 +477,50 @@ export class MapEditor {
   }
 
   getMapData(): MapData {
-    // Base shape: preserve name/size/cellSize/terrain from _mapData; otherwise sensible defaults.
-    const base = this._mapData;
-    const name = base?.name ?? "untitled";
-    const size = { ...this._mapSize };
-    const cellSize = this._cellSize;
-    // Return the live terrain[][] directly (shallow copy rows)
-    const terrain = base?.terrain.map((row) => [...row]) ?? [];
-
-    // Serialize spawn points from live editor collections (no handles in output).
-    const spawnPoints = [];
-    if (this._playerSpawn) {
-      spawnPoints.push({ x: this._playerSpawn.x, z: this._playerSpawn.z, role: "player" as const });
-    }
-    for (const s of this._catSpawns) {
-      spawnPoints.push({ x: s.x, z: s.z, role: "cat" as const });
-    }
-
-    // Serialize resource nodes and yarn pickups (now required fields on MapData).
-    const resourceNodes: MapDataResourceNode[] = this._resourceNodes.map((n) => ({
-      x: n.x,
-      z: n.z,
-      type: n.type,
-      respawnTime: n.respawnTime,
-    }));
-
-    const yarnPickups: MapDataYarnPickup[] = this._yarnPickups.map((p) => ({
-      x: p.x,
-      z: p.z,
-      yarnAmount: p.yarnAmount,
-    }));
-
-    return {
-      name,
-      size,
-      terrain,
-      cellSize,
-      spawnPoints,
-      resourceNodes,
-      yarnPickups,
-    };
+    return this._core.toMapData();
   }
 
   loadMapData(data: MapData): void {
     // Clear existing editor state and scene meshes before rebuilding.
     this._clearEditorState();
 
-    // Set dimension fields from loaded data.
+    // Set dimension mirrors from loaded data.
     this._mapSize = { ...data.size };
     this._cellSize = data.cellSize;
 
-    // Keep base metadata in sync (deep copy terrain rows).
-    this._mapData = { ...data, terrain: data.terrain.map((row) => [...row]) };
+    // Load the document (terrain + entity data) into the core.
+    this._core.loadFromMapData(data);
 
-    // Rebuild cell meshes from terrain[][]
-    for (let row = 0; row < data.terrain.length; row++) {
-      for (let col = 0; col < (data.terrain[row]?.length ?? 0); col++) {
-        const cell = data.terrain[row]![col]!;
-        // Only create a mesh for non-default cells to avoid thousands of flat meshes.
-        if (cell.height > 0 || cell.type !== TerrainType.Grass) {
-          this._setCellMesh(col, row);
-        }
-      }
+    // Rebuild cell meshes from terrain[][] — only non-default cells, to avoid
+    // thousands of flat meshes.
+    for (const { col, row } of this._core.nonDefaultCells()) {
+      this._setCellMesh(col, row);
     }
 
-    // Rebuild spawn points.
-    for (const sp of data.spawnPoints) {
-      if (sp.role === "player") {
-        const handle = this._createEntityMarkerMesh(sp.x, sp.z, ENTITY_COLORS.playerSpawn);
-        this._playerSpawn = { x: sp.x, z: sp.z, handle };
-      } else if (sp.role === "cat") {
-        const handle = this._createEntityMarkerMesh(sp.x, sp.z, ENTITY_COLORS.catSpawn);
-        this._catSpawns.push({ x: sp.x, z: sp.z, handle });
-      }
+    // Rebuild entity marker meshes, pairing each live core record with its
+    // SceneHandle in the registry.
+    const player = this._core.playerSpawn;
+    if (player) {
+      const handle = this._createEntityMarkerMesh(player.x, player.z, ENTITY_COLORS.playerSpawn);
+      this._entityHandles.set(player, handle);
     }
-
-    // Rebuild resource nodes and yarn pickups from map data.
-    for (const rn of data.resourceNodes) {
+    for (const cat of this._core.catSpawns) {
+      const handle = this._createEntityMarkerMesh(cat.x, cat.z, ENTITY_COLORS.catSpawn);
+      this._entityHandles.set(cat, handle);
+    }
+    for (const rn of this._core.resourceNodes) {
       const color = RESOURCE_NODE_COLORS[rn.type];
       const handle = this._createEntityMarkerMesh(rn.x, rn.z, color);
-      this._resourceNodes.push({ x: rn.x, z: rn.z, type: rn.type, respawnTime: rn.respawnTime, handle });
+      this._entityHandles.set(rn, handle);
     }
-
-    for (const yp of data.yarnPickups) {
+    for (const yp of this._core.yarnPickups) {
       const handle = this._createEntityMarkerMesh(yp.x, yp.z, ENTITY_COLORS.yarnPickup);
-      this._yarnPickups.push({ x: yp.x, z: yp.z, yarnAmount: yp.yarnAmount, handle });
+      this._entityHandles.set(yp, handle);
     }
   }
 
   /**
-   * Tear down all live editor collections and remove their scene meshes.
+   * Tear down all live editor state and remove their scene meshes.
    * Used by loadMapData() before rebuilding and by dispose().
    */
   private _clearEditorState(): void {
@@ -557,28 +531,15 @@ export class MapEditor {
     this._cellHandles.clear();
     this._selectedCell = null;
     this._selectedBlock = null;
-    this._mapData = null;
 
-    // Spawns and entities
-    if (this._playerSpawn?.handle && this.sceneManager) {
-      this.sceneManager.removeMesh(this._playerSpawn.handle);
+    // Entity meshes
+    for (const handle of this._entityHandles.values()) {
+      if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
     }
-    this._playerSpawn = null;
+    this._entityHandles.clear();
 
-    for (const s of this._catSpawns) {
-      if (s.handle && this.sceneManager) this.sceneManager.removeMesh(s.handle);
-    }
-    this._catSpawns = [];
-
-    for (const n of this._resourceNodes) {
-      if (n.handle && this.sceneManager) this.sceneManager.removeMesh(n.handle);
-    }
-    this._resourceNodes = [];
-
-    for (const p of this._yarnPickups) {
-      if (p.handle && this.sceneManager) this.sceneManager.removeMesh(p.handle);
-    }
-    this._yarnPickups = [];
+    // Drop the document (terrain + entity data) held by the core.
+    this._core.clear();
   }
 
   // ── Public API — US-305/17: DB save / load / play ─────────────────────────
@@ -718,13 +679,9 @@ export class MapEditor {
    * is visible and selectable.
    */
   private _renderAllCells(): void {
-    const terrain = this._mapData?.terrain;
-    if (!terrain || !this.sceneManager) return;
-    for (let row = 0; row < terrain.length; row++) {
-      const cols = terrain[row]?.length ?? 0;
-      for (let col = 0; col < cols; col++) {
-        if (!this._cellHandles.has(`${col},${row}`)) this._setCellMesh(col, row);
-      }
+    if (!this.sceneManager) return;
+    for (const { col, row } of this._core.cells()) {
+      if (!this._cellHandles.has(`${col},${row}`)) this._setCellMesh(col, row);
     }
   }
 
@@ -760,25 +717,17 @@ export class MapEditor {
    * Returns non-default cells (type != Grass or height != 0) as EditorBlock entries.
    */
   getEditorBlocks(): readonly EditorBlock[] {
-    if (!this._mapData) return [];
     const blocks: EditorBlock[] = [];
-    for (let row = 0; row < this._mapData.terrain.length; row++) {
-      const terrainRow = this._mapData.terrain[row];
-      if (!terrainRow) continue;
-      for (let col = 0; col < terrainRow.length; col++) {
-        const cell = terrainRow[col];
-        if (!cell) continue;
-        if (cell.type === TerrainType.Grass && cell.height === 0) continue;
-        const { x, z } = this._cellCenter(col, row);
-        const key = `${col},${row}`;
-        blocks.push({
-          x,
-          z,
-          type: cell.type,
-          height: cell.height,
-          handle: this._cellHandles.get(key) ?? null,
-        });
-      }
+    for (const { col, row, cell } of this._core.nonDefaultCells()) {
+      const { x, z } = this._cellCenter(col, row);
+      const key = `${col},${row}`;
+      blocks.push({
+        x,
+        z,
+        type: cell.type,
+        height: cell.height,
+        handle: this._cellHandles.get(key) ?? null,
+      });
     }
     return blocks;
   }
@@ -793,15 +742,9 @@ export class MapEditor {
     const { col, row } = this._snapToCell(worldX, worldZ);
     // Ensure terrain is initialised
     this._ensureTerrain();
-    const terrain = this._mapData?.terrain;
-    if (!terrain?.[row]?.[col]) return;
+    if (!this._core.getCell(col, row)) return;
 
-    terrain[row]![col]! = {
-      type: this._selectedTool,
-      height: terrain[row]![col]!.height > 0 ? terrain[row]![col]!.height : 0,
-      navigable: this._selectedTool !== TerrainType.Water && this._selectedTool !== TerrainType.Hidden,
-    };
-
+    this._core.paintCell(col, row, this._selectedTool);
     this._setCellMesh(col, row);
   }
 
@@ -842,10 +785,9 @@ export class MapEditor {
   updateSelectedBlockType(type: TerrainType): void {
     if (!this._selectedBlock || !this._selectedCell) return;
     const { col, row } = this._selectedCell;
-    const terrain = this._mapData?.terrain;
-    if (!terrain?.[row]?.[col]) return;
+    if (!this._core.getCell(col, row)) return;
 
-    terrain[row]![col]!.type = type;
+    this._core.setCellType(col, row, type);
     this._selectedBlock.type = type;
     this._setCellMesh(col, row);
     // Update the compat block's handle reference after mesh recreation
@@ -861,12 +803,11 @@ export class MapEditor {
    */
   updateSelectedBlockHeight(height: number): void {
     if (!this._selectedBlock || !this._selectedCell) return;
-    const clamped = Math.max(0, Math.min(HEIGHT_MAX, height));
     const { col, row } = this._selectedCell;
-    const terrain = this._mapData?.terrain;
-    if (!terrain?.[row]?.[col]) return;
+    if (!this._core.getCell(col, row)) return;
 
-    terrain[row]![col]!.height = clamped;
+    this._core.setCellHeight(col, row, height);
+    const clamped = this._core.getCell(col, row)!.height;
     this._selectedBlock.height = clamped;
     this._setCellMesh(col, row);
     // Update the compat block's handle reference after mesh recreation
@@ -887,10 +828,7 @@ export class MapEditor {
     this._cellHandles.delete(key);
 
     // Reset terrain cell to default
-    const terrain = this._mapData?.terrain;
-    if (terrain?.[row]?.[col]) {
-      terrain[row]![col]! = { type: TerrainType.Grass, height: 0, navigable: true };
-    }
+    this._core.resetCell(col, row);
 
     this._selectedBlock = null;
     this._selectedCell = null;
@@ -904,25 +842,18 @@ export class MapEditor {
    * which is sufficient for the compat API.
    */
   getEditorWaterZones(): readonly EditorWaterZone[] {
-    if (!this._mapData) return [];
     const zones: EditorWaterZone[] = [];
-    for (let row = 0; row < this._mapData.terrain.length; row++) {
-      const terrainRow = this._mapData.terrain[row];
-      if (!terrainRow) continue;
-      for (let col = 0; col < terrainRow.length; col++) {
-        const cell = terrainRow[col];
-        if (!cell || cell.type !== TerrainType.Water) continue;
-        const { x, z } = this._cellCenter(col, row);
-        const key = `${col},${row}`;
-        zones.push({
-          x1: x,
-          z1: z,
-          x2: x,
-          z2: z,
-          depth: cell.depth ?? this._selectedWaterDepth,
-          handle: this._cellHandles.get(key) ?? null,
-        });
-      }
+    for (const { col, row, cell } of this._core.cellsOfType(TerrainType.Water)) {
+      const { x, z } = this._cellCenter(col, row);
+      const key = `${col},${row}`;
+      zones.push({
+        x1: x,
+        z1: z,
+        x2: x,
+        z2: z,
+        depth: cell.depth ?? this._selectedWaterDepth,
+        handle: this._cellHandles.get(key) ?? null,
+      });
     }
     return zones;
   }
@@ -934,26 +865,10 @@ export class MapEditor {
   createWaterZone(x1: number, z1: number, x2: number, z2: number): void {
     const c1 = this._snapToCell(x1, z1);
     const c2 = this._snapToCell(x2, z2);
-    const minCol = Math.min(c1.col, c2.col);
-    const maxCol = Math.max(c1.col, c2.col);
-    const minRow = Math.min(c1.row, c2.row);
-    const maxRow = Math.max(c1.row, c2.row);
 
     this._ensureTerrain();
-    const terrain = this._mapData?.terrain;
-    if (!terrain) return;
-
-    for (let row = minRow; row <= maxRow; row++) {
-      for (let col = minCol; col <= maxCol; col++) {
-        if (!terrain[row]?.[col]) continue;
-        terrain[row]![col]! = {
-          type: TerrainType.Water,
-          height: 0,
-          navigable: false,
-          depth: this._selectedWaterDepth,
-        };
-        this._setCellMesh(col, row);
-      }
+    for (const { col, row } of this._core.paintWaterRect(c1, c2, this._selectedWaterDepth)) {
+      this._setCellMesh(col, row);
     }
   }
 
@@ -1025,49 +940,43 @@ export class MapEditor {
 
   /** The single player spawn point, or null if not yet placed. */
   getPlayerSpawn(): EditorPlayerSpawn | null {
-    return this._playerSpawn;
+    const p = this._core.playerSpawn;
+    return p ? { x: p.x, z: p.z, handle: this._entityHandles.get(p) ?? null } : null;
   }
 
   /** Read-only view of placed cat spawn points. */
   getCatSpawns(): readonly EditorCatSpawn[] {
-    return this._catSpawns;
+    return this._core.catSpawns.map((s) => ({ ...s, handle: this._entityHandles.get(s) ?? null }));
   }
 
   /** Read-only view of placed resource nodes. */
   getResourceNodes(): readonly EditorResourceNode[] {
-    return this._resourceNodes;
+    return this._core.resourceNodes.map((n) => ({ ...n, handle: this._entityHandles.get(n) ?? null }));
   }
 
   /**
    * Read-only view of hidden terrain zones (compat shim — derived from terrain[][]).
    */
   getEditorHiddenTerrainZones(): readonly EditorHiddenTerrainZone[] {
-    if (!this._mapData) return [];
     const zones: EditorHiddenTerrainZone[] = [];
-    for (let row = 0; row < this._mapData.terrain.length; row++) {
-      const terrainRow = this._mapData.terrain[row];
-      if (!terrainRow) continue;
-      for (let col = 0; col < terrainRow.length; col++) {
-        const cell = terrainRow[col];
-        if (!cell || cell.type !== TerrainType.Hidden) continue;
-        const { x, z } = this._cellCenter(col, row);
-        const key = `${col},${row}`;
-        zones.push({
-          x1: x,
-          z1: z,
-          x2: x,
-          z2: z,
-          height: cell.height,
-          handle: this._cellHandles.get(key) ?? null,
-        });
-      }
+    for (const { col, row, cell } of this._core.cellsOfType(TerrainType.Hidden)) {
+      const { x, z } = this._cellCenter(col, row);
+      const key = `${col},${row}`;
+      zones.push({
+        x1: x,
+        z1: z,
+        x2: x,
+        z2: z,
+        height: cell.height,
+        handle: this._cellHandles.get(key) ?? null,
+      });
     }
     return zones;
   }
 
   /** Read-only view of placed yarn pickups. */
   getYarnPickups(): readonly EditorYarnPickup[] {
-    return this._yarnPickups;
+    return this._core.yarnPickups.map((p) => ({ ...p, handle: this._entityHandles.get(p) ?? null }));
   }
 
   /**
@@ -1077,25 +986,10 @@ export class MapEditor {
   createHiddenTerrainZone(x1: number, z1: number, x2: number, z2: number): void {
     const c1 = this._snapToCell(x1, z1);
     const c2 = this._snapToCell(x2, z2);
-    const minCol = Math.min(c1.col, c2.col);
-    const maxCol = Math.max(c1.col, c2.col);
-    const minRow = Math.min(c1.row, c2.row);
-    const maxRow = Math.max(c1.row, c2.row);
 
     this._ensureTerrain();
-    const terrain = this._mapData?.terrain;
-    if (!terrain) return;
-
-    for (let row = minRow; row <= maxRow; row++) {
-      for (let col = minCol; col <= maxCol; col++) {
-        if (!terrain[row]?.[col]) continue;
-        terrain[row]![col]! = {
-          type: TerrainType.Hidden,
-          height: this._selectedHiddenTerrainHeight,
-          navigable: false,
-        };
-        this._setCellMesh(col, row);
-      }
+    for (const { col, row } of this._core.paintHiddenRect(c1, c2, this._selectedHiddenTerrainHeight)) {
+      this._setCellMesh(col, row);
     }
   }
 
@@ -1211,7 +1105,7 @@ export class MapEditor {
    */
   private _setCellMesh(col: number, row: number): void {
     const key = `${col},${row}`;
-    const cell = this._mapData?.terrain[row]?.[col];
+    const cell = this._core.getCell(col, row);
     if (!cell || !this.sceneManager) return;
 
     // Remove old mesh if present
@@ -1237,28 +1131,11 @@ export class MapEditor {
   }
 
   /**
-   * Lazily initialise terrain[][] if _mapData is null.
+   * Lazily initialise terrain[][] in the core if not already present.
    * Uses the current _mapSize and _cellSize.
    */
   private _ensureTerrain(): void {
-    if (this._mapData) return;
-    const rows = Math.round(this._mapSize.depth / this._cellSize);
-    const cols = Math.round(this._mapSize.width / this._cellSize);
-    this._mapData = {
-      name: "untitled",
-      size: { ...this._mapSize },
-      cellSize: this._cellSize,
-      terrain: Array.from({ length: rows }, () =>
-        Array.from({ length: cols }, (): TerrainCell => ({
-          type: TerrainType.Grass,
-          height: 0,
-          navigable: true,
-        }))
-      ),
-      spawnPoints: [],
-      resourceNodes: [],
-      yarnPickups: [],
-    };
+    this._core.ensureTerrain(this._mapSize, this._cellSize);
   }
 
   // ── Private — DOM construction ─────────────────────────────────────────────
@@ -1936,7 +1813,8 @@ export class MapEditor {
       // Build exclude set: ghost and any object being moved (so raycast gets ground)
       const excludeHandles = new Set<SceneHandle>();
       if (this._ghostHandle) excludeHandles.add(this._ghostHandle);
-      if (this._movingObject?.obj.handle) excludeHandles.add(this._movingObject.obj.handle);
+      const movingHandle = this._movingObject ? this._handleOf(this._movingObject) : null;
+      if (movingHandle) excludeHandles.add(movingHandle);
 
       const worldPos = this.sceneManager.screenToWorld(
         e.clientX - rect.left,
@@ -2088,29 +1966,27 @@ export class MapEditor {
       // US-304: finalize move drag
       if (this._movingObject) {
         this._suppressNextClick = true;
-        // For terrain blocks: commit the move to terrain[][]
+        // For terrain blocks: commit the move via the core (returns the
+        // affected {col,row} refs — source first, then destination only if
+        // the destination was in range; see MapMutationCore.moveCell()).
         if (this._movingObject.kind === "block" && this._movingBlockOrigin) {
           const orig = this._movingBlockOrigin;
           const newPos = this._snapToCell(this._movingObject.obj.x, this._movingObject.obj.z);
-          const terrain = this._mapData?.terrain;
-          if (terrain && (newPos.col !== orig.col || newPos.row !== orig.row)) {
-            const srcCell = terrain[orig.row]?.[orig.col];
-            if (srcCell) {
-              // Clear old cell
-              terrain[orig.row]![orig.col]! = { type: TerrainType.Grass, height: 0, navigable: true };
-              const oldKey = `${orig.col},${orig.row}`;
-              const oldHandle = this._cellHandles.get(oldKey);
-              if (oldHandle && this.sceneManager) this.sceneManager.removeMesh(oldHandle);
-              this._cellHandles.delete(oldKey);
-              // Write to new cell
-              if (terrain[newPos.row]?.[newPos.col] !== undefined) {
-                terrain[newPos.row]![newPos.col]! = { ...srcCell };
-                this._setCellMesh(newPos.col, newPos.row);
-                // Update the block's x/z to the finalized cell center
-                const { x, z } = this._cellCenter(newPos.col, newPos.row);
-                this._movingObject.obj.x = x;
-                this._movingObject.obj.z = z;
-              }
+          const affected = this._core.moveCell(orig, newPos);
+          if (affected.length > 0) {
+            // Source cell was cleared — remove its old mesh.
+            const oldKey = `${orig.col},${orig.row}`;
+            const oldHandle = this._cellHandles.get(oldKey);
+            if (oldHandle && this.sceneManager) this.sceneManager.removeMesh(oldHandle);
+            this._cellHandles.delete(oldKey);
+
+            if (affected.length > 1) {
+              // Destination was in range and received the moved cell's data.
+              this._setCellMesh(newPos.col, newPos.row);
+              // Update the block's x/z to the finalized cell center
+              const { x, z } = this._cellCenter(newPos.col, newPos.row);
+              this._movingObject.obj.x = x;
+              this._movingObject.obj.z = z;
             }
           }
         }
@@ -2180,8 +2056,7 @@ export class MapEditor {
         );
         if (!worldPos) return;
         const { col, row } = this._snapToCell(worldPos.x, worldPos.z);
-        const terrain = this._mapData?.terrain;
-        const cell = terrain?.[row]?.[col];
+        const cell = this._core.getCell(col, row);
         // Any in-bounds cell is selectable/editable — including flat grass — so
         // an author can click any tile to change its type or raise its height.
         if (cell) {
@@ -2207,36 +2082,40 @@ export class MapEditor {
 
   private _placePlayerSpawn(x: number, z: number): void {
     // Only one player spawn allowed — move existing one if present
-    if (this._playerSpawn) {
-      if (this._playerSpawn.handle && this.sceneManager) {
-        this.sceneManager.removeMesh(this._playerSpawn.handle);
-      }
-      this._playerSpawn = null;
+    const existing = this._core.playerSpawn;
+    if (existing) {
+      const oldHandle = this._entityHandles.get(existing);
+      if (oldHandle && this.sceneManager) this.sceneManager.removeMesh(oldHandle);
+      this._entityHandles.delete(existing);
+      this._core.clearPlayerSpawn();
     }
     const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.playerSpawn);
-    this._playerSpawn = { x, z, handle };
+    const rec = this._core.setPlayerSpawn(x, z);
+    this._entityHandles.set(rec, handle);
   }
 
   private _placeCatSpawn(x: number, z: number): void {
     const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.catSpawn);
-    this._catSpawns.push({ x, z, handle });
+    const rec = this._core.addCatSpawn(x, z);
+    this._entityHandles.set(rec, handle);
   }
 
   private _placeResourceNode(x: number, z: number): void {
     const color = RESOURCE_NODE_COLORS[this._selectedResourceNodeType];
     const handle = this._createEntityMarkerMesh(x, z, color);
-    this._resourceNodes.push({
+    const rec = this._core.addResourceNode({
       x,
       z,
       type: this._selectedResourceNodeType,
       respawnTime: this._selectedRespawnTime,
-      handle,
     });
+    this._entityHandles.set(rec, handle);
   }
 
   private _placeYarnPickup(x: number, z: number): void {
     const handle = this._createEntityMarkerMesh(x, z, ENTITY_COLORS.yarnPickup);
-    this._yarnPickups.push({ x, z, yarnAmount: this._selectedYarnAmount, handle });
+    const rec = this._core.addYarnPickup({ x, z, yarnAmount: this._selectedYarnAmount });
+    this._entityHandles.set(rec, handle);
   }
 
   private _createEntityMarkerMesh(
@@ -2405,8 +2284,7 @@ export class MapEditor {
    */
   private _findPointObjectAt(worldX: number, worldZ: number, col: number, row: number): MovingObject | null {
     // Check terrain cell (non-default)
-    const terrain = this._mapData?.terrain;
-    const cell = terrain?.[row]?.[col];
+    const cell = this._core.getCell(col, row);
     if (cell && (cell.type !== TerrainType.Grass || cell.height !== 0)) {
       const { x, z } = this._cellCenter(col, row);
       const key = `${col},${row}`;
@@ -2420,20 +2298,29 @@ export class MapEditor {
       return { kind: "block", obj: block };
     }
 
-    // Check point entities by proximity (using exact world-space coords)
-    if (this._playerSpawn && Math.abs(this._playerSpawn.x - worldX) < this._cellSize / 2 && Math.abs(this._playerSpawn.z - worldZ) < this._cellSize / 2) {
-      return { kind: "playerSpawn", obj: this._playerSpawn };
+    // Check point entities by proximity (using exact world-space coords).
+    // These read the core's LIVE records directly (not the zipped compat
+    // getters) so identity is preserved for the subsequent move/delete.
+    const player = this._core.playerSpawn;
+    if (player && Math.abs(player.x - worldX) < this._cellSize / 2 && Math.abs(player.z - worldZ) < this._cellSize / 2) {
+      return { kind: "playerSpawn", obj: player };
     }
-    const cat = this._catSpawns.find((s) => Math.abs(s.x - worldX) < this._cellSize / 2 && Math.abs(s.z - worldZ) < this._cellSize / 2);
+    const cat = this._core.catSpawns.find((s) => Math.abs(s.x - worldX) < this._cellSize / 2 && Math.abs(s.z - worldZ) < this._cellSize / 2);
     if (cat) return { kind: "catSpawn", obj: cat };
 
-    const node = this._resourceNodes.find((n) => Math.abs(n.x - worldX) < this._cellSize / 2 && Math.abs(n.z - worldZ) < this._cellSize / 2);
+    const node = this._core.resourceNodes.find((n) => Math.abs(n.x - worldX) < this._cellSize / 2 && Math.abs(n.z - worldZ) < this._cellSize / 2);
     if (node) return { kind: "resourceNode", obj: node };
 
-    const yarn = this._yarnPickups.find((p) => Math.abs(p.x - worldX) < this._cellSize / 2 && Math.abs(p.z - worldZ) < this._cellSize / 2);
+    const yarn = this._core.yarnPickups.find((p) => Math.abs(p.x - worldX) < this._cellSize / 2 && Math.abs(p.z - worldZ) < this._cellSize / 2);
     if (yarn) return { kind: "yarnPickup", obj: yarn };
 
     return null;
+  }
+
+  /** SceneHandle for a MovingObject — blocks carry their own; entities are looked up in the registry. */
+  private _handleOf(found: MovingObject): SceneHandle | null {
+    if (found.kind === "block") return found.obj.handle;
+    return this._entityHandles.get(found.obj) ?? null;
   }
 
   /** Remove a found object from its collection and the scene. */
@@ -2448,10 +2335,7 @@ export class MapEditor {
         if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
         this._cellHandles.delete(key);
         // Reset terrain cell to default
-        const terrain = this._mapData?.terrain;
-        if (terrain?.[r]?.[c]) {
-          terrain[r]![c]! = { type: TerrainType.Grass, height: 0, navigable: true };
-        }
+        this._core.resetCell(c, r);
         if (this._selectedBlock === found.obj || (this._selectedCell?.col === c && this._selectedCell?.row === r)) {
           this._selectedBlock = null;
           this._selectedCell = null;
@@ -2460,34 +2344,31 @@ export class MapEditor {
         break;
       }
       case "playerSpawn": {
-        if (found.obj.handle && this.sceneManager) {
-          this.sceneManager.removeMesh(found.obj.handle);
-        }
-        this._playerSpawn = null;
+        const handle = this._entityHandles.get(found.obj);
+        if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+        this._entityHandles.delete(found.obj);
+        this._core.clearPlayerSpawn();
         break;
       }
       case "catSpawn": {
-        if (found.obj.handle && this.sceneManager) {
-          this.sceneManager.removeMesh(found.obj.handle);
-        }
-        const idx = this._catSpawns.indexOf(found.obj);
-        if (idx !== -1) this._catSpawns.splice(idx, 1);
+        const handle = this._entityHandles.get(found.obj);
+        if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+        this._entityHandles.delete(found.obj);
+        this._core.removeCatSpawn(found.obj);
         break;
       }
       case "resourceNode": {
-        if (found.obj.handle && this.sceneManager) {
-          this.sceneManager.removeMesh(found.obj.handle);
-        }
-        const idx = this._resourceNodes.indexOf(found.obj);
-        if (idx !== -1) this._resourceNodes.splice(idx, 1);
+        const handle = this._entityHandles.get(found.obj);
+        if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+        this._entityHandles.delete(found.obj);
+        this._core.removeResourceNode(found.obj);
         break;
       }
       case "yarnPickup": {
-        if (found.obj.handle && this.sceneManager) {
-          this.sceneManager.removeMesh(found.obj.handle);
-        }
-        const idx = this._yarnPickups.indexOf(found.obj);
-        if (idx !== -1) this._yarnPickups.splice(idx, 1);
+        const handle = this._entityHandles.get(found.obj);
+        if (handle && this.sceneManager) this.sceneManager.removeMesh(handle);
+        this._entityHandles.delete(found.obj);
+        this._core.removeYarnPickup(found.obj);
         break;
       }
     }
@@ -2497,11 +2378,12 @@ export class MapEditor {
   private _updateObjectPosition(found: MovingObject, x: number, z: number): void {
     found.obj.x = x;
     found.obj.z = z;
-    if (!found.obj.handle || !this.sceneManager) return;
+    const handle = this._handleOf(found);
+    if (!handle || !this.sceneManager) return;
     if (found.kind === "block") {
       const { boxHeight, centerY } = cellMeshGeometry(found.obj.height);
       this.sceneManager.updateTransform(
-        found.obj.handle,
+        handle,
         { x, y: centerY, z },
         { x: 0, y: 0, z: 0 },
         { x: 1, y: 1, z: 1 },
@@ -2511,7 +2393,7 @@ export class MapEditor {
       void boxHeight; // suppress unused warning
     } else {
       this.sceneManager.updateTransform(
-        found.obj.handle,
+        handle,
         { x, y: 0.5, z },
         { x: 0, y: 0, z: 0 },
         { x: 1, y: 1, z: 1 },

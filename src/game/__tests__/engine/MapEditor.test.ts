@@ -375,41 +375,11 @@ describe("Ctrl+E keyboard toggle", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getMapData() / loadMapData()
-// ---------------------------------------------------------------------------
-
-describe("getMapData() / loadMapData()", () => {
-  it("loadMapData() stores the data and getMapData() returns it", () => {
-    const data = makeSampleMapData();
-    editor.loadMapData(data);
-    const result = editor.getMapData();
-    expect(result.name).toBe("test-map");
-    expect(result.size).toEqual({ width: 1, depth: 1 });
-    expect(result.spawnPoints).toHaveLength(1);
-  });
-
-  it("loadMapData() performs a shallow copy — original terrain rows independent", () => {
-    const data = makeSampleMapData();
-    editor.loadMapData(data);
-    data.name = "mutated";
-    expect(editor.getMapData().name).toBe("test-map");
-  });
-
-  it("getMapData() round-trips correctly after loadMapData()", () => {
-    const data = makeSampleMapData();
-    editor.loadMapData(data);
-    const loaded = editor.getMapData();
-    editor.loadMapData(loaded);
-    expect(editor.getMapData().name).toBe("test-map");
-  });
-
-  it("getMapData() returns default map before any loadMapData call", () => {
-    const data = editor.getMapData();
-    expect(data.cellSize).toBe(2);
-    expect(data.spawnPoints).toEqual([]);
-  });
-});
-
+// getMapData() / loadMapData() — pure-data suite migrated to
+// MapMutationCore.test.ts (#29): the load -> serialize round-trip, shallow
+// terrain-row copy, and default-document shape are now covered there,
+// scaffold-free, via MapMutationCore directly (loadFromMapData/toMapData).
+// This file keeps only the DOM/scene-observing delegation suites below.
 // ---------------------------------------------------------------------------
 // Tool selection
 // ---------------------------------------------------------------------------
@@ -475,93 +445,13 @@ describe("MapEditor.snapToGrid()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Block placement
+// Block placement — pure-data suite migrated to MapMutationCore.test.ts
+// (#29): the navigable/height-preserve rules, occupied-cell repaint, and
+// rect-fill semantics that placeBlock() delegates to are covered there via
+// MapMutationCore.paintCell() directly. This file keeps only the
+// SceneManager-observing delegation suite below, which also exercises
+// MapEditor's own world->cell snapping.
 // ---------------------------------------------------------------------------
-
-describe("placeBlock()", () => {
-  it("does nothing when no tool is selected", () => {
-    const data = makeMapData(5, 5, 2);
-    editor.loadMapData(data);
-    editor.placeBlock(5, 3);
-    expect(editor.getEditorBlocks()).toHaveLength(0);
-  });
-
-  it("places a Stone block — visible in getEditorBlocks() and terrain[][]", () => {
-    // Use a small 6×6/cellSize=2 map so cell math is predictable.
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Stone);
-    // World (-5, -5) → cell(0,0) in a 12×12/cellSize=2 map
-    editor.placeBlock(-5, -5);
-    const blocks = editor.getEditorBlocks();
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.type).toBe(TerrainType.Stone);
-  });
-
-  it("placed block has correct terrain type", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Stone);
-    editor.placeBlock(0, 0);
-    const { col, row } = worldToCell(0, 0, 2, 12, 12);
-    expect(editor.getMapData().terrain[row]![col]!.type).toBe(TerrainType.Stone);
-  });
-
-  it("placed block has height 0 (cell default) unless the cell already has height", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Dirt);
-    editor.placeBlock(0, 0);
-    const { col, row } = worldToCell(0, 0, 2, 12, 12);
-    expect(editor.getMapData().terrain[row]![col]!.height).toBe(0);
-  });
-
-  it("placing multiple non-Grass blocks at different positions creates multiple entries", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Stone);
-    // Three clearly separate cells
-    editor.placeBlock(-5, -5); // cell (0,0)
-    editor.placeBlock(1, -5);  // cell (3,0)
-    editor.placeBlock(-5, 1);  // cell (0,3)
-    expect(editor.getEditorBlocks()).toHaveLength(3);
-  });
-
-  it("placing a block at an occupied position updates its type instead of adding", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Dirt);
-    editor.placeBlock(0, 0);
-    editor.selectTool(TerrainType.Stone);
-    editor.placeBlock(0, 0);
-    const blocks = editor.getEditorBlocks();
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.type).toBe(TerrainType.Stone);
-  });
-
-  it("nearby clicks that map to the same cell are deduplicated", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Water);
-    // Both positions should snap to the same cell
-    const center = cellToWorld(3, 3, 2, 12, 12);
-    editor.placeBlock(center.x - 0.3, center.z - 0.3);
-    editor.placeBlock(center.x + 0.3, center.z + 0.3);
-    // Only one Water cell
-    expect(editor.getEditorWaterZones()).toHaveLength(1);
-  });
-
-  it("clicks that snap to different cells create separate entries", () => {
-    const data = makeMapData(6, 6, 2);
-    editor.loadMapData(data);
-    editor.selectTool(TerrainType.Stone);
-    const c1 = cellToWorld(1, 1, 2, 12, 12);
-    const c2 = cellToWorld(3, 3, 2, 12, 12);
-    editor.placeBlock(c1.x, c1.z);
-    editor.placeBlock(c2.x, c2.z);
-    expect(editor.getEditorBlocks()).toHaveLength(2);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Placement with SceneManager — block mesh creation
@@ -2375,50 +2265,10 @@ describe("move tool drag", () => {
 });
 
 // ---------------------------------------------------------------------------
-// US-305 — Zod schema validation
+// US-305 — Zod schema validation — fully migrated to the dedicated,
+// scaffold-free src/game/__tests__/maps/MapDataSchema.test.ts (#29); this
+// describe block was a pure duplicate of coverage that lives there.
 // ---------------------------------------------------------------------------
-
-describe("mapDataSchema (US-305)", () => {
-  it("accepts valid MapData", () => {
-    const result = mapDataSchema.safeParse(makeSampleMapData());
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects MapData missing required fields", () => {
-    const result = mapDataSchema.safeParse({ name: "test" });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects invalid TerrainType", () => {
-    const data = makeSampleMapData();
-    // biome-ignore lint/suspicious/noExplicitAny: test intentional bad type
-    (data.terrain[0]![0] as any).type = "InvalidType";
-    const result = mapDataSchema.safeParse(data);
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects invalid spawnPoint role", () => {
-    const data = makeSampleMapData();
-    // biome-ignore lint/suspicious/noExplicitAny: test intentional bad type
-    (data.spawnPoints[0] as any).role = "badRole";
-    const result = mapDataSchema.safeParse(data);
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects empty terrain (terrain must have at least one row)", () => {
-    const data: MapData = {
-      name: "empty",
-      size: { width: 10, depth: 10 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-      resourceNodes: [],
-      yarnPickups: [],
-    };
-    const result = mapDataSchema.safeParse(data);
-    expect(result.success).toBe(false);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // US-17 — DB persistence (makeMockMapAdapter)
@@ -3212,118 +3062,10 @@ describe("dispose() removes terrain block meshes (Finding 4 regression)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Finding 5 (Major) — schema rejects zero/negative dimensions
+// Finding 5 (Major) — schema rejects zero/negative dimensions — migrated to
+// the dedicated MapDataSchema.test.ts ("positive dimension constraints",
+// #29); pure schema assertions, no editor/DOM involved.
 // ---------------------------------------------------------------------------
-
-describe("mapDataSchema positive constraints (Finding 5 regression)", () => {
-  it("rejects width of 0", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: 0, depth: 10 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects negative width", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: -5, depth: 10 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects depth of 0", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: 10, depth: 0 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects negative depth", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: 10, depth: -3 },
-      terrain: [],
-      cellSize: 1,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects cellSize of 0", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: 10, depth: 10 },
-      terrain: [],
-      cellSize: 0,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects negative cellSize", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad",
-      size: { width: 10, depth: 10 },
-      terrain: [],
-      cellSize: -1,
-      spawnPoints: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts valid map with correct terrain dimensions", () => {
-    const result = mapDataSchema.safeParse({
-      name: "good",
-      size: { width: 4, depth: 2 },
-      terrain: [
-        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
-        [{ type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }, { type: TerrainType.Grass, height: 0, navigable: true }],
-      ],
-      cellSize: 1,
-      spawnPoints: [],
-      resourceNodes: [],
-      yarnPickups: [],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts valid resourceNodes and yarnPickups arrays", () => {
-    const result = mapDataSchema.safeParse({
-      name: "with-entities",
-      size: { width: 1, depth: 1 },
-      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
-      cellSize: 1,
-      spawnPoints: [],
-      resourceNodes: [{ x: 5, z: 5, type: ResourceType.Grass, respawnTime: 30 }],
-      yarnPickups: [{ x: 7, z: 7, yarnAmount: 5 }],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid ResourceType in resourceNodes array", () => {
-    const result = mapDataSchema.safeParse({
-      name: "bad-resource",
-      size: { width: 1, depth: 1 },
-      terrain: [[{ type: TerrainType.Grass, height: 0, navigable: true }]],
-      cellSize: 1,
-      spawnPoints: [],
-      resourceNodes: [{ x: 1, z: 2, type: "BadResource", respawnTime: 30 }],
-      yarnPickups: [],
-    });
-    expect(result.success).toBe(false);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Plan §A — Cell-aware snapping (US-315 new tests)
@@ -3374,42 +3116,11 @@ describe("cell-aware snapping (plan §A)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan §B — terrain[][] round-trip: loadMapData → getMapData
+// Plan §B — terrain[][] round-trip: migrated to MapMutationCore.test.ts
+// (#29) — "MapMutationCore round-trip (AC #3)" covers loadFromMapData() ->
+// toMapData() exactness and double-round-trip stability directly on the
+// core, without the document/scene scaffold this file requires.
 // ---------------------------------------------------------------------------
-
-describe("terrain round-trip (plan §B)", () => {
-  it("loadMapData → getMapData returns exact terrain[][]", () => {
-    const terrain: TerrainCell[][] = [
-      [
-        { type: TerrainType.Water, height: 0, navigable: false, depth: 2 },
-        { type: TerrainType.Grass, height: 1, navigable: true },
-      ],
-    ];
-    const data: MapData = {
-      name: "rt",
-      size: { width: 4, depth: 2 },
-      cellSize: 2,
-      terrain,
-      spawnPoints: [],
-      resourceNodes: [],
-      yarnPickups: [],
-    };
-    editor.loadMapData(data);
-    const out = editor.getMapData();
-    expect(out.terrain[0]![0]!.type).toBe(TerrainType.Water);
-    expect(out.terrain[0]![0]!.depth).toBe(2);
-    expect(out.terrain[0]![1]!.height).toBe(1);
-  });
-
-  it("double round-trip is stable: loadMapData(getMapData()) produces identical terrain", () => {
-    const data = makeFullSampleMapData();
-    editor.loadMapData(data);
-    const once = editor.getMapData();
-    editor.loadMapData(once);
-    const twice = editor.getMapData();
-    expect(twice.terrain).toEqual(once.terrain);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Plan §C — Vertical-layer alignment (cellMeshGeometry via MockSceneManager)
@@ -3462,48 +3173,10 @@ describe("cell mesh vertical alignment (plan §C)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Plan §D — Water/hidden cell painting with depth
+// Plan §D — Water/hidden cell painting with depth: migrated to
+// MapMutationCore.test.ts (#29) — "paintWaterRect() / paintHiddenRect()"
+// covers the type/depth/navigable/height assertions directly on the core.
 // ---------------------------------------------------------------------------
-
-describe("water/hidden cell painting (plan §D)", () => {
-  it("createWaterZone paints Water type with depth into terrain[][]", () => {
-    editor.loadMapData(makeMapData(4, 4, 2));
-    editor.setSelectedWaterDepth(3);
-    const c = cellToWorld(0, 0, 2, 8, 8);
-    editor.createWaterZone(c.x, c.z, c.x, c.z);
-    const terrain = editor.getMapData().terrain;
-    expect(terrain[0]![0]!.type).toBe(TerrainType.Water);
-    expect(terrain[0]![0]!.depth).toBe(3);
-    expect(terrain[0]![0]!.navigable).toBe(false);
-  });
-
-  it("createHiddenTerrainZone paints Hidden type with height into terrain[][]", () => {
-    editor.loadMapData(makeMapData(4, 4, 2));
-    const c = cellToWorld(0, 0, 2, 8, 8);
-    editor.createHiddenTerrainZone(c.x, c.z, c.x, c.z);
-    const cell = editor.getMapData().terrain[0]![0]!;
-    expect(cell.type).toBe(TerrainType.Hidden);
-    expect(cell.navigable).toBe(false);
-    expect(typeof cell.height).toBe("number");
-  });
-
-  it("water depth persists through getMapData() terrain round-trip", () => {
-    editor.loadMapData(makeMapData(4, 4, 2));
-    editor.setSelectedWaterDepth(5);
-    const c = cellToWorld(1, 1, 2, 8, 8);
-    editor.createWaterZone(c.x, c.z, c.x, c.z);
-    const exported = editor.getMapData();
-    const ed2 = new MapEditor(
-      makeMockEl() as unknown as HTMLElement,
-      makeMockCamera() as unknown as CameraController,
-      makeGameLifecycle(),
-      null,
-    );
-    ed2.loadMapData(exported);
-    expect(ed2.getMapData().terrain[1]![1]!.depth).toBe(5);
-    ed2.dispose();
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Plan §E — Entity snapping to cell centers
