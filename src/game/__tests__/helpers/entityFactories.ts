@@ -1,17 +1,29 @@
 import { World } from "~/game/ecs/World";
-import { createTransform } from "~/game/ecs/components/Transform";
-import { createPlayerControlled } from "~/game/ecs/components/PlayerControlled";
-import { createCatBehavior } from "~/game/ecs/components/CatBehavior";
 import { createOxygenState } from "~/game/ecs/components/OxygenState";
 import { createSwimmingState } from "~/game/ecs/components/SwimmingState";
-import { createResourceNode } from "~/game/ecs/components/ResourceNode";
-import { createYarnPickup } from "~/game/ecs/components/YarnPickup";
 import { createHiddenTerrain } from "~/game/ecs/components/HiddenTerrain";
 import { createCuriosityReveal } from "~/game/ecs/components/CuriosityReveal";
 import { createZoomiesTrail } from "~/game/ecs/components/ZoomiesTrail";
-import { createSpeedBoost } from "~/game/ecs/components/SpeedBoost";
+import { createTransform } from "~/game/ecs/components/Transform";
+import { createCatBehavior } from "~/game/ecs/components/CatBehavior";
+import type { CatBehavior } from "~/game/ecs/components/CatBehavior";
+import type { ResourceNode } from "~/game/ecs/components/ResourceNode";
+import {
+  spawnPlayerEntity,
+  spawnResourceNodeEntity,
+  spawnYarnPickupEntity,
+  assembleCatEntity,
+} from "~/game/ecs/prefabs";
+import { CAT_REGISTRY } from "~/game/cats/definitions";
+import { getCatHalfHeight, getXZHalfExtent } from "~/game/cats/CatCompanionManager";
 import type { CatType, ResourceType } from "~/game/types";
 import type { Entity } from "~/game/ecs/Entity";
+
+// ---------------------------------------------------------------------------
+// Test entity factories — thin wrappers that delegate to the shared prefab
+// module (src/game/ecs/prefabs.ts) so tests build entities through the exact
+// same recipes production uses. No parallel component assembly lives here.
+// ---------------------------------------------------------------------------
 
 export function spawnPlayer(
   world: World,
@@ -19,11 +31,9 @@ export function spawnPlayer(
   y = 0.5,
   z = 0,
 ): Entity {
-  const entity = world.createEntity();
-  world.addComponent(entity, createTransform(x, y, z));
-  world.addComponent(entity, { type: "Velocity", x: 0, y: 0, z: 0 });
-  world.addComponent(entity, createPlayerControlled());
-  return entity;
+  // No `physics` passed — headless tests never needed a PhysicsEngine body
+  // for these player entities; they only queried by component presence.
+  return spawnPlayerEntity(world, { position: { x, y, z } });
 }
 
 export function spawnCat(
@@ -34,9 +44,33 @@ export function spawnCat(
   z = 5,
   yarnCost = 2,
 ): Entity {
-  const entity = world.createEntity();
-  world.addComponent(entity, createTransform(x, y, z));
-  world.addComponent(entity, createCatBehavior(catType, 1, yarnCost));
+  const def = CAT_REGISTRY.get(catType);
+  if (!def) {
+    // Fallback for an unregistered CatType (e.g. a test double) — keeps a
+    // minimal Transform + CatBehavior entity rather than throwing.
+    const entity = world.createEntity();
+    world.addComponent(entity, createTransform(x, y, z));
+    world.addComponent(entity, createCatBehavior(catType, 1, yarnCost));
+    return entity;
+  }
+
+  // Delegates the core 4-component assembly (Transform, Renderable, Collider,
+  // CatBehavior) to the same prefab CatCompanionManager.summon() uses.
+  const entity = assembleCatEntity(world, {
+    definition: def,
+    position: { x, y, z },
+    centerY: y,
+    owner: 1,
+    halfHeight: getCatHalfHeight(def),
+    xzHalfExtent: getXZHalfExtent(def),
+  });
+
+  // Test callers may request a yarnCost independent of the definition's real
+  // cost (default param predates CAT_REGISTRY-derived costs) — override after
+  // assembly so existing test expectations are unaffected.
+  const behavior = world.getComponent<CatBehavior>(entity, "CatBehavior")!;
+  behavior.yarnCost = yarnCost;
+
   return entity;
 }
 
@@ -62,9 +96,18 @@ export function spawnResourceNode(
   yieldAmount = 1,
   respawnTime = 10,
 ): Entity {
-  const entity = world.createEntity();
-  world.addComponent(entity, createTransform(x, 0.5, z));
-  world.addComponent(entity, createResourceNode(resourceType, gatherTime, yieldAmount, respawnTime));
+  const { entity } = spawnResourceNodeEntity(world, {
+    node: { x, z, type: resourceType, respawnTime },
+  });
+
+  // Production always derives gatherTime/yieldAmount from RESOURCE_CONFIGS
+  // via the prefab. Some tests (e.g. GatheringSystem.test.ts) intentionally
+  // pass non-production timings to keep test loops short — override after
+  // assembly so those callers keep their exact prior behavior.
+  const node = world.getComponent<ResourceNode>(entity, "ResourceNode")!;
+  node.gatherTime = gatherTime;
+  node.yieldAmount = yieldAmount;
+
   return entity;
 }
 
@@ -74,10 +117,7 @@ export function spawnYarnPickup(
   z = 0,
   amount = 3,
 ): Entity {
-  const entity = world.createEntity();
-  world.addComponent(entity, createTransform(x, 0.5, z));
-  world.addComponent(entity, createYarnPickup(amount));
-  return entity;
+  return spawnYarnPickupEntity(world, { pickup: { x, z, yarnAmount: amount } });
 }
 
 export function spawnHiddenTerrain(

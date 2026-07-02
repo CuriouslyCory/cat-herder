@@ -11,13 +11,12 @@ import { CAT_REGISTRY } from "./definitions";
 import type { CatDefinition } from "./CatDefinition";
 import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
-import { createCollider } from "../ecs/components/Collider";
-import { createCatBehavior } from "../ecs/components/CatBehavior";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
 import { createCuriosityReveal } from "../ecs/components/CuriosityReveal";
 import { createCatScaleAnimation } from "../ecs/components/CatScaleAnimation";
 import type { CatScaleAnimation } from "../ecs/components/CatScaleAnimation";
+import { assembleCatEntity } from "../ecs/prefabs";
 import { runtimeConfig } from "../config";
 
 // ---------------------------------------------------------------------------
@@ -152,37 +151,21 @@ export class CatCompanionManager {
     }
     const owner = this.getPlayerEntity() ?? 0;
 
-    const entity = this.world.createEntity();
-
-    // Place entity so its bottom face rests on terrain (center = surfaceY + halfHeight).
-    // Scale starts at 0; VisualEffectsSystem tweens it to 1 over 0.2s (summon pop-in).
-    this.world.addComponent(
-      entity,
-      createTransform(position.x, centerY, position.z, 0, 0, 0, 0),
-    );
-
-    this.world.addComponent(entity, createRenderable(def.meshConfig));
-
     // XZ collision collider for CollisionSystem (horizontal push / trigger detection).
     // Size is the XZ half-extent derived from the cat definition params or defaults.
-    //
-    // Terrain and launch cats also register a PhysicsEngine body (below) which
-    // handles ground detection AND horizontal collision resolution.  Their ECS
-    // Collider is set to isTrigger so CollisionSystem emits overlap events
-    // without applying a second physics push — avoiding a dual-push desync
-    // between PhysicsEngine body positions and ECS Transform positions.
     const xzHalfExtent = getXZHalfExtent(def);
-    const hasPhysicsBody = def.effectType === "terrain" || def.effectType === "launch";
-    this.world.addComponent(
-      entity,
-      createCollider("box", xzHalfExtent, {
-        isStatic: true,
-        isTrigger: hasPhysicsBody,
-        collisionLayer: 1,
-        collisionMask: 1,
-        halfHeight,
-      }),
-    );
+
+    // Shared component assembly (Transform, Renderable, Collider, CatBehavior)
+    // lives in the prefab module — the single source of truth also used by
+    // headless tests. Physics body / trail / curiosity orchestration stays here.
+    const entity = assembleCatEntity(this.world, {
+      definition: def,
+      position,
+      centerY,
+      owner,
+      halfHeight,
+      xzHalfExtent,
+    });
 
     // Terrain and launch cats need a PhysicsEngine static body so the player can
     // land on top of them via the downward ground-detection raycast.
@@ -205,11 +188,6 @@ export class CatCompanionManager {
       this.physics.setPosition(handle, { x: position.x, y: centerY, z: position.z });
       this.physicsHandles.set(entity, handle);
     }
-
-    this.world.addComponent(
-      entity,
-      createCatBehavior(catType, owner, def.yarnCost),
-    );
 
     // Movement cats (Zoomies) get an elongated trail entity that ZoomiesSystem
     // uses for the oriented AABB speed-boost overlap check.
@@ -461,8 +439,11 @@ export function getCatHalfHeight(def: CatDefinition): number {
  * Returns the XZ half-extent to use for the ECS Collider (CollisionSystem).
  * Prefers explicit colliderWidth from behavior.params; falls back to the mesh
  * footprint or a sensible default.
+ *
+ * Exported so test helpers (entityFactories.spawnCat) can compute the same
+ * value when delegating to the shared assembleCatEntity prefab.
  */
-function getXZHalfExtent(def: CatDefinition): number {
+export function getXZHalfExtent(def: CatDefinition): number {
   const params = def.behavior.params ?? {};
   if (typeof params.colliderWidth === "number") return params.colliderWidth / 2;
   const { dims, size = 0.5 } = def.meshConfig;
