@@ -75,13 +75,15 @@ After each merge, re-run build, lint, typecheck, and tests on the integration br
 
 ## Finalization checklist
 
-- [ ] All items show `merged`
-- [ ] Final full build, lint, typecheck, and test suite green on `feat/architecture-deepening`
-- [ ] PR opened into `main` per the single-PR model
-- [ ] PR body includes `Closes #25` `Closes #26` `Closes #27` `Closes #28` `Closes #29`
-- [ ] PR body summarizes every decision/ADR for sign-off
-- [ ] All worktrees removed; merged item branches deleted
-- [ ] Final PR left for human review (orchestrator does not self-merge)
+- [x] All items show `merged`
+- [x] Final full build, lint, typecheck, and test suite green on `feat/architecture-deepening` (947 tests, build clean)
+- [x] PR opened into `main` per the single-PR model — PR #30
+- [x] PR body includes `Closes #25` `Closes #26` `Closes #27` `Closes #28` `Closes #29`
+- [x] PR body summarizes every decision/ADR for sign-off
+- [x] All worktrees removed; merged item branches deleted
+- [x] Final PR left for human review (orchestrator does not self-merge)
+
+**Run complete.** PR #30: https://github.com/CuriouslyCory/cat-herder/pull/30 — awaiting human review. New ADRs: 0003 (save-codec), 0004 (cat lifecycle).
 
 ## Notes and blockers
 
