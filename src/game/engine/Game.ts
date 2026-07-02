@@ -14,7 +14,6 @@ import { CatPlacementSystem } from "../systems/CatPlacementSystem";
 import { ZoomiesSystem } from "../systems/ZoomiesSystem";
 import { CuriositySystem } from "../systems/CuriositySystem";
 import { PounceSystem } from "../systems/PounceSystem";
-import { CatAISystem } from "../systems/CatAISystem";
 import { GatheringSystem } from "../systems/GatheringSystem";
 import { YarnPickupSystem } from "../systems/YarnPickupSystem";
 import { VisualEffectsSystem } from "../systems/VisualEffectsSystem";
@@ -148,7 +147,6 @@ export class Game {
   private readonly waterSystem: WaterSystem;
   private readonly oxygenSystem: OxygenSystem;
   private readonly catPlacementSystem: CatPlacementSystem;
-  private readonly catAISystem: CatAISystem;
   private readonly zoomiesSystem: ZoomiesSystem;
   private readonly curiositySystem: CuriositySystem;
   private readonly pounceSystem: PounceSystem;
@@ -244,21 +242,22 @@ export class Game {
       this.physics,
     );
 
-    // 11. CatAISystem — generic state machine for all cat companions (runs first)
-    this.catAISystem = new CatAISystem();
-
-    // 11a. ZoomiesSystem — Expired detection, auto-dismiss, and speed-boost overlap
+    // 11a. ZoomiesSystem — pure effect: speed-boost trail overlap. Reads
+    // lifecycle state via the CatStateView seam CatCompanionManager implements;
+    // CatCompanionManager itself (11 above) is the single lifecycle owner —
+    // its update()/flushExpirations() calls replace the old CatAISystem
+    // (see docs/adr/0004-cat-lifecycle-single-owner.md).
     this.zoomiesSystem = new ZoomiesSystem(this.catCompanionManager);
 
-    // 11b. CuriositySystem — hidden terrain reveal timer and auto-dismiss
+    // 11b. CuriositySystem — pure effect: hidden terrain reveal + fade-before-despawn
     this.curiositySystem = new CuriositySystem(
       this.sceneManager,
       this.catCompanionManager,
       this.eventBus,
     );
 
-    // 11c. PounceSystem — upward launch trigger for Pounce cats
-    this.pounceSystem = new PounceSystem(this.physics);
+    // 11c. PounceSystem — pure effect: upward launch trigger for Pounce cats
+    this.pounceSystem = new PounceSystem(this.physics, this.catCompanionManager);
 
     // 11d. GatheringSystem — E-key resource gathering from ResourceNode entities
     this.gatheringSystem = new GatheringSystem(
@@ -478,10 +477,11 @@ export class Game {
             this.collisionSystem.update(this.world, FIXED_DT);
             this.waterSystem.update(this.world, FIXED_DT);
             this.oxygenSystem.update(this.world, FIXED_DT);
-            this.catAISystem.update(this.world, FIXED_DT);
+            this.catCompanionManager.update(FIXED_DT);
             this.zoomiesSystem.update(this.world, FIXED_DT);
             this.curiositySystem.update(this.world, FIXED_DT);
             this.pounceSystem.update(this.world, FIXED_DT);
+            this.catCompanionManager.flushExpirations();
             this.gatheringSystem.update(this.world, FIXED_DT);
             this.yarnPickupSystem.update(this.world, FIXED_DT);
           }
@@ -704,14 +704,24 @@ export class Game {
       this.waterSystem.update(this.world, scaledDt);
       // OxygenSystem runs after WaterSystem so OxygenState is already present
       this.oxygenSystem.update(this.world, scaledDt);
-      // CatAISystem drives generic state machine for all cats (Idle→Active→Expired)
-      this.catAISystem.update(this.world, scaledDt);
-      // ZoomiesSystem detects Expired and handles trail overlap + SpeedBoost
+      // CatCompanionManager (single lifecycle owner) drives Idle→Active→Expired
+      // and the despawn-timer countdown/destruction. Runs FIRST among cat-related
+      // systems, at the position CatAISystem used to occupy.
+      this.catCompanionManager.update(scaledDt);
+      // ZoomiesSystem: pure effect — trail overlap + SpeedBoost
       this.zoomiesSystem.update(this.world, scaledDt);
-      // CuriositySystem reveals terrain on first Active tick and dismisses on Expired
+      // CuriositySystem: pure effect — reveals terrain on first Active tick,
+      // holds despawn while revealed terrain fades out on Expired
       this.curiositySystem.update(this.world, scaledDt);
-      // PounceSystem checks for player-on-pounce-cat and applies upward launch impulse
+      // PounceSystem: pure effect — player-on-pounce-cat upward launch impulse
       this.pounceSystem.update(this.world, scaledDt);
+      // CatCompanionManager.flushExpirations() begins despawn for any Expired
+      // cat with no active hold. MUST run after the per-cat effect systems
+      // above (same tick) so Curiosity's holdDespawn() call — placed just now,
+      // this same tick — is already in effect before we decide. This preserves
+      // exact-tick despawn-start parity with the legacy four-system pipeline
+      // for both held and holdless cats (see ADR-0004).
+      this.catCompanionManager.flushExpirations();
       // GatheringSystem handles E-key resource gathering, cooldowns, and progress
       this.gatheringSystem.update(this.world, scaledDt);
       // YarnPickupSystem auto-collects yarn pickups on player proximity

@@ -152,6 +152,42 @@ describe("restoreActiveCats — entity creation", () => {
     restoreActiveCats([{ catType: CatType.Loaf, position: { x: 20, y: 0, z: 0 } }]);
     expect(catManager.getActiveCompanions().length).toBe(3);
   });
+
+  // -------------------------------------------------------------------------
+  // #26: the deepened CatCompanionManager (single lifecycle owner) must not
+  // perturb the restore path — restored cats appear in getActiveCompanions()
+  // and drive normally through owner.update()/flushExpirations() afterward,
+  // with yarn staying stable (no double refund, no double deduction).
+  // -------------------------------------------------------------------------
+  it("restored cats appear in getActiveCompanions() and drive normally through owner.update() with yarn stable", () => {
+    const initialYarn = gameState.yarn; // 10
+
+    restoreActiveCats([
+      { catType: CatType.Loaf, position: { x: 0, y: 0, z: 0 } },
+      { catType: CatType.Zoomies, position: { x: 5, y: 0, z: 5 } },
+    ]);
+
+    expect(gameState.yarn).toBe(initialYarn);
+    const companions = catManager.getActiveCompanions();
+    expect(companions).toHaveLength(2);
+
+    // Drive the owner exactly as Game.ts's fixed-step loop would (update then
+    // flushExpirations each tick) well past the Zoomies cat's 8 s duration —
+    // no per-cat effect systems are wired, proving the owner alone drives
+    // restored cats correctly.
+    const DT = 1 / 60;
+    for (let i = 0; i < 500; i++) {
+      catManager.update(DT);
+      catManager.flushExpirations();
+    }
+
+    // Zoomies expired and was NOT refunded (it consumed its yarn on expiry,
+    // same as any summoned cat); Loaf is permanent and still present.
+    // Net yarn stays exactly where it was after restore — no drift.
+    expect(gameState.yarn).toBe(initialYarn);
+    const remaining = catManager.getActiveCompanions();
+    expect(remaining).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

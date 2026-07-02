@@ -1,5 +1,6 @@
 import type { World } from "../ecs/World";
 import type { PhysicsEngine } from "../engine/PhysicsEngine";
+import type { CatStateView } from "../cats/CatLifecycle";
 import type { CatBehavior } from "../ecs/components/CatBehavior";
 import type { Transform } from "../ecs/components/Transform";
 import type { Entity } from "../ecs/Entity";
@@ -7,7 +8,8 @@ import { CAT_REGISTRY } from "../cats/definitions";
 import { CatType } from "../types";
 
 /**
- * PounceSystem — drives the Pounce cat's one-shot upward launch mechanic.
+ * PounceSystem — a pure effect: drives the Pounce cat's one-shot upward
+ * launch mechanic each fixed tick.
  *
  * Each fixed tick:
  *  1. Finds all Pounce cat entities via CatBehavior query.
@@ -24,6 +26,9 @@ import { CatType } from "../types";
  * Air control (70 %) is already applied globally by runtimeConfig.airControlFactor
  * in MovementSystem — no additional wiring needed here.
  *
+ * Pounce cats are permanent (no duration), so this system never sees Expired
+ * and never dismisses — it only reads Active state via the CatStateView seam.
+ *
  * Frame position: after CuriositySystem in the fixed-step loop.
  */
 export class PounceSystem {
@@ -33,7 +38,10 @@ export class PounceSystem {
    */
   private readonly launchedCats = new Set<Entity>();
 
-  constructor(private readonly physics: PhysicsEngine) {}
+  constructor(
+    private readonly physics: PhysicsEngine,
+    private readonly catState: CatStateView,
+  ) {}
 
   update(world: World, _dt: number): void {
     // ── Find the player entity ───────────────────────────────────────────────
@@ -66,8 +74,8 @@ export class PounceSystem {
       const behavior = world.getComponent<CatBehavior>(catEntity, "CatBehavior")!;
       if (behavior.catType !== CatType.Pounce) continue;
 
-      // CatAISystem handles Idle→Active; only process Active cats here.
-      if (behavior.state !== "Active") continue;
+      // CatCompanionManager handles Idle→Active; only process Active cats here.
+      if (!this.catState.isActive(catEntity)) continue;
 
       const catTransform = world.getComponent<Transform>(catEntity, "Transform")!;
 

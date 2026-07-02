@@ -11,13 +11,13 @@ import { CAT_REGISTRY } from "./definitions";
 import type { CatDefinition } from "./CatDefinition";
 import { createTransform } from "../ecs/components/Transform";
 import { createRenderable } from "../ecs/components/Renderable";
-import type { CatBehavior } from "../ecs/components/CatBehavior";
+import type { CatBehavior, CatState } from "../ecs/components/CatBehavior";
 import { createZoomiesTrail } from "../ecs/components/ZoomiesTrail";
 import { createCuriosityReveal } from "../ecs/components/CuriosityReveal";
 import { createCatScaleAnimation } from "../ecs/components/CatScaleAnimation";
-import type { CatScaleAnimation } from "../ecs/components/CatScaleAnimation";
 import { assembleCatEntity } from "../ecs/prefabs";
 import { runtimeConfig } from "../config";
+import type { CatStateView } from "./CatLifecycle";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,19 +33,29 @@ export interface CatCatalogEntry {
 }
 
 // ---------------------------------------------------------------------------
-// CatCompanionManager
+// CatCompanionManager — the single lifecycle owner for the Cat Companion.
 //
-// Single module responsible for the full companion lifecycle:
-//   summon()   — validate, deduct yarn, create ECS entity, emit cat:summoned
-//   dismiss()  — refund yarn (if not expired), destroy entity, emit cat:dismissed
-//   getCatalog() — enumerate all registered cat types for the HUD
-//   getActiveCompanions() — live list of active companion entities
+// One module owns the full lifecycle — summon → active → (expiry) →
+// despawning → destroyed — plus cap eviction, the yarn-refund rule, and the
+// despawn animation phase (see docs/adr/0004-cat-lifecycle-single-owner.md):
+//   summon()           — validate, deduct yarn, create ECS entity, emit cat:summoned
+//   dismiss()          — manual entry point; refunds yarn (if not Expired), begins despawn
+//   update(dt)         — state machine driver (Idle→Active→Expired) + despawn-timer
+//                         countdown/destruction. Call FIRST each fixed tick, at the
+//                         position CatAISystem used to occupy (before per-cat effects).
+//   flushExpirations() — begins despawn for any Expired-and-unheld cat. Call AFTER the
+//                         per-cat effect systems each fixed tick (see method doc for why).
+//   getCatalog() / getActiveCompanions() — read-only queries for the HUD.
+//
+// CatCompanionManager also implements CatStateView — the read-only seam that
+// per-cat effect systems (Zoomies/Curiosity/Pounce) use to read lifecycle
+// state and place despawn holds, without depending on the concrete manager.
 //
 // The Cat limit (default 3) is sourced from runtimeConfig.maxActiveCats so the
 // debug menu can override it without a recompile.
 // ---------------------------------------------------------------------------
 
-export class CatCompanionManager {
+export class CatCompanionManager implements CatStateView {
   /**
    * Ordered insertion map: entity → CatType.
    * Insertion order is preserved so auto-dismiss always removes the oldest cat.
@@ -54,15 +64,33 @@ export class CatCompanionManager {
 
   /**
    * Physics body handles for terrain/launch cats.
-   * Populated in summon() for effectType 'terrain' | 'launch'; cleaned up in dismiss().
+   * Populated in summon() for effectType 'terrain' | 'launch'; cleaned up in beginDespawn().
    */
   private readonly physicsHandles = new Map<Entity, BodyHandle>();
 
   /**
    * Trail entities created alongside Zoomies cats.
-   * Keyed by cat entity; destroyed in dismiss() to keep the world clean.
+   * Keyed by cat entity; destroyed in beginDespawn() to keep the world clean.
    */
   private readonly trailEntities = new Map<Entity, Entity>();
+
+  /**
+   * Entities currently in the despawn animation phase → seconds remaining
+   * until the owner destroys them. CatCompanionManager is the sole authority
+   * for `world.destroyEntity()` on a cat (VisualEffectsSystem only tweens).
+   */
+  private readonly despawning = new Map<Entity, number>();
+
+  /**
+   * Ref-counted despawn holds. While an entity has a hold (count > 0),
+   * flushExpirations() will not begin its despawn even if Expired — this is
+   * how CuriositySystem's "fade the terrain before the cat disappears"
+   * affordance works, without a private per-system deferred-dismiss queue.
+   */
+  private readonly despawnHolds = new Map<Entity, number>();
+
+  /** Matches the pop-in/pop-out CatScaleAnimation tween duration. */
+  private static readonly DESPAWN_SECONDS = 0.2;
 
   constructor(
     private readonly world: World,
@@ -207,8 +235,8 @@ export class CatCompanionManager {
       this.world.addComponent(entity, createCuriosityReveal(revealRadius));
     }
 
-    // Scale-up pop-in: 0 → 1 over 0.2 s, no entity destruction on complete.
-    this.world.addComponent(entity, createCatScaleAnimation(0, 1, 0.2, false));
+    // Scale-up pop-in: 0 → 1 over 0.2 s.
+    this.world.addComponent(entity, createCatScaleAnimation(0, 1, 0.2));
 
     this.companions.set(entity, catType);
 
@@ -218,10 +246,12 @@ export class CatCompanionManager {
   }
 
   /**
-   * Dismiss an active companion.
+   * Dismiss an active companion — the manual entry point (HUD / debug menu /
+   * cap-eviction call this directly).
    *
    * Yarn is refunded only when the cat's CatBehavior.state is not 'Expired'
-   * (i.e. it was dismissed before its natural duration elapsed).
+   * (i.e. it was dismissed before its natural duration elapsed). Funnels into
+   * the shared beginDespawn() teardown — see that method for what happens next.
    */
   dismiss(entity: Entity): void {
     if (!this.world.isAlive(entity)) {
@@ -229,16 +259,154 @@ export class CatCompanionManager {
       return;
     }
 
-    // Guard: if a scale-down animation is already running (destroyOnComplete=true),
-    // a second dismiss() call would double-up cleanup. Skip safely.
-    const existingAnim = this.world.getComponent<CatScaleAnimation>(entity, "CatScaleAnimation");
-    if (existingAnim?.destroyOnComplete === true) return;
+    // Idempotent guard: already tearing down (replaces the old
+    // destroyOnComplete-animation check — the despawning map is now the
+    // single source of truth for "is this cat already on its way out").
+    if (this.despawning.has(entity)) return;
+
+    const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
+    const refund = behavior !== null && behavior.state !== "Expired";
+    this.beginDespawn(entity, { refund });
+  }
+
+  // ── Lifecycle driver (single owner — see CatLifecycle.ts / ADR-0004) ────────
+
+  /**
+   * Advances the generic cat state machine (Idle→Active, Active timer,
+   * Active→Expired) and the owner's despawn-timer countdown/destruction.
+   *
+   * Frame position: call FIRST each fixed tick, at the exact position the
+   * now-retired CatAISystem used to occupy — BEFORE the per-cat effect
+   * systems (Zoomies/Curiosity/Pounce) run. This preserves the original
+   * same-tick visibility: when a cat's timer crosses its duration this call,
+   * effect systems observe the fresh Expired state later in the very same
+   * tick, exactly as they did when CatAISystem ran first.
+   */
+  update(dt: number): void {
+    const catEntities = this.world.query("CatBehavior", "Transform");
+
+    for (const entity of catEntities) {
+      if (!this.world.isAlive(entity)) continue;
+
+      const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior")!;
+      const def = CAT_REGISTRY.get(behavior.catType);
+      const duration = def?.behavior.duration; // undefined = permanent cat
+
+      switch (behavior.state) {
+        case "Idle":
+          // Activate immediately on the first tick after summon.
+          behavior.state = "Active";
+          break;
+
+        case "Active":
+          if (duration !== undefined) {
+            behavior.stateTimer += dt;
+            if (behavior.stateTimer >= duration) {
+              behavior.state = "Expired";
+            }
+          }
+          break;
+
+        default:
+          // "Expired": handled by flushExpirations() (needs to run after
+          // effects to respect despawn holds). "Cooldown": reserved.
+          break;
+      }
+    }
+
+    // Owner is the sole destruction authority: advance despawn timers and
+    // destroy entities whose 0.2 s pop-out animation has elapsed.
+    for (const [entity, remaining] of this.despawning) {
+      const next = remaining - dt;
+      if (next <= 0) {
+        if (this.world.isAlive(entity)) this.world.destroyEntity(entity);
+        this.despawning.delete(entity);
+        this.despawnHolds.delete(entity);
+      } else {
+        this.despawning.set(entity, next);
+      }
+    }
+  }
+
+  /**
+   * Begins despawn for every Expired cat that has no active despawn hold.
+   *
+   * Frame position: call AFTER the per-cat effect systems each fixed tick.
+   * This is the crux of the timing-preservation contract (ADR-0004): a cat
+   * that just transitioned Active→Expired THIS tick (in update() above) has
+   * already had a chance, later in the SAME tick, for CuriositySystem to see
+   * the fresh Expired state and place a hold before we decide whether to
+   * despawn it here. That reproduces the legacy four-system pipeline exactly:
+   *   - Holdless cats (Zoomies): ZoomiesSystem used to call dismiss()
+   *     immediately upon seeing Expired, in the same tick CatAISystem set it.
+   *     Here, flushExpirations() (still the same tick, just later in it)
+   *     finds no hold and begins despawn — same-tick parity preserved.
+   *   - Held cats (Curiosity): CuriositySystem places a hold in the same tick
+   *     it first sees Expired (deferring despawn while terrain fades), then
+   *     releases the hold once the fade completes. flushExpirations() begins
+   *     despawn on that SAME tick the hold is released — matching legacy's
+   *     flushDismissals(), which called dismiss() synchronously inside
+   *     CuriositySystem.update() the instant the fade finished.
+   */
+  flushExpirations(): void {
+    const catEntities = this.world.query("CatBehavior", "Transform");
+
+    for (const entity of catEntities) {
+      if (!this.world.isAlive(entity)) continue;
+
+      const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
+      if (behavior?.state === "Expired" && !this.isHeld(entity)) {
+        this.beginDespawn(entity, { refund: false });
+      }
+    }
+  }
+
+  // ── CatStateView (read-only seam for effect systems) ────────────────────────
+
+  getCatState(entity: Entity): CatState | undefined {
+    if (this.despawning.has(entity)) return "Despawning";
+    return this.world.getComponent<CatBehavior>(entity, "CatBehavior")?.state;
+  }
+
+  isActive(entity: Entity): boolean {
+    return this.getCatState(entity) === "Active";
+  }
+
+  holdDespawn(entity: Entity): void {
+    this.despawnHolds.set(entity, (this.despawnHolds.get(entity) ?? 0) + 1);
+  }
+
+  releaseDespawn(entity: Entity): void {
+    const next = (this.despawnHolds.get(entity) ?? 0) - 1;
+    if (next <= 0) {
+      this.despawnHolds.delete(entity);
+    } else {
+      this.despawnHolds.set(entity, next);
+    }
+  }
+
+  private isHeld(entity: Entity): boolean {
+    return (this.despawnHolds.get(entity) ?? 0) > 0;
+  }
+
+  /**
+   * Shared teardown for both the manual dismiss() entry point and
+   * flushExpirations() (natural expiry). Idempotent via the `despawning` map.
+   *
+   * Order preserved from the pre-refactor dismiss(): refund rule → remove
+   * physics body → destroy trail → drop from companions → remove CatBehavior
+   * + CuriosityReveal (so effect systems skip the entity during the pop-out)
+   * → queue the pop-out tween → register the despawn timer (destruction now
+   * happens in update(), not VisualEffectsSystem) → emit cat:dismissed.
+   */
+  private beginDespawn(entity: Entity, opts: { refund: boolean }): void {
+    if (this.despawning.has(entity)) return; // already tearing down
 
     const behavior = this.world.getComponent<CatBehavior>(entity, "CatBehavior");
     const catType = this.companions.get(entity);
 
-    // Refund yarn only if the cat hasn't expired on its own
-    if (behavior && behavior.state !== "Expired") {
+    // Refund yarn only if the cat hasn't expired on its own.
+    if (opts.refund && behavior && behavior.state !== "Expired") {
       this.gameState.addYarn(behavior.yarnCost);
     }
 
@@ -259,17 +427,18 @@ export class CatCompanionManager {
 
     this.companions.delete(entity);
 
-    // Remove CatBehavior so CatAISystem / ZoomiesSystem / PounceSystem skip this
-    // entity during the 0.2 s dismissal animation (prevents double-dismiss).
+    // Remove CatBehavior so update()/flushExpirations()/effect systems skip
+    // this entity during the 0.2 s despawn animation (prevents double-despawn).
     this.world.removeComponent(entity, "CatBehavior");
 
-    // Remove CuriosityReveal so CuriositySystem.flushDismissals() won't call
-    // dismiss() a second time if the cat was in its pendingDismiss set.
+    // Remove CuriosityReveal so a stale hold can't reference it once torn down.
     this.world.removeComponent(entity, "CuriosityReveal");
 
-    // Scale-down pop-out: 1 → 0 over 0.2 s.
-    // VisualEffectsSystem calls world.destroyEntity() when the tween completes.
-    this.world.addComponent(entity, createCatScaleAnimation(1, 0, 0.2, true));
+    // Scale-down pop-out: 1 → 0 over 0.2 s. VisualEffectsSystem only tweens —
+    // this manager destroys the entity once its own despawn timer elapses.
+    this.world.addComponent(entity, createCatScaleAnimation(1, 0, CatCompanionManager.DESPAWN_SECONDS));
+    this.despawning.set(entity, CatCompanionManager.DESPAWN_SECONDS);
+    this.despawnHolds.delete(entity);
 
     if (catType !== undefined) {
       this.eventBus.emit({ type: "cat:dismissed", entity, catType });
