@@ -24,7 +24,7 @@ Source of truth for this run. Update after every state change (plan saved, agent
 
 | Item | Slug / branch | Worktree | Tracker key | Depends on | Plan file | Status | Merged |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | in-progress | no |
+| #25 | `feat/25-entity-prefabs` | `../wt-25` | #25 | none | `plans/25.md` | merged | yes |
 | #27 | `feat/27-map-persistence-controller` | `../wt-27` | #27 | none | `plans/27.md` | merged | yes |
 | #28 | `feat/28-save-codec` | `../wt-28` | #28 | none | `plans/28.md` | merged | yes |
 
@@ -59,15 +59,16 @@ After each merge, re-run build, lint, typecheck, and tests on the integration br
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-02 | #28 | pass | pass | pass | 898 pass | none | ADR-0003; byte-compat proven |
 | 2026-07-02 | #27 | pass | pass | pass | 921 pass | none | controller testable without jsdom |
+| 2026-07-02 | #25 | pass | pass | pass | 931 pass | none | node id centralized; MovementSystem drift test added |
 
 ## Decisions / ADRs to confirm
 
 | Decision | Item | Recorded | Confirmed at PR review |
 | --- | --- | --- | --- |
-| ADR-0002 compliance: prefab spawning stays MapData-driven; `node_${x}_${z}` cooldown-id convention preserved for save compat | #25 | no | no |
+| ADR-0002 compliance: prefab spawning stays MapData-driven; `node_${x}_${z}` cooldown-id convention preserved for save compat | #25 | yes — `resourceNodeId()` in `src/game/ecs/prefabs.ts` is sole owner of template; grep-confirmed; commit 9347791 | no |
 | Behavior preservation: per-cat systems become effects; no gameplay change to zoomies/curiosity/pounce; active-cat save restore (including yarn accounting) unchanged | #26 | no | no |
-| Behavior preservation: editor save/load/list/set-default/delete flows unchanged after extraction | #27 | no | no |
-| External save-data shape stays byte-compatible; existing saves load without migration | #28 | no | no |
+| Behavior preservation: editor save/load/list/set-default/delete flows unchanged after extraction | #27 | yes — exact message strings + delete guards preserved in `MapPersistenceController`; commit f74e92f | no |
+| External save-data shape stays byte-compatible; existing saves load without migration | #28 | yes — ADR-0003 + `SaveCodec.test.ts` byte-compat (JSON.stringify key-order) assertions; commit 470d711 | no |
 | ADR-0002 compliance: core operates on canonical `terrain[][]` (row=Z, col=X); serialized output validates against MapData schema | #29 | no | no |
 
 ## Finalization checklist
