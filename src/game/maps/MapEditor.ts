@@ -7,8 +7,15 @@ import type {
 import type { CameraController } from "../engine/CameraController";
 import type { MeshConfig, SceneHandle } from "../engine/SceneManager";
 import { TerrainType, ResourceType } from "../types";
-import { mapDataSchema } from "./MapDataSchema";
 import { cellToWorld, worldToCell, cellMeshGeometry } from "./coords";
+import {
+  MapPersistenceController,
+  MapValidationError,
+  type MapListEntry,
+  type MapTrpcAdapter,
+} from "./MapPersistenceController";
+
+export type { MapTrpcAdapter } from "./MapPersistenceController";
 
 // ---------------------------------------------------------------------------
 // MapEditor — developer-facing map editor, dev builds only.
@@ -38,16 +45,6 @@ interface GameLifecycle {
    * meshes and visually compete with the editor's own cells.
    */
   syncRender?(): void;
-}
-
-// Minimal adapter for map DB operations — mirrors the map methods in GameTrpcAdapter
-// (Game.ts). Defined here as a structural subset to avoid circular imports.
-interface MapTrpcAdapter {
-  mapList(): Promise<Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>>;
-  mapGet(input: { id: number }): Promise<{ id: number; name: string; mapData: unknown; isDefault: boolean }>;
-  mapSave(input: { id?: number; name: string; mapData: MapData }): Promise<{ id: number; name: string }>;
-  mapSetDefault(input: { id: number }): Promise<void>;
-  mapDelete(input: { id: number }): Promise<void>;
 }
 
 // Minimal user info the editor needs to determine admin status.
@@ -330,12 +327,10 @@ export class MapEditor {
   private _errorDisplay: HTMLElement | null = null;
   private _statusDisplay: HTMLElement | null = null;
 
-  // DB panel state (US-17)
-  private _currentMapId: number | null = null;
-  private _currentMapName: string = "untitled";
+  // DB panel state (US-17) — persistence state/IO lives in _persistence (#27).
+  private readonly _persistence: MapPersistenceController;
   private _mapNameInput: HTMLInputElement | null = null;
   private _mapListSelect: HTMLSelectElement | null = null;
-  private _mapListCache: Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }> = [];
   private _setDefaultBtn: HTMLButtonElement | null = null;
   private _deleteBtn: HTMLButtonElement | null = null;
 
@@ -352,9 +347,10 @@ export class MapEditor {
     private readonly gameLifecycle: GameLifecycle,
     private readonly sceneManager: SceneManagerLike | null = null,
     private readonly mapManager: MapManagerLike | null = null,
-    private readonly _trpcAdapter: MapTrpcAdapter | null = null,
+    trpcAdapter: MapTrpcAdapter | null = null,
     private readonly _user: EditorUser | null = null,
   ) {
+    this._persistence = new MapPersistenceController(trpcAdapter);
     if (process.env.NODE_ENV === "production") return;
     this._buildBanner();
     this._buildPanel();
@@ -589,23 +585,18 @@ export class MapEditor {
 
   /**
    * Save the current map to the database.
-   * On first save (no _currentMapId) a new row is created; subsequent calls
-   * update the existing row.  The returned id is stored and reused across saves.
+   * On first save (no tracked id) a new row is created; subsequent calls
+   * update the existing row. The returned id is stored and reused across saves.
+   * Delegates I/O + state bookkeeping to `_persistence` (#27).
    */
   async saveMapToDB(name?: string): Promise<void> {
-    if (!this._trpcAdapter) {
+    if (!this._persistence.hasAdapter()) {
       this._showError("No DB adapter available");
       return;
     }
-    const saveName = name ?? this._mapNameInput?.value ?? this._currentMapName;
+    const saveName = name ?? this._mapNameInput?.value ?? this._persistence.getCurrentMapName();
     try {
-      const result = await this._trpcAdapter.mapSave({
-        id: this._currentMapId ?? undefined,
-        name: saveName,
-        mapData: this.getMapData(),
-      });
-      this._currentMapId = result.id;
-      this._currentMapName = result.name;
+      const result = await this._persistence.save({ name: saveName, mapData: this.getMapData() });
       if (this._mapNameInput) this._mapNameInput.value = result.name;
       this._showError(null);
       this._showStatus("Saved");
@@ -618,13 +609,12 @@ export class MapEditor {
    * Refresh the internal map list from the database.
    */
   async refreshMapList(): Promise<void> {
-    if (!this._trpcAdapter) {
+    if (!this._persistence.hasAdapter()) {
       this._showError("No DB adapter available");
       return;
     }
     try {
-      const list = await this._trpcAdapter.mapList();
-      this._mapListCache = list;
+      const list = await this._persistence.list();
       this._populateMapListSelect(list);
       this._showError(null);
       this._updateDeleteButton();
@@ -637,25 +627,22 @@ export class MapEditor {
    * Load a map by id from the database and apply it to the editor.
    */
   async loadMapFromDB(id: number): Promise<void> {
-    if (!this._trpcAdapter) {
+    if (!this._persistence.hasAdapter()) {
       this._showError("No DB adapter available");
       return;
     }
     try {
-      const row = await this._trpcAdapter.mapGet({ id });
-      const result = mapDataSchema.safeParse(row.mapData);
-      if (!result.success) {
-        const msg = result.error.issues[0]?.message ?? "schema validation failed";
-        this._showError(`Invalid map data: ${msg}`);
-        return;
-      }
+      const { id: rowId, name, mapData } = await this._persistence.load(id);
       this._showError(null);
-      this.loadMapData(result.data);
-      this._currentMapId = row.id;
-      this._currentMapName = row.name;
-      if (this._mapNameInput) this._mapNameInput.value = row.name;
+      this.loadMapData(mapData);
+      this._persistence.markLoaded(rowId, name);
+      if (this._mapNameInput) this._mapNameInput.value = name;
       this._showStatus("Loaded");
     } catch (err: unknown) {
+      if (err instanceof MapValidationError) {
+        this._showError(err.message);
+        return;
+      }
       this._showError(err instanceof Error ? err.message : "Load failed");
     }
   }
@@ -664,12 +651,12 @@ export class MapEditor {
    * Set the currently loaded map as the default map.
    */
   async setCurrentMapAsDefault(): Promise<void> {
-    if (!this._trpcAdapter || this._currentMapId === null) {
+    if (!this._persistence.hasAdapter() || this._persistence.getCurrentMapId() === null) {
       this._showError("No map loaded");
       return;
     }
     try {
-      await this._trpcAdapter.mapSetDefault({ id: this._currentMapId });
+      await this._persistence.setDefaultCurrent();
       this._showError(null);
       this._showStatus("Set as default");
       await this.refreshMapList();
@@ -683,7 +670,7 @@ export class MapEditor {
    * Client-side guard mirrors server-side: blocks delete for default or only map.
    */
   async deleteCurrentMap(): Promise<void> {
-    if (!this._trpcAdapter || this._currentMapId === null) {
+    if (!this._persistence.hasAdapter() || this._persistence.getCurrentMapId() === null) {
       this._showError("No map loaded");
       return;
     }
@@ -692,8 +679,7 @@ export class MapEditor {
       return;
     }
     try {
-      await this._trpcAdapter.mapDelete({ id: this._currentMapId });
-      this._currentMapId = null;
+      await this._persistence.deleteCurrent();
       this._showError(null);
       this._showStatus("Deleted");
       await this.refreshMapList();
@@ -705,14 +691,10 @@ export class MapEditor {
   /**
    * Returns true if delete should be blocked (mirrors server guard).
    * Blocked when: no map loaded, current map is default, or only one map in list.
+   * Delegates to `_persistence` (#27).
    */
   isDeleteDisabled(): boolean {
-    if (this._currentMapId === null) return true;
-    const list = this._mapListCache;
-    if (list.length <= 1) return true;
-    const current = list.find((m) => m.id === this._currentMapId);
-    if (current?.isDefault) return true;
-    return false;
+    return this._persistence.isDeleteDisabled();
   }
 
   /** Load the current editor map into the game and exit editor mode. */
@@ -1397,7 +1379,7 @@ export class MapEditor {
 
     const nameInput = document.createElement("input");
     nameInput.type = "text";
-    nameInput.value = this._currentMapName;
+    nameInput.value = this._persistence.getCurrentMapName();
     nameInput.style.cssText =
       "width:100%;background:#2a2a3e;color:#fff;border:1px solid #444;" +
       "border-radius:3px;font-size:10px;padding:2px;margin-bottom:4px;box-sizing:border-box;";
@@ -1485,12 +1467,12 @@ export class MapEditor {
       "border-radius:4px;color:#fff;font-family:monospace;font-size:11px;" +
       "cursor:pointer;text-align:left;margin-bottom:4px;";
     setDefaultBtn.textContent = "Set as Default";
-    setDefaultBtn.disabled = !isAdmin || this._currentMapId === null;
+    setDefaultBtn.disabled = !isAdmin || this._persistence.getCurrentMapId() === null;
     if (!isAdmin) setDefaultBtn.title = "Admin only";
     setDefaultBtn.addEventListener("click", () => {
       setDefaultBtn.disabled = true;
       void this.setCurrentMapAsDefault().finally(() => {
-        setDefaultBtn.disabled = !isAdmin || this._currentMapId === null;
+        setDefaultBtn.disabled = !isAdmin || this._persistence.getCurrentMapId() === null;
       });
     });
     this._setDefaultBtn = setDefaultBtn as unknown as HTMLButtonElement;
@@ -2567,9 +2549,7 @@ export class MapEditor {
     }, 3000);
   }
 
-  private _populateMapListSelect(
-    list: Array<{ id: number; name: string; isDefault: boolean; createdAt: Date }>,
-  ): void {
+  private _populateMapListSelect(list: readonly MapListEntry[]): void {
     if (!this._mapListSelect) return;
     // Clear existing options
     const sel = this._mapListSelect;
@@ -2590,7 +2570,7 @@ export class MapEditor {
 
   private _updateSetDefaultButton(): void {
     if (!this._setDefaultBtn) return;
-    this._setDefaultBtn.disabled = this._currentMapId === null;
+    this._setDefaultBtn.disabled = this._persistence.getCurrentMapId() === null;
   }
 
   private _updateWaterConfigSection(): void {
