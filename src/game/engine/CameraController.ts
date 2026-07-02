@@ -25,7 +25,7 @@ export interface MapBounds {
 /**
  * Manages an isometric OrthographicCamera that follows a target entity.
  *
- * Camera angles are sourced from runtimeConfig (azimuth 45°, elevation 60°).
+ * Camera angles are sourced from runtimeConfig (azimuth 45°, elevation 30°).
  * The follow mode adds a smooth leading offset in the player's facing direction.
  * Free mode lets the Game orchestrator pan the focus via panBy().
  *

@@ -214,13 +214,11 @@ export class MapManager {
 
   private createTerrainEntity(zone: TerrainZone): void {
     const { cell, worldX, worldZ, width, depth } = zone;
-    const baseColor = TERRAIN_COLORS[cell.type];
-    // Apply subtle positional color variation to non-water, non-hidden terrain.
-    const isVaried =
-      cell.type !== TerrainType.Water && cell.type !== TerrainType.Hidden;
-    const color = isVaried
-      ? varyColor(baseColor, Math.round(worldX * 31 + worldZ * 37))
-      : baseColor;
+    // Uniform per-type color. (Historically each merged zone got a small
+    // varyColor lightness offset to look distinct, but under the flat toon
+    // shading that per-zone tint read as unexplained "shadow" patches. The
+    // procedural surface texture + ink seams now mark zone transitions instead.)
+    const color = TERRAIN_COLORS[cell.type];
 
     // Elevated terrain: box from y=0 to y=height (center at height/2).
     // Flat terrain: thin slab whose top face is at y=0 (center at -FLOOR_THICKNESS/2).
@@ -243,6 +241,8 @@ export class MapManager {
         receiveShadow: !isHidden,
         castShadow: cell.height > 0 && !isHidden,
         opacity: isHidden ? 0 : 1,
+        // Terrain must stay grid-aligned — opt out of hand-drawn jitter.
+        jitter: 0,
       }),
     );
 
@@ -316,6 +316,8 @@ export class MapManager {
           color: "#555566",
           castShadow: true,
           receiveShadow: true,
+          // Boundary walls stay straight — opt out of hand-drawn jitter.
+          jitter: 0,
         }),
       );
       // Boundary walls interact with any layer-1 entity (e.g. the player)

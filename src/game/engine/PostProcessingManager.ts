@@ -1,35 +1,25 @@
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { TerrainEdgePass } from "./TerrainEdgePass";
+import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
+import { OutlineEffectPass } from "./OutlineEffectPass";
 import type { VisualConfig } from "../config";
-import type { OutlineCategory } from "./SceneManager";
-
-// ---------------------------------------------------------------------------
-// Outline color presets per category
-// ---------------------------------------------------------------------------
-
-const OUTLINE_COLORS: Record<Exclude<OutlineCategory, "none">, THREE.Color> = {
-  player: new THREE.Color(0xffffff),
-  cat: new THREE.Color(0xffe066),
-  pickup: new THREE.Color(0xffd700),
-  resource: new THREE.Color(0x88cc88),
-};
 
 // ---------------------------------------------------------------------------
 // PostProcessingManager
+//
+// Chain: OutlineEffectPass (scene + per-object ink outline) → UnrealBloomPass
+// (subtle) → OutputPass (tone mapping + color-space output). The dark ink lines
+// come from three.js OutlineEffect, whose thickness/color/alpha are driven
+// per-mesh via material.userData.outlineParameters (set in SceneManager.addMesh).
 // ---------------------------------------------------------------------------
 
 export class PostProcessingManager {
   private readonly composer: EffectComposer;
-  private readonly terrainEdgePass: TerrainEdgePass;
-  private readonly outlinePass: OutlinePass;
+  private readonly outlineEffect: OutlineEffect;
+  private readonly outlinePass: OutlineEffectPass;
   private readonly bloomPass: UnrealBloomPass;
-
-  private readonly outlinedObjects = new Map<THREE.Object3D, OutlineCategory>();
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -38,28 +28,31 @@ export class PostProcessingManager {
     private config: VisualConfig,
   ) {
     const size = renderer.getSize(new THREE.Vector2());
+    const pixelRatio = renderer.getPixelRatio();
 
-    this.composer = new EffectComposer(renderer);
-
-    const renderPass = new RenderPass(scene, camera);
-    this.composer.addPass(renderPass);
-
-    this.terrainEdgePass = new TerrainEdgePass(
-      scene,
-      camera,
-      size.x || 1,
-      size.y || 1,
+    // EffectComposer's default render target has samples:0, so the renderer's
+    // `antialias:true` is bypassed on the post-processing path — thin ink
+    // outlines then alias and shimmer/smear as the camera pans. Hand the
+    // composer a multisampled (MSAA) target to restore anti-aliasing. Match the
+    // default HalfFloatType (HDR-linear, so bloom/OutputPass behave), and
+    // setSize() preserves `samples` on resize.
+    const msaaTarget = new THREE.WebGLRenderTarget(
+      Math.max(1, Math.floor(size.x * pixelRatio)),
+      Math.max(1, Math.floor(size.y * pixelRatio)),
+      { type: THREE.HalfFloatType, samples: 4 },
     );
-    this.terrainEdgePass.enabled = config.edgeDetection;
-    this.composer.addPass(this.terrainEdgePass);
+    this.composer = new EffectComposer(renderer, msaaTarget);
+    // Normalize the composer's internal size to CSS pixels (the constructor
+    // records the target's device-pixel dimensions when a target is supplied).
+    this.composer.setSize(Math.max(1, size.x), Math.max(1, size.y));
 
-    this.outlinePass = new OutlinePass(size, scene, camera);
-    this.outlinePass.edgeStrength = config.outlineStrength;
-    this.outlinePass.edgeThickness = config.outlineThickness;
-    this.outlinePass.edgeGlow = config.outlineGlow;
-    this.outlinePass.visibleEdgeColor.set(0xffffff);
-    this.outlinePass.hiddenEdgeColor.set(0x000000);
-    this.outlinePass.enabled = config.outlines;
+    // Global fallback ink; per-mesh userData.outlineParameters overrides these.
+    this.outlineEffect = new OutlineEffect(renderer, {
+      defaultThickness: config.outlineThickness,
+      defaultColor: [0, 0, 0],
+      defaultAlpha: 1,
+    });
+    this.outlinePass = new OutlineEffectPass(this.outlineEffect, scene, camera);
     this.composer.addPass(this.outlinePass);
 
     this.bloomPass = new UnrealBloomPass(
@@ -75,47 +68,11 @@ export class PostProcessingManager {
     this.composer.addPass(outputPass);
   }
 
-  // ── Outline management ────────────────────────────────────────────────────
-
-  addToOutline(mesh: THREE.Object3D, category: Exclude<OutlineCategory, "none">): void {
-    this.outlinedObjects.set(mesh, category);
-    this.rebuildOutlineSelection();
-  }
-
-  removeFromOutline(mesh: THREE.Object3D): void {
-    this.outlinedObjects.delete(mesh);
-    this.rebuildOutlineSelection();
-  }
-
-  private rebuildOutlineSelection(): void {
-    const selected: THREE.Object3D[] = [];
-    for (const [obj] of this.outlinedObjects) {
-      selected.push(obj);
-    }
-    this.outlinePass.selectedObjects = selected;
-
-    // Use the dominant category color (player > cat > pickup > resource)
-    if (this.outlinedObjects.size > 0) {
-      const categories = [...this.outlinedObjects.values()];
-      const dominant =
-        categories.find((c) => c === "player") ??
-        categories.find((c) => c === "cat") ??
-        categories.find((c) => c === "pickup") ??
-        "resource";
-      this.outlinePass.visibleEdgeColor.copy(
-        OUTLINE_COLORS[dominant as Exclude<OutlineCategory, "none">],
-      );
-    }
-  }
-
   // ── Camera sync ───────────────────────────────────────────────────────────
 
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
-    this.terrainEdgePass.setCamera(camera);
-    this.outlinePass.renderCamera = camera;
-    const renderPass = this.composer.passes[0] as RenderPass;
-    if (renderPass) renderPass.camera = camera;
+    this.outlinePass.setCamera(camera);
   }
 
   // ── Config ────────────────────────────────────────────────────────────────
@@ -123,21 +80,8 @@ export class PostProcessingManager {
   setConfig(config: Partial<VisualConfig>): void {
     Object.assign(this.config, config);
 
-    if (config.edgeDetection !== undefined) {
-      this.terrainEdgePass.enabled = config.edgeDetection;
-    }
-    if (config.outlines !== undefined) {
-      this.outlinePass.enabled = config.outlines;
-    }
-    if (config.outlineStrength !== undefined) {
-      this.outlinePass.edgeStrength = config.outlineStrength;
-    }
-    if (config.outlineThickness !== undefined) {
-      this.outlinePass.edgeThickness = config.outlineThickness;
-    }
-    if (config.outlineGlow !== undefined) {
-      this.outlinePass.edgeGlow = config.outlineGlow;
-    }
+    // Outline thickness lives per-mesh (material.userData.outlineParameters),
+    // so live thickness/toon-band tweaks are applied by SceneManager, not here.
     if (config.bloom !== undefined) {
       this.bloomPass.enabled = config.bloom;
     }
@@ -160,19 +104,16 @@ export class PostProcessingManager {
 
   resize(width: number, height: number): void {
     this.composer.setSize(width, height);
-    this.terrainEdgePass.setSize(width, height);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   dispose(): void {
-    this.outlinedObjects.clear();
-    // EffectComposer.dispose() only frees its own two render targets + copy
-    // pass; it does NOT cascade to added passes. Each of these owns several
-    // render targets and materials that would otherwise leak on teardown.
-    this.terrainEdgePass.dispose();
-    this.outlinePass.dispose();
+    // EffectComposer.dispose() frees only its own render targets + copy pass;
+    // it does NOT cascade to added passes. UnrealBloomPass owns several render
+    // targets/materials that would otherwise leak on teardown.
     this.bloomPass.dispose();
+    this.outlinePass.dispose();
     this.composer.dispose();
   }
 }

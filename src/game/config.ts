@@ -7,15 +7,20 @@
 
 export interface VisualConfig {
   postProcessing: boolean;
-  edgeDetection: boolean;
-  outlines: boolean;
+  /** Number of hard cel bands in the toon gradient ramp (min 2). */
+  toonBands: number;
   bloom: boolean;
   bloomStrength: number;
   bloomThreshold: number;
   bloomRadius: number;
+  /** OutlineEffect ink-line thickness (world-space hull inflation). */
   outlineThickness: number;
-  outlineStrength: number;
-  outlineGlow: number;
+  /** Cosmetic hand-drawn vertex jitter amplitude (world units; 0 = off). */
+  handDrawnJitter: number;
+  /** Apply the procedural grain/hatch surface texture to meshes. */
+  proceduralTexture: boolean;
+  /** World units per texture tile — larger = coarser, sparser pattern. */
+  textureScale: number;
   rimLighting: boolean;
 }
 
@@ -103,7 +108,7 @@ const BASE_CONFIG: GameConfig = {
 
   // Camera
   cameraAzimuth: 45,
-  cameraElevation: 60,
+  cameraElevation: 30, // degrees above the horizon — lower = more oblique view
   cameraLeadDistance: 2.5,
   cameraLeadLerp: 0.08,
 
@@ -119,16 +124,19 @@ const BASE_CONFIG: GameConfig = {
   // Visual effects
   visual: {
     postProcessing: true,
-    edgeDetection: true,
-    outlines: true,
+    toonBands: 3,
     bloom: true,
     bloomStrength: 0.05,
     bloomThreshold: 0.85,
     bloomRadius: 0.4,
-    outlineThickness: 1.0,
-    outlineStrength: 3.0,
-    outlineGlow: 0.08,
-    rimLighting: true,
+    // World-space hull inflation for OutlineEffect. Small because the ortho
+    // camera has a wide view — 0.004 reads as a crisp 1–2px ink line.
+    outlineThickness: 0.004,
+    handDrawnJitter: 0.03,
+    proceduralTexture: true,
+    textureScale: 2,
+    // Ink outlines now carry the silhouette, so Fresnel rim light defaults off.
+    rimLighting: false,
   },
 };
 
